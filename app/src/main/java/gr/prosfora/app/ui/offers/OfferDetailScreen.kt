@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,6 +22,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -35,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -56,6 +59,7 @@ import java.time.LocalDate
 fun OfferDetailScreen(
     viewModel: OffersViewModel,
     onBack: () -> Unit,
+    onComposeEmail: () -> Unit,
 ) {
     val details by viewModel.selectedOffer.collectAsState()
     val presets by viewModel.presets.collectAsState()
@@ -73,7 +77,18 @@ fun OfferDetailScreen(
                 },
                 actions = {
                     if (current != null) {
-                        SendOfferAction(current) { viewModel.markSent(current.offer.id) }
+                        // Ίδιοι κανόνες με το action «ΑΠΟΣΤΟΛΗ ΠΡΟΣΦΟΡΑΣ» του AppSheet
+                        IconButton(enabled = current.canSendEmail, onClick = onComposeEmail) {
+                            Icon(
+                                Icons.Default.Email,
+                                contentDescription = "Αποστολή προσφοράς",
+                                tint = if (current.canSendEmail) {
+                                    Color(0xFFFFB300)
+                                } else {
+                                    LocalContentColor.current
+                                },
+                            )
+                        }
                         IconButton(onClick = { viewModel.deleteOffer(current.offer.id); onBack() }) {
                             Icon(Icons.Default.Delete, contentDescription = "Διαγραφή")
                         }

@@ -44,6 +44,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.BuildConfig
 import gr.prosfora.app.data.SeedImporter
+import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.mail.OfferMail
 import gr.prosfora.app.mail.MailSender
 import gr.prosfora.app.settings.SMTP_PRESETS
 import gr.prosfora.app.settings.SmtpSettings
@@ -52,7 +54,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val store = remember { SmtpSettingsStore(context) }
@@ -61,6 +63,10 @@ fun SettingsScreen(onBack: () -> Unit) {
     var testing by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     var presetHint by remember { mutableStateOf<String?>(null) }
+
+    val googleSettings = remember { GoogleSettings(context) }
+    var subjectTemplate by remember { mutableStateOf(googleSettings.emailSubjectTemplate) }
+    var bodyTemplate by remember { mutableStateOf(googleSettings.emailBodyTemplate) }
 
     Scaffold(
         topBar = {

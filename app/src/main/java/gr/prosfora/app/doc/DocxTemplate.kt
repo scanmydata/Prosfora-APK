@@ -1,0 +1,149 @@
+package gr.prosfora.app.doc
+
+import gr.prosfora.app.data.db.OfferWithDetails
+import gr.prosfora.app.util.asMoney
+import gr.prosfora.app.util.asNumber
+import gr.prosfora.app.util.asOfferDate
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
+/**
+ * Συμπληρώνει το .docx πρότυπο με τα δεδομένα μιας προσφοράς.
+ *
+ * Δουλεύει απευθείας πάνω στο `word/document.xml`. Αυτό είναι εφικτό επειδή στο
+ * συγκεκριμένο πρότυπο κάθε placeholder βρίσκεται ολόκληρο μέσα σε ένα `<w:t>`
+ * run — δεν είναι σπασμένο σε κομμάτια, οπότε δεν χρειάζεται normalization.
+ *
+ * Reference implementation & έλεγχος σε πραγματικά δεδομένα:
+ * `migration/render_template.py`.
+ */
+object DocxTemplate {
+
+    private const val DOCUMENT_ENTRY = "word/document.xml"
+
+    // Στο XML τα < > είναι ήδη escaped, οπότε τα markers ψάχνονται ως &lt;&lt;…&gt;&gt;
+    private const val SPACES_START = "&lt;&lt;Start:[Related Ανάλυση_Χώρων]&gt;&gt;"
+    private const val LOOP_END = "&lt;&lt;End&gt;&gt;"
+    private val NOTES_START = Regex("&lt;&lt;Start:\\s*SELECT\\(.*?&gt;&gt;", RegexOption.DOT_MATCHES_ALL)
+
+    fun render(templateDocx: ByteArray, details: OfferWithDetails): ByteArray {
+        val entries = readZip(templateDocx)
+        val document = entries[DOCUMENT_ENTRY]?.toString(Charsets.UTF_8)
+            ?: error("Το πρότυπο δεν είναι έγκυρο .docx (λείπει το $DOCUMENT_ENTRY)")
+        entries[DOCUMENT_ENTRY] = renderXml(document, details).toByteArray(Charsets.UTF_8)
+        return writeZip(entries)
+    }
+
+    internal fun renderXml(xml: String, details: OfferWithDetails): String {
+        var result = expandSpaceRows(xml, details)
+        result = expandNoteBullets(result, details)
+        return fillSimpleFields(result, details)
+    }
+
+    /** Η γραμμή του πίνακα ανάμεσα σε `<<Start:…>>` και `<<End>>` επαναλαμβάνεται ανά χώρο. */
+    private fun expandSpaceRows(xml: String, details: OfferWithDetails): String {
+        val marker = xml.indexOf(SPACES_START)
+        if (marker < 0) return xml
+        val (rowStart, rowEnd) = enclosingTag(xml, marker, "w:tr")
+        val rowTemplate = xml.substring(rowStart, rowEnd)
+
+        val rows = details.spaces.sortedBy { it.position }.joinToString("") { space ->
+            rowTemplate
+                .replace(SPACES_START, "")
+                .replace(LOOP_END, "")
+                .replace("&lt;&lt;[Περιγραφή Χώρου]&gt;&gt;", escape(space.description))
+                // Το πρότυπο γράφει την Επιφάνεια χωρίς αγκύλες — δεχόμαστε και τις δύο γραφές
+                .replace("&lt;&lt;[Επιφάνεια (τ.μ.)]&gt;&gt;", escape(space.area.asNumber()))
+                .replace("&lt;&lt;Επιφάνεια (τ.μ.)&gt;&gt;", escape(space.area.asNumber()))
+                .replace("&lt;&lt;[Τιμή Μονάδος]&gt;&gt;", escape(space.unitPrice.asMoney()))
+                .replace("&lt;&lt;[Σύνολο Γραμμής]&gt;&gt;", escape(space.lineTotal.asMoney()))
+        }
+        return xml.substring(0, rowStart) + rows + xml.substring(rowEnd)
+    }
+
+    /**
+     * Οι τρεις παράγραφοι `<<Start:SELECT(…)>>` / `• <<[Κείμενο]>>` / `<<End>>`
+     * αντικαθίστανται από μία παράγραφο ανά σημείωση.
+     */
+    private fun expandNoteBullets(xml: String, details: OfferWithDetails): String {
+        val match = NOTES_START.find(xml) ?: return xml
+        val (startOpen, startClose) = enclosingTag(xml, match.range.first, "w:p")
+        val (bodyOpen, bodyClose) = nextTag(xml, startClose, "w:p") ?: return xml
+        val bodyTemplate = xml.substring(bodyOpen, bodyClose)
+
+        val endMarker = xml.indexOf(LOOP_END, bodyClose)
+        if (endMarker < 0) return xml
+        val (_, endClose) = enclosingTag(xml, endMarker, "w:p")
+
+        val bullets = details.notes.sortedBy { it.position }.joinToString("") { note ->
+            bodyTemplate.replace("&lt;&lt;[Κείμενο]&gt;&gt;", escape(note.text))
+        }
+        return xml.substring(0, startOpen) + bullets + xml.substring(endClose)
+    }
+
+    private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {
+        val offer = details.offer
+        val total = details.total.asMoney()
+        return xml
+            .replace("&lt;&lt;[Είδος]&gt;&gt;", escape(offer.kind))
+            .replace("&lt;&lt;[Οδός / Περιοχή]&gt;&gt;", escape(offer.address))
+            .replace("&lt;&lt;[Ημερομηνία]&gt;&gt;", escape(offer.dateEpochDay.asOfferDate()))
+            .replace("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", escape(total))
+            .replace("&lt;&lt;[Γενικό Σύνολο]&gt;&gt;", escape(total))
+    }
+
+    /** Τα όρια του `<tag>…</tag>` που περιέχει τη θέση [index]. */
+    private fun enclosingTag(xml: String, index: Int, tag: String): Pair<Int, Int> {
+        val open = maxOf(xml.lastIndexOf("<$tag ", index), xml.lastIndexOf("<$tag>", index))
+        require(open >= 0) { "δεν βρέθηκε άνοιγμα <$tag> πριν τη θέση $index" }
+        val close = xml.indexOf("</$tag>", index)
+        require(close >= 0) { "δεν βρέθηκε κλείσιμο </$tag> μετά τη θέση $index" }
+        return open to close + tag.length + 3
+    }
+
+    /**
+     * Τα όρια του **επόμενου** `<tag>` μετά τη θέση [index].
+     * Ξεχωριστό από το [enclosingTag]: ψάχνοντας προς τα πίσω από θέση που είναι
+     * ήδη μετά το κλείσιμο μιας παραγράφου, θα ξαναβρίσκαμε την ίδια παράγραφο.
+     */
+    private fun nextTag(xml: String, index: Int, tag: String): Pair<Int, Int>? {
+        val open = Regex("<$tag[ >]").find(xml, index)?.range?.first ?: return null
+        val close = xml.indexOf("</$tag>", open)
+        if (close < 0) return null
+        return open to close + tag.length + 3
+    }
+
+    /** Οι διευθύνσεις και τα κείμενα σημειώσεων μπορεί να έχουν & ή < — πρέπει να γίνουν escape. */
+    private fun escape(value: String): String = value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+
+    private fun readZip(bytes: ByteArray): LinkedHashMap<String, ByteArray> {
+        val entries = LinkedHashMap<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            var entry: ZipEntry? = zip.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory) entries[entry.name] = zip.readBytes()
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+        return entries
+    }
+
+    private fun writeZip(entries: Map<String, ByteArray>): ByteArray {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            entries.forEach { (name, payload) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(payload)
+                zip.closeEntry()
+            }
+        }
+        return output.toByteArray()
+    }
+}

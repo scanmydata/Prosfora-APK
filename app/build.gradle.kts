@@ -99,6 +99,7 @@ dependencies {
     implementation(libs.android.mail)
     implementation(libs.android.activation)
     implementation(libs.androidx.security.crypto)
+    implementation(libs.play.services.auth)
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
 }
