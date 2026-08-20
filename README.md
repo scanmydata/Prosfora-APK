@@ -6,7 +6,7 @@ Native αντικατάσταση του AppSheet app "ΠΡΟΣΦΟΡΕΣ" (Kotl
 ## Κατάσταση φάσεων
 | Φάση | Τι είναι | Status |
 |---|---|---|
-| 0 | Καταγραφή AppSheet schema | ⏳ Εκκρεμεί — χρειάζεται πρόσβαση στον editor ([template](docs/phase0-appsheet-schema.md)) |
+| 0 | Καταγραφή AppSheet schema | ✅ Ολοκληρώθηκε — [πλήρες schema](docs/phase0-appsheet-schema.md) |
 | 1 | Repo + Android scaffold + CI/CD auto-release | ✅ Έτοιμο |
 | 2 | Firebase (Firestore + Auth) | ⬜ |
 | 3 | Migration script Sheet → Firestore | ⬜ |
