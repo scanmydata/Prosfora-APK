@@ -8,9 +8,6 @@
 | Logo & splash | `assets/branding/` |
 | Brand χρώμα | `#00E2A2` — διαβάστηκε από το AppSheet theme |
 | Στοιχεία επικοινωνίας | ΓΙΩΡΓΟΣ ΔΟΥΡΑΜΑΝΗΣ · 6945773605 · tovapsimo.gr |
-
----
-
 | Δεδομένα (ΔΕΔΟΜΕΝΑ.xlsx) | `migration/source/` → `assets/seed.json` |
 | Keystore υπογραφής | `Documents/Prosfora-keystore/` · GitHub Secrets ρυθμισμένα |
 | Google Cloud + OAuth client | project `prosfora-tovapsimo` — [λεπτομέρειες](google-cloud.md) |
