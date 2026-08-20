@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Προσφορές</string>
+    <string name="search_hint">Αναζήτηση</string>
+    <string name="add_offer">Νέα προσφορά</string>
+</resources>
