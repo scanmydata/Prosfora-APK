@@ -43,6 +43,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.BuildConfig
+import gr.prosfora.app.data.SeedImporter
 import gr.prosfora.app.mail.MailSender
 import gr.prosfora.app.settings.SMTP_PRESETS
 import gr.prosfora.app.settings.SmtpSettings
@@ -58,6 +59,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     var settings by remember { mutableStateOf(store.load()) }
     var testing by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
     var presetHint by remember { mutableStateOf<String?>(null) }
 
     Scaffold(

@@ -1,0 +1,271 @@
+{
+  "offers": [
+    {
+      "id": "bfeb5e83",
+      "address": "Ναπολέοντος ζέρβα 20 άγιος δημήτριος",
+      "dateEpochDay": 20685,
+      "kind": "Μαγαζί",
+      "email": "oikoiatriki@gmail.com",
+      "status": "COMPLETED"
+    },
+    {
+      "id": "795d5415",
+      "address": "Ησιονης 33 Πετράλωνα",
+      "dateEpochDay": 20685,
+      "kind": "Διαμέρισμα",
+      "email": "dimitriskalampokas@yahoo.gr",
+      "status": "COMPLETED"
+    }
+  ],
+  "spaces": [
+    {
+      "id": "01b98635",
+      "offerId": "bfeb5e83",
+      "description": "Χώρος Α",
+      "area": 60.38,
+      "unitPrice": 5.8,
+      "position": 0
+    },
+    {
+      "id": "adfb8a34",
+      "offerId": "bfeb5e83",
+      "description": "Χώρος Β",
+      "area": 88.64,
+      "unitPrice": 5.8,
+      "position": 1
+    },
+    {
+      "id": "bafbcf7a",
+      "offerId": "bfeb5e83",
+      "description": "Κυρίως χώρος",
+      "area": 102.33,
+      "unitPrice": 5.8,
+      "position": 2
+    },
+    {
+      "id": "742eb78b",
+      "offerId": "bfeb5e83",
+      "description": "Εξωτερικά κολώνες",
+      "area": 38.7,
+      "unitPrice": 6.0,
+      "position": 3
+    },
+    {
+      "id": "b379062a",
+      "offerId": "bfeb5e83",
+      "description": "Κούτελο",
+      "area": 17.0,
+      "unitPrice": 6.2,
+      "position": 4
+    },
+    {
+      "id": "be3c3825",
+      "offerId": "bfeb5e83",
+      "description": "Τοιχίο κάτω από τζαμαρία",
+      "area": 9.0,
+      "unitPrice": 9.0,
+      "position": 5
+    },
+    {
+      "id": "0620d6aa",
+      "offerId": "795d5415",
+      "description": "Χωλ",
+      "area": 38.57,
+      "unitPrice": 4.8,
+      "position": 6
+    },
+    {
+      "id": "5b255dc5",
+      "offerId": "795d5415",
+      "description": "Σαλόνι",
+      "area": 58.01,
+      "unitPrice": 4.8,
+      "position": 7
+    },
+    {
+      "id": "258183f6",
+      "offerId": "795d5415",
+      "description": "Δωμάτιο 1",
+      "area": 54.45,
+      "unitPrice": 4.8,
+      "position": 8
+    },
+    {
+      "id": "ab1bba01",
+      "offerId": "795d5415",
+      "description": "Υπνοδωμάτιο",
+      "area": 50.91,
+      "unitPrice": 4.8,
+      "position": 9
+    },
+    {
+      "id": "ea11ffdb",
+      "offerId": "795d5415",
+      "description": "Διάδρομος",
+      "area": 17.8,
+      "unitPrice": 4.8,
+      "position": 10
+    },
+    {
+      "id": "7de37f14",
+      "offerId": "795d5415",
+      "description": "Ντουλάπα ριπολινα",
+      "area": 13.34,
+      "unitPrice": 10.0,
+      "position": 11
+    },
+    {
+      "id": "5fc1c0a3",
+      "offerId": "795d5415",
+      "description": "Ντουλάπα εσωτερικά",
+      "area": 1.0,
+      "unitPrice": 40.0,
+      "position": 12
+    },
+    {
+      "id": "567fcf2e",
+      "offerId": "795d5415",
+      "description": "Κουζίνα",
+      "area": 37.67,
+      "unitPrice": 4.8,
+      "position": 13
+    },
+    {
+      "id": "cf31ffee",
+      "offerId": "795d5415",
+      "description": "Μπάνιο",
+      "area": 3.96,
+      "unitPrice": 4.8,
+      "position": 14
+    },
+    {
+      "id": "6c7df129",
+      "offerId": "795d5415",
+      "description": "Καλοριφέρ",
+      "area": 3.0,
+      "unitPrice": 20.0,
+      "position": 15
+    },
+    {
+      "id": "640b77b4",
+      "offerId": "795d5415",
+      "description": "Πόρτες ριπολινα",
+      "area": 7.0,
+      "unitPrice": 55.0,
+      "position": 16
+    },
+    {
+      "id": "0b8cd0dd",
+      "offerId": "795d5415",
+      "description": "Κάσα ριπολινα",
+      "area": 1.0,
+      "unitPrice": 20.0,
+      "position": 17
+    }
+  ],
+  "notes": [
+    {
+      "id": "wzkamqfo",
+      "offerId": "bfeb5e83",
+      "text": "Στην προσφορά δεν περιλαμβάνεται ο ΦΠΑ τιμολογίου.",
+      "position": 0
+    },
+    {
+      "id": "wepx10wg",
+      "offerId": "bfeb5e83",
+      "text": "Η προσφορά περιλαμβάνει την εργασία και τα υλικά.",
+      "position": 1
+    },
+    {
+      "id": "mn42d4j7",
+      "offerId": "bfeb5e83",
+      "text": "Τα χρώματα που θα χρησιμοποιηθούν εσωτερικά θα είναι άοσμα πλαστικά της vivechrom.",
+      "position": 2
+    },
+    {
+      "id": "qd993myq",
+      "offerId": "bfeb5e83",
+      "text": "Τα χρώματα που θα χρησιμοποιηθούν εξωτερικά θα είναι ακρυλικά 100% της vivechrom.",
+      "position": 3
+    },
+    {
+      "id": "l9chfqpp",
+      "offerId": "bfeb5e83",
+      "text": "Τα δάπεδα θα καλυφθούν με χαρτόνι και τα σοβατεπιά με χαρτοταινία.",
+      "position": 4
+    },
+    {
+      "id": "nc9n43go",
+      "offerId": "bfeb5e83",
+      "text": "Το τοιχίο κάτω από την τζαμαρία θα επισκευαστεί ασταρωθεί και κατόπιν θα βαφτεί.",
+      "position": 5
+    },
+    {
+      "id": "jakdcxda",
+      "offerId": "795d5415",
+      "text": "Στην προσφορά δεν περιλαμβάνεται ο ΦΠΑ τιμολογίου.",
+      "position": 6
+    },
+    {
+      "id": "hmiwih06",
+      "offerId": "795d5415",
+      "text": "Η προσφορά περιλαμβάνει την εργασία και τα υλικά.",
+      "position": 7
+    },
+    {
+      "id": "hdoh2qi1",
+      "offerId": "795d5415",
+      "text": "Τα χρώματα που θα χρησιμοποιηθούν εσωτερικά θα είναι άοσμα πλαστικά της vivechrom.",
+      "position": 8
+    },
+    {
+      "id": "xlfyfek7",
+      "offerId": "795d5415",
+      "text": "Τα δάπεδα θα καλυφθούν με χαρτόνι και τα σοβατεπιά με χαρτοταινία.",
+      "position": 9
+    },
+    {
+      "id": "xld2u3cx",
+      "offerId": "795d5415",
+      "text": "Οι πόρτες και η ντουλάπα θα βαφούν με άοσμες οικολογικές ριπολίνες νερού της βιβεχρώμ",
+      "position": 10
+    }
+  ],
+  "presets": [
+    {
+      "text": "Η προσφορά περιλαμβάνει την εργασία και τα υλικά.",
+      "position": 0,
+      "useCount": 2
+    },
+    {
+      "text": "Στην προσφορά δεν περιλαμβάνεται ο ΦΠΑ τιμολογίου.",
+      "position": 1,
+      "useCount": 2
+    },
+    {
+      "text": "Τα δάπεδα θα καλυφθούν με χαρτόνι και τα σοβατεπιά με χαρτοταινία.",
+      "position": 2,
+      "useCount": 2
+    },
+    {
+      "text": "Τα χρώματα που θα χρησιμοποιηθούν εσωτερικά θα είναι άοσμα πλαστικά της vivechrom.",
+      "position": 3,
+      "useCount": 2
+    },
+    {
+      "text": "Οι πόρτες και η ντουλάπα θα βαφούν με άοσμες οικολογικές ριπολίνες νερού της βιβεχρώμ",
+      "position": 4,
+      "useCount": 1
+    },
+    {
+      "text": "Τα χρώματα που θα χρησιμοποιηθούν εξωτερικά θα είναι ακρυλικά 100% της vivechrom.",
+      "position": 5,
+      "useCount": 1
+    },
+    {
+      "text": "Το τοιχίο κάτω από την τζαμαρία θα επισκευαστεί ασταρωθεί και κατόπιν θα βαφτεί.",
+      "position": 6,
+      "useCount": 1
+    }
+  ]
+}

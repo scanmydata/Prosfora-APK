@@ -11,3 +11,5 @@ local.properties
 *.jks
 *.keystore
 google-services.json
+*.p12
+PASSWORD.txt

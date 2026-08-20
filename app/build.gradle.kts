@@ -28,6 +28,8 @@ android {
             val storePath = System.getenv("KEYSTORE_PATH")
             if (!storePath.isNullOrBlank() && file(storePath).exists()) {
                 storeFile = file(storePath)
+                // Το keystore είναι PKCS#12 (φτιάχτηκε από migration/make_keystore.py)
+                storeType = "PKCS12"
                 storePassword = System.getenv("KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("KEY_ALIAS")
                 keyPassword = System.getenv("KEY_PASSWORD")

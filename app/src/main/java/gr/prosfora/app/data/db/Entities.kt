@@ -67,8 +67,13 @@ data class SpaceEntity(
     val unitPrice: Double = 0.0,
     val position: Int = 0,
 ) {
-    /** Σύνολο Γραμμής — ήταν app formula στο AppSheet */
-    val lineTotal: Double get() = area * unitPrice
+    /**
+     * Σύνολο Γραμμής — ήταν app formula στο AppSheet.
+     * Στρογγυλοποιείται στα 2 δεκαδικά ΠΡΙΝ αθροιστεί, όπως κάνει το AppSheet:
+     * το άθροισμα των στρογγυλοποιημένων γραμμών είναι αυτό που τυπώνεται στο PDF
+     * (π.χ. 1.892,99 €, ενώ το άθροισμα πλήρους ακρίβειας δίνει 1.892,98).
+     */
+    val lineTotal: Double get() = Math.round(area * unitPrice * 100.0) / 100.0
 }
 
 /** Λίστα_Παρατηρήσεων */
@@ -114,6 +119,7 @@ data class OfferWithDetails(
 ) {
     /** Γενικό Σύνολο — ήταν virtual column + action snapshot στο AppSheet */
     val total: Double get() = spaces.sumOf { it.lineTotal }
+
 
     /**
      * Ο κανόνας Valid_If του AppSheet: χωρίς χώρους η προσφορά μένει
