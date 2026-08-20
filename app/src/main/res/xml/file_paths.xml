@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Τα κατεβασμένα APK των ενημερώσεων -->
+    <cache-path name="updates" path="." />
+    <!-- Τα PDF προσφορών που παράγονται τοπικά -->
+    <files-path name="documents" path="documents/" />
+</paths>

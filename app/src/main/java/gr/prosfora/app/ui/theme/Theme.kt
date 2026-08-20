@@ -11,23 +11,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-private val Green = Color(0xFF1B5E20)
-private val GreenLight = Color(0xFF4C8C4A)
+// Χρώματα tovapsimo.gr — από το logo/splash
+private val BrandGreen = Color(0xFF00DE93)
+private val BrandGreenDark = Color(0xFF00A66E)
+private val Ink = Color(0xFF1E1E1E)
 
 private val LightColors = lightColorScheme(
-    primary = Green,
-    secondary = GreenLight,
+    primary = BrandGreenDark,
+    onPrimary = Color.White,
+    secondary = BrandGreen,
+    onSecondary = Ink,
 )
 
 private val DarkColors = darkColorScheme(
-    primary = GreenLight,
-    secondary = Green,
+    primary = BrandGreen,
+    onPrimary = Ink,
+    secondary = BrandGreenDark,
 )
 
 @Composable
 fun ProsforaTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val colorScheme = when {
