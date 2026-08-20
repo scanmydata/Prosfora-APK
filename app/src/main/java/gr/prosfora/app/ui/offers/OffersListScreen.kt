@@ -16,10 +16,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -44,6 +46,7 @@ import gr.prosfora.app.util.asOfferDate
 fun OffersListScreen(
     viewModel: OffersViewModel,
     onOpenOffer: (String) -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val offers by viewModel.offers.collectAsState()
     val query by viewModel.query.collectAsState()
@@ -52,7 +55,12 @@ fun OffersListScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Προσφορές") },
-                actions = { UpdateAction() },
+                actions = {
+                    UpdateAction()
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Ρυθμίσεις")
+                    }
+                },
             )
         },
         floatingActionButton = {
@@ -132,8 +140,9 @@ internal fun StatusDot(status: OfferStatus) {
     Surface(color = statusColor(status), shape = CircleShape, modifier = Modifier.size(12.dp)) {}
 }
 
+/** Ίδια με τα Format Rules του AppSheet: Ολοκληρώθηκε πράσινο, Σε επεξεργασία κόκκινο. */
 internal fun statusColor(status: OfferStatus): Color = when (status) {
-    OfferStatus.COMPLETED -> Color(0xFF00E08F)
-    OfferStatus.IN_PROGRESS -> Color(0xFFE0A800)
+    OfferStatus.COMPLETED -> Color(0xFF1DB954)
+    OfferStatus.IN_PROGRESS -> Color(0xFFD32F2F)
     OfferStatus.CREATED -> Color(0xFF9E9E9E)
 }

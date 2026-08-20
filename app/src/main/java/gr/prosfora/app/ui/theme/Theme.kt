@@ -12,8 +12,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 // Χρώματα tovapsimo.gr — από το logo/splash
-private val BrandGreen = Color(0xFF00DE93)
-private val BrandGreenDark = Color(0xFF00A66E)
+private val BrandGreen = Color(0xFF00E2A2)
+private val BrandGreenDark = Color(0xFF00A87A)
 private val Ink = Color(0xFF1E1E1E)
 
 private val LightColors = lightColorScheme(

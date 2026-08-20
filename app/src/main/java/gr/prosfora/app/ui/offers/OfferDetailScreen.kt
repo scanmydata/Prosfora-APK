@@ -73,6 +73,7 @@ fun OfferDetailScreen(
                 },
                 actions = {
                     if (current != null) {
+                        SendOfferAction(current) { viewModel.markSent(current.offer.id) }
                         IconButton(onClick = { viewModel.deleteOffer(current.offer.id); onBack() }) {
                             Icon(Icons.Default.Delete, contentDescription = "Διαγραφή")
                         }

@@ -188,3 +188,38 @@ Delete / Edit / Add ανά πίνακα, `View Ref (ID_Προσφοράς)` (NAV
 | Κατάσταση Enum + Valid_If | enum `OfferStatus` + ίδιος κανόνας στο UI |
 | MakeDoc PDF από Google Doc template | PDF generation στη Cloud Function (ή Google Docs API με το ίδιο template) |
 | Email task | Cloud Function + Resend/Gmail API, ίδιο subject/body/attachment |
+
+---
+
+## Branding & εμφάνιση (UX tab)
+| Ρύθμιση | Τιμή |
+|---|---|
+| Theme | `White - #00e2a2` — **το brand χρώμα είναι #00E2A2** |
+| Γραμματοσειρά | Roboto, μέγεθος 16 |
+| Footer style | White · Show icon in header: όχι · Show logo on launch: όχι |
+| Default start view | Προσφορές |
+| Content direction | Left-to-right |
+| Logo / Background image | ορισμένα (ανεβασμένα στο AppSheet) |
+
+## Format Rules (6) — από εδώ βγαίνουν τα χρωματιστά dots
+| Κανόνας | Στήλη | Condition | Μορφοποίηση |
+|---|---|---|---|
+| ΟΛΟΚΛΗΡΩΘΗΚΕ | Κατάσταση | `[Κατάσταση]="Ολοκληρώθηκε" AND CONTEXT("ViewType")<>"Form"` | **πράσινο** κείμενο + highlight |
+| ΣΕ ΕΠΕΞΕΡΓΑΣΙΑ | Κατάσταση | `[Κατάσταση]="Σε επεξεργασία" AND CONTEXT("ViewType")<>"Form"` | **κόκκινο** κείμενο + highlight |
+| EMAIL BUTTON | action ΑΠΟΣΤΟΛΗ ΠΡΟΣΦΟΡΑΣ | `NOT(ISBLANK([Email])) AND [Κατάσταση]="Ολοκληρώθηκε"` | `#FFB300` (κεχριμπαρένιο), small icon |
+| DELETE BUTTON | action Delete | — | κόκκινο highlight |
+| EDIT | action Edit | — | μπλε highlight |
+| ΠΡΟΒΟΛΗ ΣΥΝΟΛΟΥ | Γενικό Σύνολο Live | — | **bold, 1.3× μέγεθος** |
+
+## Security & Sync (Settings tab)
+| Ρύθμιση | Τιμή | Σημασία για το native |
+|---|---|---|
+| Launch offline | ✅ | επιβεβαιώνει offline-first — Room |
+| Delayed sync | ✅ | οι αλλαγές δεν πάνε αμέσως στο cloud |
+| Sync on start | ❌ | |
+| Delta sync | ❌ | |
+| Allow search | ❌ | (η αναζήτηση στο native υπάρχει κανονικά) |
+| Encrypt local data | ❌ | |
+| Require user consent | ✅ | |
+| All data is public | ❌ | |
+| Geolocation | ❌ | δεν χρειάζεται permission τοποθεσίας |

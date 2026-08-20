@@ -8,9 +8,11 @@ import androidx.navigation.compose.rememberNavController
 import gr.prosfora.app.ui.offers.OfferDetailScreen
 import gr.prosfora.app.ui.offers.OffersListScreen
 import gr.prosfora.app.ui.offers.OffersViewModel
+import gr.prosfora.app.ui.settings.SettingsScreen
 
 private const val ROUTE_LIST = "offers"
 private const val ROUTE_DETAIL = "offer"
+private const val ROUTE_SETTINGS = "settings"
 
 @Composable
 fun ProsforaNavHost() {
@@ -25,7 +27,11 @@ fun ProsforaNavHost() {
                     viewModel.select(id)
                     navController.navigate(ROUTE_DETAIL)
                 },
+                onOpenSettings = { navController.navigate(ROUTE_SETTINGS) },
             )
+        }
+        composable(ROUTE_SETTINGS) {
+            SettingsScreen(onBack = { navController.popBackStack() })
         }
         composable(ROUTE_DETAIL) {
             OfferDetailScreen(
