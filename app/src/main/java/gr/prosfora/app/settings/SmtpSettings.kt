@@ -3,7 +3,7 @@ package gr.prosfora.app.settings
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import androidx.security.crypto.MasterKeys
 
 data class SmtpSettings(
     val host: String = "",
@@ -32,10 +32,11 @@ data class SmtpSettings(
  */
 class SmtpSettingsStore(context: Context) {
 
+    // security-crypto 1.0.0: το master key ζει στο Android Keystore, εδώ κρατάμε το alias
     private val prefs: SharedPreferences = EncryptedSharedPreferences.create(
-        context,
         "smtp_settings",
-        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+        MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
+        context.applicationContext,
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
     )
