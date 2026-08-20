@@ -63,7 +63,17 @@ android {
     }
 
     packaging {
-        resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/NOTICE", "META-INF/LICENSE")
+        // Το android-mail και το android-activation φέρνουν τα ίδια META-INF αρχεία
+        resources.excludes += setOf(
+            "META-INF/DEPENDENCIES",
+            "META-INF/NOTICE",
+            "META-INF/NOTICE.md",
+            "META-INF/NOTICE.txt",
+            "META-INF/LICENSE",
+            "META-INF/LICENSE.md",
+            "META-INF/LICENSE.txt",
+            "META-INF/*.kotlin_module",
+        )
     }
 }
 
