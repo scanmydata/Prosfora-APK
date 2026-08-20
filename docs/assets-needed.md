@@ -1,55 +1,59 @@
-# Τι χρειάζομαι από σένα (assets & πρόσβαση)
+# Τι χρειάζομαι από σένα
 
-Κατάσταση: γεμίζει καθώς προχωράει η καταγραφή. Ό,τι λέει **ΕΚΚΡΕΜΕΙ** το περιμένω από σένα.
+## ✅ Παραδόθηκαν
+| Asset | Πού μπήκε |
+|---|---|
+| PDF template (.docx + .pdf) | `assets/pdf-template/` — placeholders αποκωδικοποιημένοι |
+| Δείγμα παραγόμενου PDF | `assets/pdf-template/sample-output.pdf` |
+| Logo & splash | `assets/branding/` |
+| Brand χρώμα | `#00E2A2` — διαβάστηκε από το AppSheet theme |
+| Στοιχεία επικοινωνίας | ΓΙΩΡΓΟΣ ΔΟΥΡΑΜΑΝΗΣ · 6945773605 · tovapsimo.gr |
 
 ---
 
-## 1. PDF template (κρίσιμο)
-Το AppSheet παράγει το PDF της προσφοράς από Google Doc:
+## ⏳ Εκκρεμούν — με σειρά προτεραιότητας
 
-`https://docs.google.com/document/d/1hgWNL034KwLS9RiaMiQ7pXQXB1bhaKcSsUtQGqZKDF4/edit`
+### 1. Keystore υπογραφής (πρέπει να γίνει ΠΡΩΤΟ)
+Πρέπει να προηγηθεί των Google credentials, γιατί το SHA-1 του keystore μπαίνει στο OAuth client.
+Αν αλλάξει το keystore μετά, σπάει το Google Sign-In.
 
-Χρειάζομαι το περιεχόμενο και το layout του για να το αναπαράγω στο native.
-**Τι να κάνεις**: File → Download → **Microsoft Word (.docx)** *και* **PDF**, και βάλε τα δύο αρχεία στον φάκελο `assets/pdf-template/` του project.
-(Το .docx μου δίνει τα `<<[Στήλη]>>` placeholders, το PDF μου δίνει την τελική εμφάνιση.)
+Χρειάζεται JDK. Αν δεν έχεις, πες μου και το φτιάχνουμε αλλιώς.
+```bash
+keytool -genkeypair -v -keystore release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias prosfora
+```
+Μετά:
+```bash
+keytool -list -v -keystore release.jks -alias prosfora | grep SHA1
+```
+Στείλε μου το **SHA-1** και βάλε τα secrets στο GitHub (οδηγίες: [README](../README.md#signing-one-time-setup)).
 
-## 2. Λογότυπο & εικόνες app
-| Asset | Πού χρησιμοποιείται | Τι χρειάζομαι |
-|---|---|---|
-| App icon / logo | launcher icon, header | PNG **1024×1024**, διαφανές background αν γίνεται |
-| Splash / background image | οθόνη εκκίνησης | PNG/JPG τουλάχιστον **1080×1920** |
-| Λογότυπο για το PDF | κεφαλίδα προσφοράς | PNG υψηλής ανάλυσης (αν διαφέρει από το app icon) |
+### 2. Google Cloud project — για Drive backup + PDF από το template
+Χωρίς αυτό δεν μπορεί το app να διαβάσει το Google Doc ούτε να γράψει backup.
 
-Βάλ' τα στο `assets/branding/`.
-*(Σημ.: τώρα το app έχει προσωρινό vector icon που έφτιαξα εγώ.)*
+1. [console.cloud.google.com](https://console.cloud.google.com) → νέο project (π.χ. `prosfores-app`)
+2. **APIs & Services → Library** → ενεργοποίησε: **Google Drive API** και **Google Docs API**
+3. **OAuth consent screen** → External → πρόσθεσε τον εαυτό σου ως *test user*
+4. **Credentials → Create credentials → OAuth client ID → Android**
+   - Package name: `gr.prosfora.app`
+   - SHA-1: αυτό από το βήμα 1
+5. Στείλε μου το **Client ID**
 
-## 3. Χρώματα & γραμματοσειρά — **ΕΚΚΡΕΜΕΙ ΚΑΤΑΓΡΑΦΗ**
-Θα τα διαβάσω από το AppSheet (UX → Brand). Αν έχεις συγκεκριμένα εταιρικά χρώματα (hex), πες τα.
+> Το app θα ζητήσει scopes `drive.file` + `documents.readonly` — δηλαδή πρόσβαση **μόνο** στα αρχεία που δημιουργεί το ίδιο, συν το συγκεκριμένο template. Όχι σε όλο το Drive σου.
 
-## 4. Δεδομένα για migration
+### 3. Δεδομένα προς μεταφορά
 Google Sheet: `1KJETbxLzQF2vWms7BIC_Vv7JOPiIE2BeUfOR-G1GhXU`
+File → Download → **Microsoft Excel (.xlsx)** → βάλ' το στο `migration/source/`
 
-Δύο επιλογές:
-- **Α (απλό)**: File → Download → `.xlsx` και βάλ' το στο `migration/source/`
-- **Β (αυτόματο)**: μου δίνεις Google Sheets API service account key — δεν χρειάζεται χειροκίνητο export, μπορώ να ξανατρέξω το migration όποτε θέλω
-
-## 5. Firebase
-- Έχεις ήδη Firebase project ή το φτιάχνουμε από το μηδέν;
-- Το `google-services.json` πρέπει να μπει στο `app/` (είναι ήδη στο `.gitignore` — δεν ανεβαίνει στο repo)
-
-## 6. Email (Φάση 5)
-Το AppSheet έστελνε από: **Γιώργος Δουραμάνης · 6945773605** (υπογραφή στο body).
-
-Χρειάζομαι:
-- Ποια διεύθυνση αποστολέα θέλεις να φαίνεται;
-- Έχεις δικό σου domain (π.χ. `douramanis.gr`); Αν ναι → **Resend** με verified domain, καθαρή λύση.
-- Αν όχι → Gmail API με τον λογαριασμό σου (πιο μπλεγμένο OAuth, αλλά δωρεάν και ο παραλήπτης βλέπει το Gmail σου)
-
-## 7. Signing keystore (για σταθερά updates)
-Βλ. [README](../README.md#signing-one-time-setup). Μέχρι να μπει, τα APK υπογράφονται με debug key.
+### 4. Στοιχεία SMTP
+Δεν τα θέλω εγώ — τα βάζεις **εσύ μέσα στο app** (Ρυθμίσεις), και μένουν κρυπτογραφημένα στο κινητό.
+Πες μου μόνο ποιον πάροχο θα χρησιμοποιήσεις ώστε να επιβεβαιώσω τις σωστές ρυθμίσεις:
+- **Gmail** → smtp.gmail.com:587, χρειάζεται **App Password** (Google Account → Security → 2-Step Verification → App passwords)
+- **Δικό σου hosting** (π.χ. mail.tovapsimo.gr) → στείλε μου host/port/TLS από τον πάροχο
 
 ---
 
-## Τι ΔΕΝ χρειάζομαι
-- Πρόσβαση στο Google Drive σου — τα υπάρχοντα PDF μένουν εκεί που είναι
-- Το AppSheet app να σβηστεί — μένει ζωντανό ως fallback μέχρι να δουλέψει το native (Φάση 7)
+## Σειρά εξάρτησης
+```
+keystore → SHA-1 → OAuth client ID → Drive backup + PDF από template → πλήρες email με συνημμένο
+                                   ↘ (ανεξάρτητα) .xlsx → migration δεδομένων
+```

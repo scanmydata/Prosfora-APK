@@ -6,14 +6,17 @@ Native αντικατάσταση του AppSheet app "ΠΡΟΣΦΟΡΕΣ" (Kotl
 ## Κατάσταση φάσεων
 | Φάση | Τι είναι | Status |
 |---|---|---|
-| 0 | Καταγραφή AppSheet schema | ✅ Ολοκληρώθηκε — [πλήρες schema](docs/phase0-appsheet-schema.md) |
-| 1 | Repo + Android scaffold + CI/CD auto-release | ✅ Έτοιμο |
-| 2 | Firebase (Firestore + Auth) | ⬜ |
-| 3 | Migration script Sheet → Firestore | ⬜ |
-| 4 | Views + CRUD | ⬜ (τώρα υπάρχει placeholder οθόνη με sample data) |
-| 5 | Email automation (Cloud Function) | ⬜ |
-| 6 | Google Drive integration | ⬜ |
-| 7 | Testing + πρώτο release | ⬜ |
+| 0 | Καταγραφή AppSheet schema | ✅ [πλήρες schema](docs/phase0-appsheet-schema.md) |
+| 1 | Repo + CI/CD auto-release | ✅ κάθε push στο main → νέο GitHub Release |
+| 2 | Data layer (Room, offline-first) | ✅ |
+| 3 | Migration δεδομένων από το Sheet | ⏳ περιμένει το `.xlsx` export |
+| 4 | Οθόνες + CRUD + νέα UX σημειώσεων | ✅ |
+| 5 | Email μέσω SMTP | ✅ (χωρίς συνημμένο ακόμη) |
+| 6 | Drive backup + PDF από το Google Doc template | ⏳ περιμένει Google OAuth client |
+| 7 | Testing + πρώτο σταθερό release | ⏳ περιμένει keystore |
+
+Αρχιτεκτονική: [docs/architecture.md](docs/architecture.md) — **χωρίς Firebase**, χωρίς backend.
+Τι χρειάζομαι από σένα: [docs/assets-needed.md](docs/assets-needed.md)
 
 ## Build
 Δεν χρειάζεται Android Studio τοπικά — **το build γίνεται στο GitHub Actions**.
