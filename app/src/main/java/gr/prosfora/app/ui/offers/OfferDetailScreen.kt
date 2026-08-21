@@ -1,8 +1,8 @@
 package gr.prosfora.app.ui.offers
 
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -30,6 +30,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -39,7 +41,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,14 +53,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import gr.prosfora.app.data.db.OfferWithDetails
 import gr.prosfora.app.data.db.SpaceEntity
-import gr.prosfora.app.notify.ContactNotifier
+import gr.prosfora.app.notify.Channel
+import gr.prosfora.app.ui.components.ConfirmDialog
+import gr.prosfora.app.ui.components.StableTextField
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asNumber
 import gr.prosfora.app.util.asOfferDate
@@ -67,17 +70,23 @@ import gr.prosfora.app.util.asSentStamp
 import gr.prosfora.app.util.parseDecimal
 import java.time.LocalDate
 
+/** Πλάτος της στήλης ενεργειών του πίνακα — ίδιο σε επικεφαλίδα και γραμμές. */
+private val ACTIONS_WIDTH = 76.dp
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OfferDetailScreen(
     viewModel: OffersViewModel,
     onBack: () -> Unit,
     onComposeEmail: () -> Unit,
+    onComposeMessage: (Channel) -> Unit,
 ) {
     val details by viewModel.selectedOffer.collectAsState()
     val presets by viewModel.presets.collectAsState()
     val selectedNotes by viewModel.selectedNoteTexts.collectAsState()
     val current = details
+
+    var confirmDeleteOffer by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -90,20 +99,9 @@ fun OfferDetailScreen(
                 },
                 actions = {
                     if (current != null) {
-                        // Ίδιοι κανόνες με το action «ΑΠΟΣΤΟΛΗ ΠΡΟΣΦΟΡΑΣ» του AppSheet
-                        IconButton(enabled = current.canSendEmail, onClick = onComposeEmail) {
-                            Icon(
-                                Icons.Default.Email,
-                                contentDescription = "Αποστολή προσφοράς",
-                                tint = if (current.canSendEmail) EmailAmber else LocalContentColor.current,
-                            )
-                        }
-                        IconButton(onClick = { viewModel.deleteOffer(current.offer.id); onBack() }) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "Διαγραφή",
-                                tint = DeleteRed,
-                            )
+                        SendMenu(current, onComposeEmail, onComposeMessage)
+                        IconButton(onClick = { confirmDeleteOffer = true }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Διαγραφή", tint = DeleteRed)
                         }
                     }
                 },
@@ -120,9 +118,64 @@ fun OfferDetailScreen(
             item { HeaderCard(current, viewModel) }
             item { SpacesCard(current, viewModel) }
             item { NotesCard(current, presets.map { it.text }, selectedNotes, viewModel) }
-            item { NotifyCard(current, viewModel) }
+            if (current.offer.lastSentAt != null || current.offer.notifiedAt != null) {
+                item { HistoryCard(current) }
+            }
             // Η κατάσταση είναι το τελευταίο βήμα της ροής, οπότε μπαίνει τελευταία
             item { StatusCard(current, viewModel) }
+        }
+
+        if (confirmDeleteOffer) {
+            ConfirmDialog(
+                title = "Διαγραφή προσφοράς",
+                message = "Θα διαγραφεί η προσφορά «${current.offer.address.ifBlank { "χωρίς διεύθυνση" }}» " +
+                    "μαζί με ${current.spaces.size} χώρους και ${current.notes.size} σημειώσεις. " +
+                    "Η διαγραφή συγχρονίζεται και στους υπόλοιπους χρήστες.",
+                onConfirm = { viewModel.deleteOffer(current.offer.id); onBack() },
+                onDismiss = { confirmDeleteOffer = false },
+            )
+        }
+    }
+}
+
+/** Ένα κουμπί αποστολής, τρεις επιλογές: email, SMS, Viber. */
+@Composable
+private fun SendMenu(
+    details: OfferWithDetails,
+    onComposeEmail: () -> Unit,
+    onComposeMessage: (Channel) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val canEmail = details.canSendEmail
+    val hasPhone = details.offer.customerPhone.isNotBlank()
+
+    Box {
+        IconButton(enabled = canEmail || hasPhone, onClick = { open = true }) {
+            Icon(
+                Icons.Default.Send,
+                contentDescription = "Αποστολή",
+                tint = if (canEmail || hasPhone) EmailAmber else LocalContentColor.current,
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Email με το PDF") },
+                enabled = canEmail,
+                leadingIcon = { Icon(Icons.Default.Email, null, tint = EmailAmber) },
+                onClick = { open = false; onComposeEmail() },
+            )
+            DropdownMenuItem(
+                text = { Text("Μήνυμα SMS") },
+                enabled = hasPhone,
+                leadingIcon = { Icon(Icons.Default.Sms, null, tint = SmsBlue) },
+                onClick = { open = false; onComposeMessage(Channel.SMS) },
+            )
+            DropdownMenuItem(
+                text = { Text("Viber") },
+                enabled = hasPhone,
+                leadingIcon = { Icon(Icons.Default.Send, null, tint = ViberPurple) },
+                onClick = { open = false; onComposeMessage(Channel.VIBER) },
+            )
         }
     }
 }
@@ -132,63 +185,52 @@ private fun HeaderCard(details: OfferWithDetails, viewModel: OffersViewModel) {
     val offer = details.offer
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(
+            StableTextField(
                 value = offer.address,
                 onValueChange = { viewModel.updateOffer(offer.copy(address = it)) },
-                label = { Text("Οδός / Περιοχή") },
-                singleLine = true,
+                label = "Οδός / Περιοχή",
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedTextField(
+            StableTextField(
                 value = offer.kind,
                 onValueChange = { viewModel.updateOffer(offer.copy(kind = it)) },
-                label = { Text("Είδος") },
-                placeholder = { Text("π.χ. Διαμέρισμα") },
-                singleLine = true,
+                label = "Είδος",
+                placeholder = "π.χ. Διαμέρισμα",
                 modifier = Modifier.fillMaxWidth(),
             )
-
-            var dateText by remember(offer.id, offer.dateEpochDay) {
-                mutableStateOf(offer.dateEpochDay.asOfferDate())
-            }
-            OutlinedTextField(
-                value = dateText,
+            StableTextField(
+                value = offer.dateEpochDay.asOfferDate(),
                 onValueChange = { text ->
-                    dateText = text
                     parseGreekDate(text)?.let {
                         viewModel.updateOffer(offer.copy(dateEpochDay = it.toEpochDay()))
                     }
                 },
-                label = { Text("Ημερομηνία") },
-                placeholder = { Text("π.χ. 20/8/2026") },
-                singleLine = true,
+                label = "Ημερομηνία",
+                placeholder = "π.χ. 20/8/2026",
                 modifier = Modifier.fillMaxWidth(),
             )
 
             HorizontalDivider()
             Text("Στοιχεία πελάτη", style = MaterialTheme.typography.titleSmall)
 
-            OutlinedTextField(
+            StableTextField(
                 value = offer.customerName,
                 onValueChange = { viewModel.updateOffer(offer.copy(customerName = it)) },
-                label = { Text("Ονοματεπώνυμο") },
-                singleLine = true,
+                label = "Ονοματεπώνυμο",
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedTextField(
+            StableTextField(
                 value = offer.email,
                 onValueChange = { viewModel.updateOffer(offer.copy(email = it)) },
-                label = { Text("Email") },
-                singleLine = true,
+                label = "Email",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedTextField(
+            StableTextField(
                 value = offer.customerPhone,
                 onValueChange = { viewModel.updateOffer(offer.copy(customerPhone = it)) },
-                label = { Text("Κινητό") },
-                placeholder = { Text("π.χ. 6941234567") },
-                singleLine = true,
+                label = "Κινητό",
+                placeholder = "π.χ. 6941234567",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -200,30 +242,36 @@ private fun HeaderCard(details: OfferWithDetails, viewModel: OffersViewModel) {
 
 @Composable
 private fun SpacesCard(details: OfferWithDetails, viewModel: OffersViewModel) {
+    var editingId by remember(details.offer.id) { mutableStateOf<String?>(null) }
+    var pendingDelete by remember { mutableStateOf<SpaceEntity?>(null) }
+
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Ανάλυση χώρων", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Πάτα σε μια γραμμή για να την αλλάξεις",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
 
-            Row(Modifier.fillMaxWidth()) {
-                TableHeader("ΠΕΡΙΓΡΑΦΗ", 2.2f)
-                TableHeader("ΕΠΙΦ.", 1f, TextAlign.End)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                TableHeader("ΠΕΡΙΓΡΑΦΗ", 2.0f)
+                TableHeader("ΕΠΙΦ.", 1.0f, TextAlign.End)
                 TableHeader("ΤΙΜΗ", 1.2f, TextAlign.End)
                 TableHeader("ΣΥΝΟΛΟ", 1.3f, TextAlign.End)
-                Spacer(Modifier.width(48.dp))
+                Spacer(Modifier.width(ACTIONS_WIDTH))
             }
             HorizontalDivider()
 
             details.spaces.forEach { space ->
-                SpaceRow(
-                    space = space,
-                    onSave = { viewModel.updateSpace(it) },
-                    onDelete = { viewModel.deleteSpace(space) },
-                )
+                if (editingId == space.id) {
+                    SpaceEditor(
+                        space = space,
+                        onSave = { viewModel.updateSpace(it); editingId = null },
+                        onCancel = { editingId = null },
+                    )
+                } else {
+                    SpaceRow(
+                        space = space,
+                        onEdit = { editingId = space.id },
+                        onDelete = { pendingDelete = space },
+                    )
+                }
             }
 
             HorizontalDivider()
@@ -238,13 +286,24 @@ private fun SpacesCard(details: OfferWithDetails, viewModel: OffersViewModel) {
                     details.total.asMoney(),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.End,
                 )
+                Spacer(Modifier.width(ACTIONS_WIDTH))
             }
 
             AddSpaceRow { description, area, price ->
                 viewModel.addSpace(details.offer.id, description, area, price)
             }
         }
+    }
+
+    pendingDelete?.let { space ->
+        ConfirmDialog(
+            title = "Διαγραφή χώρου",
+            message = "Θα διαγραφεί «${space.description}» (${space.lineTotal.asMoney()}).",
+            onConfirm = { viewModel.deleteSpace(space) },
+            onDismiss = { pendingDelete = null },
+        )
     }
 }
 
@@ -256,50 +315,58 @@ private fun RowScope.TableHeader(text: String, weight: Float, align: TextAlign =
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = align,
+        maxLines = 1,
     )
 }
 
-/** Γραμμή χώρου· με tap ανοίγει σε φόρμα επεξεργασίας στη θέση της. */
+/**
+ * Τα ποσά στοιχίζονται δεξιά με σταθερά βάρη στηλών και ενιαίο μέγεθος
+ * γραμματοσειράς, ώστε οι τελείες των δεκαδικών να πέφτουν στην ίδια στήλη.
+ */
 @Composable
-private fun SpaceRow(
-    space: SpaceEntity,
-    onSave: (SpaceEntity) -> Unit,
-    onDelete: () -> Unit,
-) {
-    var editing by remember(space.id) { mutableStateOf(false) }
-
-    if (!editing) {
-        Row(
-            Modifier.fillMaxWidth().clickable { editing = true },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(space.description, Modifier.weight(2.2f), style = MaterialTheme.typography.bodyMedium)
-            Text(
-                space.area.asNumber(),
-                Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.End,
-            )
-            Text(
-                space.unitPrice.asMoney(),
-                Modifier.weight(1.2f),
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.End,
-            )
-            Text(
-                space.lineTotal.asMoney(),
-                Modifier.weight(1.3f),
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.End,
-                fontWeight = FontWeight.Medium,
-            )
-            IconButton(onClick = { editing = true }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Default.Edit, contentDescription = "Επεξεργασία", tint = EditBlue)
+private fun SpaceRow(space: SpaceEntity, onEdit: () -> Unit, onDelete: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onEdit),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            space.description,
+            Modifier.weight(2.0f),
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 2,
+        )
+        AmountCell(space.area.asNumber(), 1.0f)
+        AmountCell(space.unitPrice.asMoney(), 1.2f)
+        AmountCell(space.lineTotal.asMoney(), 1.3f, bold = true)
+        Row(Modifier.width(ACTIONS_WIDTH), horizontalArrangement = Arrangement.End) {
+            IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.Edit, "Επεξεργασία", tint = EditBlue, modifier = Modifier.size(18.dp))
+            }
+            IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.Delete, "Διαγραφή", tint = DeleteRed, modifier = Modifier.size(18.dp))
             }
         }
-        return
     }
+}
 
+@Composable
+private fun RowScope.AmountCell(text: String, weight: Float, bold: Boolean = false) {
+    Text(
+        text,
+        modifier = Modifier.weight(weight),
+        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+        textAlign = TextAlign.End,
+        maxLines = 1,
+        fontWeight = if (bold) FontWeight.Medium else FontWeight.Normal,
+    )
+}
+
+@Composable
+private fun SpaceEditor(
+    space: SpaceEntity,
+    onSave: (SpaceEntity) -> Unit,
+    onCancel: () -> Unit,
+) {
     var description by remember(space.id) { mutableStateOf(space.description) }
     var area by remember(space.id) { mutableStateOf(space.area.asNumber()) }
     var price by remember(space.id) { mutableStateOf(space.unitPrice.asNumber()) }
@@ -312,27 +379,27 @@ private fun SpaceRow(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
+            StableTextField(
                 value = description,
                 onValueChange = { description = it },
-                label = { Text("Περιγραφή χώρου") },
-                singleLine = true,
+                label = "Περιγραφή χώρου",
+                debounceMillis = 0,
                 modifier = Modifier.fillMaxWidth(),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
+                StableTextField(
                     value = area,
                     onValueChange = { area = it },
-                    label = { Text("Επιφάνεια") },
-                    singleLine = true,
+                    label = "Επιφάνεια",
+                    debounceMillis = 0,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )
-                OutlinedTextField(
+                StableTextField(
                     value = price,
                     onValueChange = { price = it },
-                    label = { Text("Τιμή μονάδος") },
-                    singleLine = true,
+                    label = "Τιμή μονάδος",
+                    debounceMillis = 0,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )
@@ -344,6 +411,8 @@ private fun SpaceRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            // Δύο κουμπιά σε πλήρες πλάτος: με τρία στριμώχνονταν και το
+            // «Αποθήκευση» έσπαγε σε δύο γραμμές.
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     enabled = valid,
@@ -355,18 +424,12 @@ private fun SpaceRow(
                                 unitPrice = priceValue ?: space.unitPrice,
                             ),
                         )
-                        editing = false
                     },
                     modifier = Modifier.weight(1f),
-                ) { Text("Αποθήκευση") }
+                ) { Text("Αποθήκευση", maxLines = 1) }
 
-                OutlinedButton(
-                    onClick = { editing = false },
-                    modifier = Modifier.weight(1f),
-                ) { Text("Άκυρο") }
-
-                IconButton(onClick = { editing = false; onDelete() }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Διαγραφή", tint = DeleteRed)
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                    Text("Άκυρο", maxLines = 1)
                 }
             }
         }
@@ -384,27 +447,27 @@ private fun AddSpaceRow(onAdd: (String, Double, Double) -> Unit) {
     val canAdd = description.isNotBlank() && areaValue != null && priceValue != null
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
+        StableTextField(
             value = description,
             onValueChange = { description = it },
-            label = { Text("Περιγραφή χώρου") },
-            singleLine = true,
+            label = "Περιγραφή χώρου",
+            debounceMillis = 0,
             modifier = Modifier.fillMaxWidth(),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
+            StableTextField(
                 value = area,
                 onValueChange = { area = it },
-                label = { Text("Επιφάνεια") },
-                singleLine = true,
+                label = "Επιφάνεια",
+                debounceMillis = 0,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.weight(1f),
             )
-            OutlinedTextField(
+            StableTextField(
                 value = price,
                 onValueChange = { price = it },
-                label = { Text("Τιμή μονάδος") },
-                singleLine = true,
+                label = "Τιμή μονάδος",
+                debounceMillis = 0,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.weight(1f),
             )
@@ -428,7 +491,7 @@ private fun AddSpaceRow(onAdd: (String, Double, Double) -> Unit) {
         ) {
             Icon(Icons.Default.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Προσθήκη χώρου")
+            Text("Προσθήκη χώρου", maxLines = 1)
         }
     }
 }
@@ -442,6 +505,8 @@ private fun NotesCard(
     selected: Set<String>,
     viewModel: OffersViewModel,
 ) {
+    var pendingDelete by remember { mutableStateOf<gr.prosfora.app.data.db.NoteEntity?>(null) }
+
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Παρατηρήσεις", style = MaterialTheme.typography.titleMedium)
@@ -474,24 +539,35 @@ private fun NotesCard(
             }
 
             // Σημειώσεις γραμμένες ελεύθερα, που δεν είναι στη βιβλιοθήκη
-            val extras = details.notes.filter { it.text !in presets }
-            extras.forEach { note ->
+            details.notes.filter { it.text !in presets }.forEach { note ->
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Checkbox(checked = true, onCheckedChange = { viewModel.deleteNote(note) })
+                    Checkbox(checked = true, onCheckedChange = { pendingDelete = note })
                     Text(
                         note.text,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f).padding(start = 4.dp),
                     )
+                    IconButton(onClick = { pendingDelete = note }, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.Delete, "Διαγραφή", tint = DeleteRed, modifier = Modifier.size(18.dp))
+                    }
                 }
             }
 
             Spacer(Modifier.height(8.dp))
             FreeNoteInput { text, pin -> viewModel.addFreeNote(details.offer.id, text, pin) }
         }
+    }
+
+    pendingDelete?.let { note ->
+        ConfirmDialog(
+            title = "Διαγραφή σημείωσης",
+            message = note.text,
+            onConfirm = { viewModel.deleteNote(note) },
+            onDismiss = { pendingDelete = null },
+        )
     }
 }
 
@@ -501,10 +577,13 @@ private fun FreeNoteInput(onAdd: (String, Boolean) -> Unit) {
     var pin by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
+        StableTextField(
             value = text,
             onValueChange = { text = it },
-            label = { Text("Νέα σημείωση") },
+            label = "Νέα σημείωση",
+            singleLine = false,
+            minLines = 2,
+            debounceMillis = 0,
             modifier = Modifier.fillMaxWidth(),
         )
         Row(
@@ -518,8 +597,6 @@ private fun FreeNoteInput(onAdd: (String, Boolean) -> Unit) {
                 modifier = Modifier.padding(start = 4.dp),
             )
         }
-        // Πλήρες πλάτος: μέσα σε Row με weight το κείμενο στριμωχνόταν και
-        // τυπωνόταν κάθετα, ένα γράμμα ανά γραμμή.
         Button(
             onClick = {
                 onAdd(text.trim(), pin)
@@ -531,68 +608,25 @@ private fun FreeNoteInput(onAdd: (String, Boolean) -> Unit) {
         ) {
             Icon(Icons.Default.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Προσθήκη σημείωσης")
+            Text("Προσθήκη σημείωσης", maxLines = 1)
         }
     }
 }
 
-// ------------------------------------------------------------ ειδοποίηση -----
+// -------------------------------------------------------------- ιστορικό -----
 
 @Composable
-private fun NotifyCard(details: OfferWithDetails, viewModel: OffersViewModel) {
-    val context = LocalContext.current
+private fun HistoryCard(details: OfferWithDetails) {
     val offer = details.offer
-
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Ειδοποίηση πελάτη", style = MaterialTheme.typography.titleMedium)
-            Text(
-                if (details.canNotify) {
-                    ContactNotifier.message(details)
-                } else if (offer.customerPhone.isBlank()) {
-                    "Συμπλήρωσε κινητό για να μπορείς να στείλεις ειδοποίηση."
-                } else {
-                    "Στείλε πρώτα το email — η ειδοποίηση αναφέρεται σε αυτό."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ContactNotifier.Channel.entries.forEach { channel ->
-                    OutlinedButton(
-                        enabled = details.canNotify,
-                        onClick = {
-                            val opened = ContactNotifier.open(context, channel, details)
-                            if (opened) {
-                                viewModel.markNotified(offer.id, channel.storedValue)
-                            } else {
-                                Toast.makeText(
-                                    context,
-                                    "Δεν βρέθηκε εφαρμογή για ${channel.label}",
-                                    Toast.LENGTH_LONG,
-                                ).show()
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(
-                            if (channel == ContactNotifier.Channel.SMS) Icons.Default.Sms else Icons.Default.Send,
-                            contentDescription = null,
-                            tint = if (channel == ContactNotifier.Channel.SMS) SmsBlue else ViberPurple,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(channel.label)
-                    }
-                }
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Ιστορικό αποστολών", style = MaterialTheme.typography.titleMedium)
+            offer.lastSentAt?.let {
+                Text("✉ Email · ${it.asSentStamp()}", style = MaterialTheme.typography.bodySmall, color = SentGreen)
             }
-
             offer.notifiedAt?.let {
-                Text(
-                    "Στάλθηκε ${offer.notifiedVia.orEmpty()} · ${it.asSentStamp()}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = SentGreen,
-                )
+                val via = if (offer.notifiedVia.equals("VIBER", true)) "Viber" else "SMS"
+                Text("✆ $via · ${it.asSentStamp()}", style = MaterialTheme.typography.bodySmall, color = SentGreen)
             }
         }
     }
@@ -611,7 +645,7 @@ private fun StatusCard(details: OfferWithDetails, viewModel: OffersViewModel) {
                     FilterChip(
                         selected = details.offer.status == status,
                         onClick = { viewModel.setStatus(details, status) },
-                        label = { Text(status.label) },
+                        label = { Text(status.label, maxLines = 1) },
                         leadingIcon = { StatusDot(status) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = statusColor(status).copy(alpha = 0.20f),

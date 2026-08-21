@@ -67,10 +67,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
     var presetHint by remember { mutableStateOf<String?>(null) }
 
     val googleSettings = remember { GoogleSettings(context) }
-    var subjectTemplate by remember { mutableStateOf(googleSettings.emailSubjectTemplate) }
-    var bodyTemplate by remember { mutableStateOf(googleSettings.emailBodyTemplate) }
     var sendMethod by remember { mutableStateOf(googleSettings.sendMethod) }
-    var sheetInput by remember { mutableStateOf(googleSettings.spreadsheetId.orEmpty()) }
     var autoSync by remember { mutableStateOf(googleSettings.autoSync) }
     var lastSync by remember { mutableStateOf(googleSettings.lastSyncAt) }
     var syncing by remember { mutableStateOf<String?>(null) }
@@ -194,8 +191,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
             }
 
             SharedDatabaseCard(
-                sheetInput = sheetInput,
-                onSheetInputChange = { sheetInput = it },
                 autoSync = autoSync,
                 onAutoSyncChange = { autoSync = it; googleSettings.autoSync = it },
                 lastSync = lastSync,
@@ -204,6 +199,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
                 onSynced = { lastSync = googleSettings.lastSyncAt },
                 googleSettings = googleSettings,
             )
+
+            MessageTemplatesCard(googleSettings)
 
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

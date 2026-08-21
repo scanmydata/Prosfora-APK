@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,21 +37,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import gr.prosfora.app.data.db.NoteEntity
-import gr.prosfora.app.data.db.OfferEntity
 import gr.prosfora.app.data.db.OfferWithDetails
-import gr.prosfora.app.data.db.SpaceEntity
 import gr.prosfora.app.doc.DocxTemplate
 import gr.prosfora.app.doc.OfferPdf
 import gr.prosfora.app.google.DriveClient
+import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.google.SendMethod
+import gr.prosfora.app.mail.GmailSender
+import gr.prosfora.app.mail.MailSender
+import gr.prosfora.app.settings.SmtpSettingsStore
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.ui.pdf.PdfPreview
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.time.LocalDate
 
 /**
  * Το πρότυπο του PDF: επεξεργασία στο Google Docs και προεπισκόπηση της
@@ -66,6 +69,37 @@ fun TemplateScreen(onBack: () -> Unit) {
     var busy by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<File?>(null) }
     var templateId by remember { mutableStateOf(settings.templateFileId) }
+
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = "Ανέβασμα προτύπου…"
+        scope.launch {
+            val result = runCatching {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("Δεν διαβάστηκε το αρχείο")
+                val drive = DriveClient(authorizer.accessToken())
+                // Το παλιό πρότυπο διαγράφεται ώστε να μη μείνουν δύο με το ίδιο όνομα
+                settings.templateFileId?.let { old -> runCatching { drive.delete(old) } }
+                settings.templateFileId = null
+                val folder = DriveWorkspace(drive, settings).rootFolder()
+                drive.upload(
+                    name = GoogleSettings.TEMPLATE_NAME,
+                    bytes = bytes,
+                    mimeType = DriveClient.DOCX_MIME,
+                    parentId = folder,
+                    convertToGoogleDoc = true,
+                ).also { settings.templateFileId = it }
+            }
+            busy = null
+            result.onSuccess {
+                Toast.makeText(context, "Το πρότυπο αντικαταστάθηκε", Toast.LENGTH_LONG).show()
+            }.onFailure {
+                Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -133,6 +167,56 @@ fun TemplateScreen(onBack: () -> Unit) {
             OutlinedButton(
                 enabled = busy == null,
                 onClick = {
+                    busy = "Αποστολή προτύπου…"
+                    scope.launch {
+                        val result = runCatching {
+                            val drive = DriveClient(authorizer.accessToken())
+                            val docx = OfferPdf.fetchTemplateDocx(drive, settings)
+                            val file = File(context.cacheDir, "${GoogleSettings.TEMPLATE_NAME}.docx")
+                            file.writeBytes(docx)
+                            val smtp = SmtpSettingsStore(context).load()
+                            val to = smtp.fromAddress.ifBlank { settings.senderName }
+                            require(to.contains("@")) {
+                                "Δεν βρέθηκε δική σου διεύθυνση — συμπλήρωσε «Διεύθυνση αποστολέα» στις Ρυθμίσεις"
+                            }
+                            val message = MailSender.Outgoing(
+                                to = to,
+                                subject = "Πρότυπο προσφοράς για επεξεργασία",
+                                body = "Επισυνάπτεται το τρέχον πρότυπο.
+
+" +
+                                    "Άλλαξέ το και στείλ' το πίσω στον εαυτό σου· μετά, από την " +
+                                    "οθόνη «Πρότυπο προσφοράς» πάτα «Αντικατάσταση από αρχείο».",
+                                attachment = file,
+                                attachmentName = file.name,
+                            )
+                            if (settings.sendMethod == SendMethod.GOOGLE) {
+                                GmailSender.send(authorizer.accessToken(), message)
+                            } else {
+                                MailSender.send(smtp, message)
+                            }
+                            to
+                        }
+                        busy = null
+                        result.onSuccess {
+                            Toast.makeText(context, "Στάλθηκε στο $it", Toast.LENGTH_LONG).show()
+                        }.onFailure {
+                            Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Αποστολή στο email μου", maxLines = 1) }
+
+            OutlinedButton(
+                enabled = busy == null,
+                onClick = { picker.launch(arrayOf(DriveClient.DOCX_MIME)) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Αντικατάσταση από αρχείο", maxLines = 1) }
+
+            OutlinedButton(
+                enabled = busy == null,
+                onClick = {
                     scope.launch {
                         busy = "Δημιουργία προεπισκόπησης…"
                         runCatching {
@@ -179,7 +263,7 @@ private suspend fun renderSamplePdf(
     settings: GoogleSettings,
 ): File = withContext(Dispatchers.IO) {
     val templateDocx = OfferPdf.fetchTemplateDocx(context, drive, settings)
-    val rendered = DocxTemplate.render(templateDocx, SAMPLE)
+    val rendered = DocxTemplate.render(templateDocx, SampleOffer.value)
 
     val folderId = settings.folderId
         ?: drive.findOrCreateFolder(GoogleSettings.DRIVE_FOLDER_NAME).also { settings.folderId = it }
@@ -202,26 +286,6 @@ private suspend fun renderSamplePdf(
     }
 }
 
-private val SAMPLE: OfferWithDetails by lazy {
-    val offer = OfferEntity(
-        id = "preview",
-        address = "Δείγμα 12, Αθήνα",
-        dateEpochDay = LocalDate.now().toEpochDay(),
-        kind = "Διαμέρισμα",
-    )
-    OfferWithDetails(
-        offer = offer,
-        spacesRaw = listOf(
-            SpaceEntity(offerId = offer.id, description = "Σαλόνι", area = 45.0, unitPrice = 4.8, position = 0),
-            SpaceEntity(offerId = offer.id, description = "Κουζίνα", area = 18.5, unitPrice = 4.8, position = 1),
-            SpaceEntity(offerId = offer.id, description = "Πόρτες ριπολίνα", area = 4.0, unitPrice = 55.0, position = 2),
-        ),
-        notesRaw = listOf(
-            NoteEntity(offerId = offer.id, text = "Στην προσφορά δεν περιλαμβάνεται ο ΦΠΑ τιμολογίου.", position = 0),
-            NoteEntity(offerId = offer.id, text = "Η προσφορά περιλαμβάνει την εργασία και τα υλικά.", position = 1),
-        ),
-    )
-}
 
 private val PLACEHOLDER_HELP = """
     <<[Οδός / Περιοχή]>> · <<[Είδος]>> · <<[Ημερομηνία]>> · <<[Γενικό Σύνολο Live]>>

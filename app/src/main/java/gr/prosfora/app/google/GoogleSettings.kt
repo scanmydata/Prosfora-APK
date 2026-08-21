@@ -1,6 +1,7 @@
 package gr.prosfora.app.google
 
 import android.content.Context
+import gr.prosfora.app.message.MessageTemplates
 
 /**
  * Ό,τι χρειάζεται για να ξαναβρεθούν τα αρχεία στο Drive. Μόνο αναγνωριστικά —
@@ -65,6 +66,19 @@ class GoogleSettings(context: Context) {
         get() = prefs.getString(KEY_EMAIL_SUBJECT, DEFAULT_EMAIL_SUBJECT) ?: DEFAULT_EMAIL_SUBJECT
         set(value) = prefs.edit().putString(KEY_EMAIL_SUBJECT, value).apply()
 
+    var smsTemplate: String
+        get() = prefs.getString(KEY_SMS, MessageTemplates.DEFAULT_SMS) ?: MessageTemplates.DEFAULT_SMS
+        set(value) = prefs.edit().putString(KEY_SMS, value).apply()
+
+    var viberTemplate: String
+        get() = prefs.getString(KEY_VIBER, MessageTemplates.DEFAULT_VIBER) ?: MessageTemplates.DEFAULT_VIBER
+        set(value) = prefs.edit().putString(KEY_VIBER, value).apply()
+
+    /** Υποφάκελος όπου καταλήγουν τα παραγόμενα PDF. */
+    var pdfFolderId: String?
+        get() = prefs.getString(KEY_PDF_FOLDER, null)
+        set(value) = prefs.edit().putString(KEY_PDF_FOLDER, value).apply()
+
     fun clear() = prefs.edit().clear().apply()
 
     companion object {
@@ -77,17 +91,15 @@ class GoogleSettings(context: Context) {
         private const val KEY_EMAIL_SUBJECT = "email_subject"
         private const val KEY_SEND_METHOD = "send_method"
         private const val KEY_SENDER_NAME = "sender_name"
+        private const val KEY_SMS = "sms_template"
+        private const val KEY_VIBER = "viber_template"
+        private const val KEY_PDF_FOLDER = "pdf_folder_id"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
         const val TEMPLATE_NAME = "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — πρότυπο"
 
-        const val DEFAULT_EMAIL_SUBJECT = "Προσφορά ελαιοχρωματισμών {διεύθυνση}"
+        val DEFAULT_EMAIL_SUBJECT = MessageTemplates.DEFAULT_EMAIL_SUBJECT
 
-        val DEFAULT_EMAIL_BODY = """
-            Καλησπέρα,
-
-            Σας αποστέλλω την προσφορά για το χρωματισμό της {είδος} σας.
-            Στη διάθεσή σας για οποιαδήποτε επιπλέον πληροφορία χρειαστείτε.
-        """.trimIndent()
+        val DEFAULT_EMAIL_BODY = MessageTemplates.DEFAULT_EMAIL_BODY
     }
 }

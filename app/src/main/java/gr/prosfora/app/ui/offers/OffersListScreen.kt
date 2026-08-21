@@ -1,7 +1,8 @@
 package gr.prosfora.app.ui.offers
 
 import android.widget.Toast
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,12 +50,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import gr.prosfora.app.BuildConfig
 import gr.prosfora.app.data.db.OfferStatus
 import gr.prosfora.app.data.db.OfferWithDetails
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.sync.SheetSync
+import gr.prosfora.app.ui.components.ConfirmDialog
+import gr.prosfora.app.update.UpdateChecker
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
 import gr.prosfora.app.util.asSentStamp
@@ -75,6 +79,8 @@ fun OffersListScreen(
     val authorizer = rememberGoogleAuthorizer()
     val googleSettings = remember { GoogleSettings(context) }
     var refreshing by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<OfferWithDetails?>(null) }
+    var update by remember { mutableStateOf<UpdateChecker.Release?>(null) }
 
     Scaffold(
         topBar = {
@@ -122,6 +128,10 @@ fun OffersListScreen(
                             val sheets = SheetsClient(authorizer.accessToken())
                             SheetSync(context, sheets, googleSettings).sync()
                         }
+                        // Το τράβηγμα κάνει και έλεγχο έκδοσης, όπως το κουμπί ανανέωσης
+                        val release = runCatching {
+                            UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
+                        }.getOrNull()
                         refreshing = false
                         result.onSuccess {
                             Toast.makeText(context, it.summary, Toast.LENGTH_SHORT).show()
@@ -132,6 +142,7 @@ fun OffersListScreen(
                                 Toast.LENGTH_LONG,
                             ).show()
                         }
+                        if (release != null) update = release
                     }
                 },
                 modifier = Modifier.fillMaxSize(),
@@ -159,20 +170,48 @@ fun OffersListScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(offers, key = { it.offer.id }) { details ->
-                            OfferRow(details) { onOpenOffer(details.offer.id) }
+                            OfferRow(
+                                details = details,
+                                onClick = { onOpenOffer(details.offer.id) },
+                                onLongPress = { pendingDelete = details },
+                            )
                         }
                     }
                 }
             }
         }
+
+        pendingDelete?.let { target ->
+            ConfirmDialog(
+                title = "Διαγραφή προσφοράς",
+                message = "Θα διαγραφεί η «${target.offer.address.ifBlank { "χωρίς διεύθυνση" }}» " +
+                    "με ${target.spaces.size} χώρους. Η διαγραφή συγχρονίζεται και στους " +
+                    "υπόλοιπους χρήστες.",
+                onConfirm = { viewModel.deleteOffer(target.offer.id) },
+                onDismiss = { pendingDelete = null },
+            )
+        }
+
+        update?.let { release ->
+            UpdateDialog(release = release, onDismiss = { update = null })
+        }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
-private fun OfferRow(details: OfferWithDetails, onClick: () -> Unit) {
+private fun OfferRow(
+    details: OfferWithDetails,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+) {
     val offer = details.offer
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    Card(
+        modifier = Modifier.fillMaxWidth().combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongPress,
+        ),
+    ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,

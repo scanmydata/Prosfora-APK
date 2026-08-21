@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Για την εγκατάσταση ενημερώσεων που κατεβαίνουν από τα GitHub Releases -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Για να φεύγει το SMS από την εφαρμογή και να επιβεβαιώνεται πραγματικά η
+         αποστολή. Ζητείται στην ώρα του· χωρίς αυτό πέφτουμε στην εφαρμογή μηνυμάτων. -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
 
     <!-- Android 11+: χωρίς αυτά τα queries το app δεν «βλέπει» τις εφαρμογές
          μηνυμάτων και το Viber, και τα intents αποτυγχάνουν σιωπηλά. -->

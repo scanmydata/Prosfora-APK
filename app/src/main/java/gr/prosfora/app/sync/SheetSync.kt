@@ -95,10 +95,21 @@ class SheetSync(
         )
     }
 
-    /** Δημιουργεί νέο κοινόχρηστο Sheet με τα σωστά tabs και ανεβάζει τα τοπικά. */
-    suspend fun createSharedSheet(title: String): String = withContext(Dispatchers.IO) {
+    /**
+     * Δημιουργεί νέο κοινόχρηστο Sheet με τα σωστά tabs και ανεβάζει τα τοπικά.
+     * Το [drive] δίνεται ώστε το αρχείο να μπει στον φάκελο «Προσφορές» αντί για
+     * τη ρίζα του Drive — το Sheets API δημιουργεί πάντα στη ρίζα.
+     */
+    suspend fun createSharedSheet(
+        title: String,
+        drive: gr.prosfora.app.google.DriveClient? = null,
+    ): String = withContext(Dispatchers.IO) {
         val id = sheets.createSpreadsheet(title, listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES))
         settings.spreadsheetId = id
+        if (drive != null) {
+            val folder = gr.prosfora.app.google.DriveWorkspace(drive, settings).rootFolder()
+            runCatching { drive.moveToFolder(id, folder) }
+        }
         sync()
         id
     }

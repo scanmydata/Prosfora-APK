@@ -24,9 +24,54 @@ import gr.prosfora.app.update.UpdateChecker
 import kotlinx.coroutines.launch
 
 /**
- * Κουμπί «έλεγχος για ενημέρωση» — ρωτάει τα GitHub Releases, κατεβάζει το APK
- * και ανοίγει τον installer.
+ * Διάλογος νέας έκδοσης. Ξεχωριστός από το κουμπί, γιατί τον χρησιμοποιεί και
+ * το pull-to-refresh της λίστας.
  */
+@Composable
+fun UpdateDialog(release: UpdateChecker.Release, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var downloading by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = { if (!downloading) onDismiss() },
+        title = { Text("Νέα έκδοση ${release.tag}") },
+        text = {
+            Text(
+                if (downloading) "Γίνεται λήψη…"
+                else release.notes.take(400).ifBlank { "Διαθέσιμη ενημέρωση." },
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !downloading,
+                onClick = {
+                    downloading = true
+                    scope.launch {
+                        val result = runCatching {
+                            val apk = UpdateChecker.download(context, release)
+                            UpdateChecker.install(context, apk)
+                        }
+                        downloading = false
+                        result.onFailure {
+                            Toast.makeText(
+                                context,
+                                "Αποτυχία λήψης: ${it.message}",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        onDismiss()
+                    }
+                },
+            ) { Text("Ενημέρωση") }
+        },
+        dismissButton = {
+            TextButton(enabled = !downloading, onClick = onDismiss) { Text("Αργότερα") }
+        },
+    )
+}
+
+/** Κουμπί χειροκίνητου ελέγχου για ενημέρωση. */
 @Composable
 fun UpdateAction() {
     val context = LocalContext.current
@@ -63,31 +108,7 @@ fun UpdateAction() {
         }
     }
 
-    val release = available
-    if (release != null) {
-        AlertDialog(
-            onDismissRequest = { available = null },
-            title = { Text("Νέα έκδοση ${release.tag}") },
-            text = { Text(release.notes.take(400).ifBlank { "Διαθέσιμη ενημέρωση." }) },
-            confirmButton = {
-                TextButton(onClick = {
-                    available = null
-                    busy = true
-                    scope.launch {
-                        val result = runCatching {
-                            val apk = UpdateChecker.download(context, release)
-                            UpdateChecker.install(context, apk)
-                        }
-                        busy = false
-                        result.onFailure {
-                            Toast.makeText(context, "Αποτυχία λήψης: ${it.message}", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }) { Text("Ενημέρωση") }
-            },
-            dismissButton = {
-                TextButton(onClick = { available = null }) { Text("Αργότερα") }
-            },
-        )
+    available?.let { release ->
+        UpdateDialog(release = release, onDismiss = { available = null })
     }
 }

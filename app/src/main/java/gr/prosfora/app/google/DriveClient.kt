@@ -124,6 +124,21 @@ class DriveClient(private val accessToken: String) {
         }
     }
 
+    /** Μεταφέρει ένα αρχείο σε φάκελο. Το Sheets API δημιουργεί πάντα στη ρίζα. */
+    suspend fun moveToFolder(fileId: String, folderId: String) = withContext(Dispatchers.IO) {
+        val current = execute(
+            builder("$API/files/$fileId?fields=parents").get().build(),
+        ) { body ->
+            val parents = JSONObject(body).optJSONArray("parents") ?: JSONArray()
+            (0 until parents.length()).joinToString(",") { parents.getString(it) }
+        }
+        val url = buildString {
+            append("$API/files/$fileId?addParents=$folderId&fields=id")
+            if (current.isNotBlank()) append("&removeParents=${current.urlEncode()}")
+        }
+        execute(builder(url).patch("{}".toRequestBody(JSON)).build()) { }
+    }
+
     suspend fun delete(fileId: String) = withContext(Dispatchers.IO) {
         http.newCall(builder("$API/files/$fileId").delete().build()).execute().use { response ->
             if (!response.isSuccessful) throw driveError(response.code, response.body?.string())

@@ -10,21 +10,30 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import gr.prosfora.app.google.DriveClient
+import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.google.rememberGoogleAuthorizer
@@ -40,8 +49,6 @@ import java.util.Date
  */
 @Composable
 fun SharedDatabaseCard(
-    sheetInput: String,
-    onSheetInputChange: (String) -> Unit,
     autoSync: Boolean,
     onAutoSyncChange: (Boolean) -> Unit,
     lastSync: Long,
@@ -53,37 +60,44 @@ fun SharedDatabaseCard(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val authorizer = rememberGoogleAuthorizer()
-    val connectedId = googleSettings.spreadsheetId
+
+    var connectedId by remember { mutableStateOf(googleSettings.spreadsheetId) }
+    var connectedName by remember { mutableStateOf<String?>(null) }
+    var picking by remember { mutableStateOf(false) }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Κοινόχρηστη βάση", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Τα δεδομένα ζουν σε ένα Google Sheet. Όποιος έχει πρόσβαση σε αυτό " +
-                    "βλέπει τις ίδιες προσφορές — μοίρασέ το από το Drive όπως κάθε αρχείο.",
+                "Τα δεδομένα ζουν σε ένα Google Sheet μέσα στον φάκελο " +
+                    "«${GoogleSettings.DRIVE_FOLDER_NAME}» του Drive σου. Μοίρασε τον φάκελο " +
+                    "και οι συνεργάτες σου βλέπουν τις ίδιες προσφορές και τα ίδια PDF.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            OutlinedTextField(
-                value = sheetInput,
-                onValueChange = onSheetInputChange,
-                label = { Text("Σύνδεσμος ή ID του Sheet") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (connectedId != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        connectedName ?: "Συνδεδεμένο",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
-                    enabled = syncing == null && SheetsClient.extractId(sheetInput) != null,
-                    onClick = {
-                        val id = SheetsClient.extractId(sheetInput) ?: return@Button
-                        googleSettings.spreadsheetId = id
-                        onSheetInputChange(id)
-                        Toast.makeText(context, "Συνδέθηκε", Toast.LENGTH_SHORT).show()
-                    },
+                    enabled = syncing == null,
+                    onClick = { picking = true },
                     modifier = Modifier.weight(1f),
-                ) { Text("Σύνδεση") }
+                ) { Text(if (connectedId == null) "Επιλογή" else "Αλλαγή", maxLines = 1) }
 
                 OutlinedButton(
                     enabled = syncing == null,
@@ -91,22 +105,30 @@ fun SharedDatabaseCard(
                         onSyncingChange("Δημιουργία…")
                         scope.launch {
                             val result = runCatching {
-                                val sheets = SheetsClient(authorizer.accessToken())
-                                SheetSync(context, sheets, googleSettings)
-                                    .createSharedSheet("Προσφορές — βάση δεδομένων")
+                                val token = authorizer.accessToken()
+                                SheetSync(context, SheetsClient(token), googleSettings)
+                                    .createSharedSheet(
+                                        "Προσφορές — βάση δεδομένων",
+                                        DriveClient(token),
+                                    )
                             }
                             onSyncingChange(null)
                             result.onSuccess { id ->
-                                onSheetInputChange(id)
+                                connectedId = id
+                                connectedName = "Προσφορές — βάση δεδομένων"
                                 onSynced()
-                                Toast.makeText(context, "Δημιουργήθηκε νέο Sheet", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(
+                                    context,
+                                    "Δημιουργήθηκε στον φάκελο ${GoogleSettings.DRIVE_FOLDER_NAME}",
+                                    Toast.LENGTH_LONG,
+                                ).show()
                             }.onFailure {
                                 Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
                             }
                         }
                     },
                     modifier = Modifier.weight(1f),
-                ) { Text("Νέο Sheet") }
+                ) { Text("Νέο Sheet", maxLines = 1) }
             }
 
             if (connectedId != null) {
@@ -122,8 +144,11 @@ fun SharedDatabaseCard(
                         onSyncingChange("Συγχρονισμός…")
                         scope.launch {
                             val result = runCatching {
-                                val sheets = SheetsClient(authorizer.accessToken())
-                                SheetSync(context, sheets, googleSettings).sync()
+                                SheetSync(
+                                    context,
+                                    SheetsClient(authorizer.accessToken()),
+                                    googleSettings,
+                                ).sync()
                             }
                             onSyncingChange(null)
                             result.onSuccess { report ->
@@ -138,24 +163,47 @@ fun SharedDatabaseCard(
                 ) {
                     if (syncing != null) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.size(8.dp))
-                        Text(syncing)
+                        Spacer(Modifier.width(8.dp))
+                        Text(syncing, maxLines = 1)
                     } else {
-                        Text("Συγχρονισμός τώρα")
+                        Text("Συγχρονισμός τώρα", maxLines = 1)
                     }
                 }
 
-                TextButton(
-                    onClick = {
-                        context.startActivity(
-                            Intent(
-                                Intent.ACTION_VIEW,
-                                Uri.parse("https://docs.google.com/spreadsheets/d/$connectedId/edit"),
-                            ),
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Άνοιγμα στο Google Sheets") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("https://docs.google.com/spreadsheets/d/$connectedId/edit"),
+                                ),
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Άνοιγμα Sheet", maxLines = 1) }
+
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                runCatching {
+                                    val drive = DriveClient(authorizer.accessToken())
+                                    DriveWorkspace(drive, googleSettings).rootFolder()
+                                }.onSuccess { folder ->
+                                    context.startActivity(
+                                        Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("https://drive.google.com/drive/folders/$folder"),
+                                        ),
+                                    )
+                                }.onFailure {
+                                    Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Άνοιγμα φακέλου", maxLines = 1) }
+                }
 
                 Text(
                     if (lastSync > 0) {
@@ -170,5 +218,19 @@ fun SharedDatabaseCard(
                 )
             }
         }
+    }
+
+    if (picking) {
+        SheetPickerDialog(
+            googleSettings = googleSettings,
+            onPick = { file ->
+                googleSettings.spreadsheetId = file.id
+                connectedId = file.id
+                connectedName = file.name
+                picking = false
+                Toast.makeText(context, "Συνδέθηκε: ${file.name}", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { picking = false },
+        )
     }
 }

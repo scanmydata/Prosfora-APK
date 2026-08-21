@@ -3,6 +3,7 @@ package gr.prosfora.app.doc
 import android.content.Context
 import gr.prosfora.app.data.db.OfferWithDetails
 import gr.prosfora.app.google.DriveClient
+import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -32,9 +33,7 @@ object OfferPdf {
     ): String = withContext(Dispatchers.IO) {
         settings.templateFileId?.let { return@withContext it }
 
-        val folderId = settings.folderId
-            ?: drive.findOrCreateFolder(GoogleSettings.DRIVE_FOLDER_NAME)
-                .also { settings.folderId = it }
+        val folderId = DriveWorkspace(drive, settings).rootFolder()
 
         val existing = drive.findInFolder(GoogleSettings.TEMPLATE_NAME, folderId)
         val fileId = existing?.id ?: run {
@@ -75,9 +74,8 @@ object OfferPdf {
         val templateDocx = fetchTemplateDocx(context, drive, settings)
         val rendered = DocxTemplate.render(templateDocx, details)
 
-        val folderId = settings.folderId
-            ?: drive.findOrCreateFolder(GoogleSettings.DRIVE_FOLDER_NAME)
-                .also { settings.folderId = it }
+        val workspace = DriveWorkspace(drive, settings)
+        val folderId = workspace.pdfFolder()
 
         val documentName = fileBaseName(details)
         // Το Drive κάνει τη μετατροπή σε PDF — δεν χρειαζόμαστε renderer στη συσκευή
