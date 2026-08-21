@@ -54,7 +54,7 @@ import gr.prosfora.app.mail.GmailSender
 import gr.prosfora.app.mail.MailSender
 import gr.prosfora.app.mail.OfferMail
 import gr.prosfora.app.settings.SmtpSettingsStore
-import gr.prosfora.app.ui.pdf.PdfPreview
+import gr.prosfora.app.ui.pdf.PdfPreviewDialog
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -269,32 +269,6 @@ private fun AttachmentCard(
                 TextButton(onClick = onPreview) { Text("Προεπισκόπηση") }
             }
             TextButton(onClick = onRegenerate, enabled = busy == null) { Text("Ανανέωση") }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PdfPreviewDialog(file: File, onDismiss: () -> Unit) {
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Προεπισκόπηση PDF") },
-                    navigationIcon = {
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Κλείσιμο")
-                        }
-                    },
-                )
-            },
-        ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                PdfPreview(file)
-            }
         }
     }
 }
