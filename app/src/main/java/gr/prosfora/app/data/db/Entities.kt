@@ -141,6 +141,9 @@ data class OfferWithDetails(
     /** Γενικό Σύνολο — ήταν virtual column + action snapshot στο AppSheet */
     val total: Double get() = spaces.sumOf { it.lineTotal }
 
+    /** Έτος έκδοσης — με βάση αυτό οργανώνονται τα PDF σε φακέλους. */
+    val year: Int get() = java.time.LocalDate.ofEpochDay(offer.dateEpochDay).year
+
 
     /**
      * Ο κανόνας Valid_If του AppSheet: χωρίς χώρους η προσφορά μένει

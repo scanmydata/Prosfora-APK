@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -64,6 +65,7 @@ fun SharedDatabaseCard(
     var connectedId by remember { mutableStateOf(googleSettings.spreadsheetId) }
     var connectedName by remember { mutableStateOf<String?>(null) }
     var picking by remember { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf(false) }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -170,6 +172,15 @@ fun SharedDatabaseCard(
                     }
                 }
 
+                Button(
+                    onClick = { sharing = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.PersonAdd, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Πρόσκληση συντάκτη", maxLines = 1)
+                }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(
                         onClick = {
@@ -218,6 +229,10 @@ fun SharedDatabaseCard(
                 )
             }
         }
+    }
+
+    if (sharing) {
+        ShareFolderDialog(googleSettings = googleSettings, onDismiss = { sharing = false })
     }
 
     if (picking) {

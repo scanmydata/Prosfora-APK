@@ -2,6 +2,7 @@ package gr.prosfora.app.google
 
 import android.content.Context
 import gr.prosfora.app.message.MessageTemplates
+import org.json.JSONObject
 
 /**
  * Ό,τι χρειάζεται για να ξαναβρεθούν τα αρχεία στο Drive. Μόνο αναγνωριστικά —
@@ -79,6 +80,23 @@ class GoogleSettings(context: Context) {
         get() = prefs.getString(KEY_PDF_FOLDER, null)
         set(value) = prefs.edit().putString(KEY_PDF_FOLDER, value).apply()
 
+    /**
+     * Τα ids των φακέλων ανά έτος, ώστε να μη ρωτάμε το Drive σε κάθε PDF.
+     * Αποθηκεύονται ως απλό JSON αντικείμενο «έτος → id».
+     */
+    fun pdfFolderForYear(year: Int): String? =
+        runCatching { JSONObject(prefs.getString(KEY_PDF_YEARS, "{}").orEmpty()) }
+            .getOrNull()
+            ?.optString(year.toString())
+            ?.takeIf { it.isNotBlank() }
+
+    fun rememberPdfFolderForYear(year: Int, folderId: String) {
+        val json = runCatching { JSONObject(prefs.getString(KEY_PDF_YEARS, "{}").orEmpty()) }
+            .getOrDefault(JSONObject())
+        json.put(year.toString(), folderId)
+        prefs.edit().putString(KEY_PDF_YEARS, json.toString()).apply()
+    }
+
     fun clear() = prefs.edit().clear().apply()
 
     companion object {
@@ -94,6 +112,7 @@ class GoogleSettings(context: Context) {
         private const val KEY_SMS = "sms_template"
         private const val KEY_VIBER = "viber_template"
         private const val KEY_PDF_FOLDER = "pdf_folder_id"
+        private const val KEY_PDF_YEARS = "pdf_year_folders"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
         const val TEMPLATE_NAME = "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — πρότυπο"

@@ -139,6 +139,59 @@ class DriveClient(private val accessToken: String) {
         execute(builder(url).patch("{}".toRequestBody(JSON)).build()) { }
     }
 
+    data class Collaborator(
+        val permissionId: String,
+        val email: String,
+        val role: String,
+        val isOwner: Boolean,
+    )
+
+    /**
+     * Δίνει πρόσβαση σε έναν συνεργάτη. Η Google στέλνει και ειδοποίηση με email.
+     * Με `drive.file` επιτρέπεται μόνο για αρχεία που δημιούργησε το app — δηλαδή
+     * για τον δικό μας φάκελο.
+     */
+    suspend fun share(
+        fileId: String,
+        email: String,
+        role: String = ROLE_WRITER,
+        notify: Boolean = true,
+    ) = withContext(Dispatchers.IO) {
+        val payload = JSONObject()
+            .put("type", "user")
+            .put("role", role)
+            .put("emailAddress", email)
+        val request = builder(
+            "$API/files/$fileId/permissions?sendNotificationEmail=$notify&fields=id",
+        ).post(payload.toString().toRequestBody(JSON)).build()
+        execute(request) { }
+    }
+
+    suspend fun collaborators(fileId: String): List<Collaborator> = withContext(Dispatchers.IO) {
+        val url = "$API/files/$fileId/permissions?fields=permissions(id,emailAddress,role,type)"
+        execute(builder(url).get().build()) { body ->
+            val items = JSONObject(body).optJSONArray("permissions") ?: JSONArray()
+            (0 until items.length()).mapNotNull { i ->
+                val item = items.getJSONObject(i)
+                val email = item.optString("emailAddress")
+                if (item.optString("type") != "user" || email.isBlank()) return@mapNotNull null
+                Collaborator(
+                    permissionId = item.getString("id"),
+                    email = email,
+                    role = item.optString("role"),
+                    isOwner = item.optString("role") == "owner",
+                )
+            }
+        }
+    }
+
+    suspend fun revoke(fileId: String, permissionId: String) = withContext(Dispatchers.IO) {
+        http.newCall(builder("$API/files/$fileId/permissions/$permissionId").delete().build())
+            .execute().use { response ->
+                if (!response.isSuccessful) throw driveError(response.code, response.body?.string())
+            }
+    }
+
     suspend fun delete(fileId: String) = withContext(Dispatchers.IO) {
         http.newCall(builder("$API/files/$fileId").delete().build()).execute().use { response ->
             if (!response.isSuccessful) throw driveError(response.code, response.body?.string())
@@ -174,5 +227,8 @@ class DriveClient(private val accessToken: String) {
         const val DOCX_MIME =
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         const val PDF_MIME = "application/pdf"
+
+        const val ROLE_WRITER = "writer"
+        const val ROLE_READER = "reader"
     }
 }

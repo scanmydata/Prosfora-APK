@@ -75,7 +75,7 @@ object OfferPdf {
         val rendered = DocxTemplate.render(templateDocx, details)
 
         val workspace = DriveWorkspace(drive, settings)
-        val folderId = workspace.pdfFolder()
+        val folderId = workspace.pdfFolderForYear(details.year)
 
         val documentName = fileBaseName(details)
         // Το Drive κάνει τη μετατροπή σε PDF — δεν χρειαζόμαστε renderer στη συσκευή
@@ -111,8 +111,20 @@ object OfferPdf {
     fun fileBaseName(details: OfferWithDetails): String =
         "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ ${details.offer.address}".trim().replace('/', '-')
 
-    fun pdfFile(context: Context, details: OfferWithDetails): File =
-        File(File(context.filesDir, "documents"), "${details.offer.id}.pdf")
+    /**
+     * Τοπική θέση του PDF, οργανωμένη κι αυτή ανά έτος. Οι παλιότερες εκδόσεις
+     * έγραφαν κατευθείαν στο `documents/`, οπότε ελέγχεται και εκείνη η θέση.
+     */
+    fun pdfFile(context: Context, details: OfferWithDetails): File {
+        val root = File(context.filesDir, "documents")
+        val current = File(File(root, details.year.toString()), "${details.offer.id}.pdf")
+        if (current.exists()) return current
+        val legacy = File(root, "${details.offer.id}.pdf")
+        return if (legacy.exists()) legacy else current
+    }
+
+    /** Ο ριζικός φάκελος των τοπικών PDF, για την οθόνη αρχείου. */
+    fun localArchiveRoot(context: Context): File = File(context.filesDir, "documents")
 
     /** Ο σύνδεσμος για να ανοίξει ο χρήστης το πρότυπο στο Google Docs. */
     fun templateEditUrl(templateFileId: String): String =

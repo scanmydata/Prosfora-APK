@@ -31,6 +31,25 @@ class DriveWorkspace(
             ?: drive.findOrCreateFolder(PDF_FOLDER_NAME, rootFolder())
                 .also { settings.pdfFolderId = it }
 
+    /**
+     * Υποφάκελος ανά έτος έκδοσης: `PDF/2026`. Με δεκάδες προσφορές τον χρόνο,
+     * ένας ενιαίος φάκελος γίνεται αχρησιμοποίητος.
+     */
+    suspend fun pdfFolderForYear(year: Int): String =
+        settings.pdfFolderForYear(year)
+            ?: drive.findOrCreateFolder(year.toString(), pdfFolder())
+                .also { settings.rememberPdfFolderForYear(year, it) }
+
+    /** Τα έτη που υπάρχουν ήδη ως υποφάκελοι, νεότερο πρώτα. */
+    suspend fun pdfYears(): List<DriveClient.DriveFile> {
+        val parent = pdfFolder()
+        return drive.list("mimeType='${DriveClient.FOLDER_MIME}' and '$parent' in parents and trashed=false")
+            .sortedByDescending { it.name }
+    }
+
+    suspend fun pdfsInYear(yearFolderId: String): List<DriveClient.DriveFile> =
+        drive.list("mimeType='${DriveClient.PDF_MIME}' and '$yearFolderId' in parents and trashed=false")
+
     /** Τα spreadsheets μέσα στον φάκελο — υποψήφια για κοινόχρηστη βάση. */
     suspend fun spreadsheetsInFolder(): List<DriveClient.DriveFile> {
         val root = rootFolder()

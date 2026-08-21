@@ -13,6 +13,7 @@ import gr.prosfora.app.ui.offers.MessageComposeScreen
 import gr.prosfora.app.ui.offers.OfferDetailScreen
 import gr.prosfora.app.ui.offers.OffersListScreen
 import gr.prosfora.app.ui.offers.OffersViewModel
+import gr.prosfora.app.ui.pdf.PdfArchiveScreen
 import gr.prosfora.app.ui.settings.SettingsScreen
 import gr.prosfora.app.ui.settings.TemplateScreen
 
@@ -21,6 +22,7 @@ private const val ROUTE_DETAIL = "offer"
 private const val ROUTE_EMAIL = "offer/email"
 private const val ROUTE_MESSAGE = "offer/message"
 private const val ROUTE_SETTINGS = "settings"
+private const val ROUTE_ARCHIVE = "archive"
 private const val ROUTE_TEMPLATE = "settings/template"
 
 @Composable
@@ -37,6 +39,7 @@ fun ProsforaNavHost() {
                     navController.navigate(ROUTE_DETAIL)
                 },
                 onOpenSettings = { navController.navigate(ROUTE_SETTINGS) },
+                onOpenArchive = { navController.navigate(ROUTE_ARCHIVE) },
             )
         }
         composable(ROUTE_DETAIL) {
@@ -68,6 +71,12 @@ fun ProsforaNavHost() {
             MessageComposeScreen(
                 viewModel = viewModel,
                 channel = channel,
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(ROUTE_ARCHIVE) {
+            PdfArchiveScreen(
+                viewModel = viewModel,
                 onBack = { navController.popBackStack() },
             )
         }
