@@ -34,44 +34,32 @@
 
 APIs ενεργά: Drive, Docs, **Sheets**, **Gmail**.
 
-## Testing vs Production — απόφαση που εκκρεμεί
+## Publishing status: **In production** ✅
 
-Τώρα το project είναι σε **Testing**. Με sensitive scopes αυτό σημαίνει ότι η
-έγκριση **λήγει κάθε 7 ημέρες** και ο χρήστης πρέπει να ξανασυνδεθεί.
+Έγινε στις 22/8/2026. Η έγκριση OAuth **δεν λήγει πλέον** — τέλος το 7ήμερο.
 
-| | Testing (τώρα) | Production, χωρίς επαλήθευση | Production, με επαλήθευση |
-|---|---|---|---|
-| Λήξη έγκρισης | κάθε 7 μέρες | ποτέ | ποτέ |
-| Οθόνη προειδοποίησης | όχι | «Η Google δεν επαλήθευσε αυτή την εφαρμογή» — μία φορά ανά χρήστη, με «Για προχωρημένους → Συνέχεια» | όχι |
-| Όριο χρηστών | 100 test users | 100 μέχρι την επαλήθευση | χωρίς όριο |
-| Τι χρειάζεται | τίποτα | ένα κλικ «Publish app» | αίτηση + 3-10 μέρες αναμονή, δωρεάν |
-
-Πρόταση: **Publish app** (λύνει το 7ήμερο αμέσως) και αίτηση επαλήθευσης
-αν/όταν μπουν πολλοί χρήστες.
-
-### ⛔ Τι μπλοκάρει το Publish αυτή τη στιγμή
-Το κουμπί «Publish app» είναι ανενεργό γιατί η Google απαιτεί, στη σελίδα Branding:
-
-| Πεδίο | Κατάσταση |
+| Πεδίο | Τιμή |
 |---|---|
-| App name | ✅ `Prosfora tovapsimo.gr` |
-| User support email | ✅ |
-| Developer contact | ✅ |
-| **Application home page** | ❌ κενό |
-| **Application privacy policy link** | ❌ κενό |
-| **Authorised domain** | ❌ κενό |
+| App name | `Prosfora tovapsimo.gr` |
+| App logo | το πράσινο τρίγωνο, 120×120 |
+| Home page | https://scanmydata.github.io/Prosfora-APK/ |
+| Privacy policy | https://scanmydata.github.io/Prosfora-APK/privacy-policy.html |
+| Authorised domain | `scanmydata.github.io` |
 
-Το tovapsimo.gr **δεν έχει σελίδα πολιτικής απορρήτου** (το `/privacy-policy/`
-επιστρέφει 404). Χρειάζεται μία, σε δημόσιο URL, πριν γίνει publish.
+Η πολιτική απορρήτου φιλοξενείται σε GitHub Pages από τον φάκελο `docs/`.
+Αν κάποτε μπει σελίδα στο tovapsimo.gr, αλλάζουμε το URL και το authorised domain.
 
-Έτοιμο κείμενο: [privacy-policy.md](privacy-policy.md) — περιγράφει ακριβώς τι
-κάνει η εφαρμογή, μαζί με τη δήλωση Limited Use που ζητά η Google.
+### Τι σημαίνει «απαιτείται επαλήθευση»
+Το console δείχνει προειδοποίηση, και είναι αναμενόμενη: με sensitive scopes και
+λογότυπο, χωρίς επαλήθευση ισχύουν δύο περιορισμοί —
 
-Δύο τρόποι να μπει online:
-1. **Στο tovapsimo.gr** (προτεινόμενο) — WordPress: Ρυθμίσεις → Απόρρητο →
-   δημοσίευση σελίδας. Authorised domain: `tovapsimo.gr`
-2. **GitHub Pages** από αυτό το repo — γρήγορο, αλλά το `github.io` δεν γίνεται
-   πάντα δεκτό ως authorised domain από τη Google
+1. Στο consent window δεν εμφανίζεται το λογότυπο/branding
+2. Ο χρήστης βλέπει μία φορά «Η Google δεν επαλήθευσε αυτή την εφαρμογή»
+   (Για προχωρημένους → Συνέχεια)
+
+Η εφαρμογή λειτουργεί κανονικά και η έγκριση δεν λήγει. Όριο 100 χρήστες.
+Η επαλήθευση είναι δωρεάν (3-10 μέρες) και **δεν** απαιτεί έλεγχο ασφαλείας,
+επειδή δεν ζητάμε κανένα restricted scope.
 
 ## Πώς παράγεται το PDF χωρίς το Docs scope
 
