@@ -46,8 +46,32 @@ APIs ενεργά: Drive, Docs, **Sheets**, **Gmail**.
 | Όριο χρηστών | 100 test users | 100 μέχρι την επαλήθευση | χωρίς όριο |
 | Τι χρειάζεται | τίποτα | ένα κλικ «Publish app» | αίτηση + 3-10 μέρες αναμονή, δωρεάν |
 
-Πρόταση: **Publish app** τώρα (λύνει το 7ήμερο αμέσως) και αίτηση επαλήθευσης
+Πρόταση: **Publish app** (λύνει το 7ήμερο αμέσως) και αίτηση επαλήθευσης
 αν/όταν μπουν πολλοί χρήστες.
+
+### ⛔ Τι μπλοκάρει το Publish αυτή τη στιγμή
+Το κουμπί «Publish app» είναι ανενεργό γιατί η Google απαιτεί, στη σελίδα Branding:
+
+| Πεδίο | Κατάσταση |
+|---|---|
+| App name | ✅ `Prosfora tovapsimo.gr` |
+| User support email | ✅ |
+| Developer contact | ✅ |
+| **Application home page** | ❌ κενό |
+| **Application privacy policy link** | ❌ κενό |
+| **Authorised domain** | ❌ κενό |
+
+Το tovapsimo.gr **δεν έχει σελίδα πολιτικής απορρήτου** (το `/privacy-policy/`
+επιστρέφει 404). Χρειάζεται μία, σε δημόσιο URL, πριν γίνει publish.
+
+Έτοιμο κείμενο: [privacy-policy.md](privacy-policy.md) — περιγράφει ακριβώς τι
+κάνει η εφαρμογή, μαζί με τη δήλωση Limited Use που ζητά η Google.
+
+Δύο τρόποι να μπει online:
+1. **Στο tovapsimo.gr** (προτεινόμενο) — WordPress: Ρυθμίσεις → Απόρρητο →
+   δημοσίευση σελίδας. Authorised domain: `tovapsimo.gr`
+2. **GitHub Pages** από αυτό το repo — γρήγορο, αλλά το `github.io` δεν γίνεται
+   πάντα δεκτό ως authorised domain από τη Google
 
 ## Πώς παράγεται το PDF χωρίς το Docs scope
 
