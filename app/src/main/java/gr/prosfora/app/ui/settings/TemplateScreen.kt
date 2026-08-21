@@ -211,12 +211,12 @@ private val SAMPLE: OfferWithDetails by lazy {
     )
     OfferWithDetails(
         offer = offer,
-        spaces = listOf(
+        spacesRaw = listOf(
             SpaceEntity(offerId = offer.id, description = "Σαλόνι", area = 45.0, unitPrice = 4.8, position = 0),
             SpaceEntity(offerId = offer.id, description = "Κουζίνα", area = 18.5, unitPrice = 4.8, position = 1),
             SpaceEntity(offerId = offer.id, description = "Πόρτες ριπολίνα", area = 4.0, unitPrice = 55.0, position = 2),
         ),
-        notes = listOf(
+        notesRaw = listOf(
             NoteEntity(offerId = offer.id, text = "Στην προσφορά δεν περιλαμβάνεται ο ΦΠΑ τιμολογίου.", position = 0),
             NoteEntity(offerId = offer.id, text = "Η προσφορά περιλαμβάνει την εργασία και τα υλικά.", position = 1),
         ),

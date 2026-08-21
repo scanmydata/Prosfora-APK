@@ -65,15 +65,15 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
     var testing by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     var presetHint by remember { mutableStateOf<String?>(null) }
+
+    val googleSettings = remember { GoogleSettings(context) }
+    var subjectTemplate by remember { mutableStateOf(googleSettings.emailSubjectTemplate) }
+    var bodyTemplate by remember { mutableStateOf(googleSettings.emailBodyTemplate) }
     var sendMethod by remember { mutableStateOf(googleSettings.sendMethod) }
     var sheetInput by remember { mutableStateOf(googleSettings.spreadsheetId.orEmpty()) }
     var autoSync by remember { mutableStateOf(googleSettings.autoSync) }
     var lastSync by remember { mutableStateOf(googleSettings.lastSyncAt) }
     var syncing by remember { mutableStateOf<String?>(null) }
-
-    val googleSettings = remember { GoogleSettings(context) }
-    var subjectTemplate by remember { mutableStateOf(googleSettings.emailSubjectTemplate) }
-    var bodyTemplate by remember { mutableStateOf(googleSettings.emailBodyTemplate) }
 
     Scaffold(
         topBar = {
