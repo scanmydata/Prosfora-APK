@@ -171,7 +171,7 @@ fun TemplateScreen(onBack: () -> Unit) {
                     scope.launch {
                         val result = runCatching {
                             val drive = DriveClient(authorizer.accessToken())
-                            val docx = OfferPdf.fetchTemplateDocx(drive, settings)
+                            val docx = OfferPdf.fetchTemplateDocx(context, drive, settings)
                             val file = File(context.cacheDir, "${GoogleSettings.TEMPLATE_NAME}.docx")
                             file.writeBytes(docx)
                             val smtp = SmtpSettingsStore(context).load()
