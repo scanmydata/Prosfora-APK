@@ -148,6 +148,10 @@ class SheetSync(
                 updatedAt = row[7].toLongOrNull() ?: 0L,
                 lastSentAt = row[8].toLongOrNull(),
                 deleted = row[9] == "1",
+                customerName = row[10],
+                customerPhone = row[11],
+                notifiedAt = row[12].toLongOrNull(),
+                notifiedVia = row[13].ifBlank { null },
             )
         }
 
@@ -204,6 +208,10 @@ class SheetSync(
             it.updatedAt.toString(),
             it.lastSentAt?.toString().orEmpty(),
             if (it.deleted) "1" else "0",
+            it.customerName,
+            it.customerPhone,
+            it.notifiedAt?.toString().orEmpty(),
+            it.notifiedVia.orEmpty(),
         )
     }
 
@@ -240,6 +248,7 @@ class SheetSync(
         private val OFFER_HEADER = listOf(
             "ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email",
             "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο",
+            "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης",
         )
         private val SPACE_HEADER = listOf(
             "ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)",

@@ -4,6 +4,8 @@ import gr.prosfora.app.data.db.OfferWithDetails
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asNumber
 import gr.prosfora.app.util.asOfferDate
+import gr.prosfora.app.util.strippedKind
+import gr.prosfora.app.util.upperGreek
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
@@ -88,8 +90,10 @@ object DocxTemplate {
         val offer = details.offer
         val total = details.total.asMoney()
         return xml
-            .replace("&lt;&lt;[Είδος]&gt;&gt;", escape(offer.kind))
-            .replace("&lt;&lt;[Οδός / Περιοχή]&gt;&gt;", escape(offer.address))
+            // Το «Χρωματισμός» φεύγει: ο τίτλος του εγγράφου λέει ήδη
+            // «ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ ΓΙΑ …»
+            .replace("&lt;&lt;[Είδος]&gt;&gt;", escape(offer.kind.strippedKind()))
+            .replace("&lt;&lt;[Οδός / Περιοχή]&gt;&gt;", escape(offer.address.upperGreek()))
             .replace("&lt;&lt;[Ημερομηνία]&gt;&gt;", escape(offer.dateEpochDay.asOfferDate()))
             .replace("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", escape(total))
             .replace("&lt;&lt;[Γενικό Σύνολο]&gt;&gt;", escape(total))

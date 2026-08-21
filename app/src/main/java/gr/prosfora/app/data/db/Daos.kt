@@ -37,6 +37,9 @@ interface OfferDao {
 
     @Query("UPDATE offers SET lastSentAt = :at, updatedAt = :at WHERE id = :id")
     suspend fun markSent(id: String, at: Long)
+
+    @Query("UPDATE offers SET notifiedAt = :at, notifiedVia = :via, updatedAt = :at WHERE id = :id")
+    suspend fun markNotified(id: String, at: Long, via: String)
 }
 
 @Dao

@@ -1,9 +1,12 @@
 package gr.prosfora.app.ui.offers
 
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,8 +18,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -28,18 +34,31 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.data.db.OfferStatus
 import gr.prosfora.app.data.db.OfferWithDetails
+import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.google.SheetsClient
+import gr.prosfora.app.google.rememberGoogleAuthorizer
+import gr.prosfora.app.sync.SheetSync
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
+import gr.prosfora.app.util.asSentStamp
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,6 +69,12 @@ fun OffersListScreen(
 ) {
     val offers by viewModel.offers.collectAsState()
     val query by viewModel.query.collectAsState()
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val authorizer = rememberGoogleAuthorizer()
+    val googleSettings = remember { GoogleSettings(context) }
+    var refreshing by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -79,21 +104,63 @@ fun OffersListScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             )
 
-            if (offers.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        if (query.isBlank()) "Καμία προσφορά ακόμη" else "Κανένα αποτέλεσμα",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(offers, key = { it.offer.id }) { details ->
-                        OfferRow(details) { onOpenOffer(details.offer.id) }
+            // Τράβηγμα προς τα κάτω = συγχρονισμός με το κοινόχρηστο Sheet
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = {
+                    if (googleSettings.spreadsheetId == null) {
+                        Toast.makeText(
+                            context,
+                            "Δεν έχει οριστεί κοινόχρηστο Sheet — δες τις Ρυθμίσεις",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                        return@PullToRefreshBox
+                    }
+                    refreshing = true
+                    scope.launch {
+                        val result = runCatching {
+                            val sheets = SheetsClient(authorizer.accessToken())
+                            SheetSync(context, sheets, googleSettings).sync()
+                        }
+                        refreshing = false
+                        result.onSuccess {
+                            Toast.makeText(context, it.summary, Toast.LENGTH_SHORT).show()
+                        }.onFailure {
+                            Toast.makeText(
+                                context,
+                                "Ο συγχρονισμός απέτυχε: ${it.message}",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                if (offers.isEmpty()) {
+                    // Πρέπει να είναι scrollable, αλλιώς το pull-to-refresh δεν πιάνει
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        item {
+                            Box(
+                                Modifier.fillMaxWidth().padding(top = 96.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    if (query.isBlank()) "Καμία προσφορά ακόμη" else "Κανένα αποτέλεσμα",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(offers, key = { it.offer.id }) { details ->
+                            OfferRow(details) { onOpenOffer(details.offer.id) }
+                        }
                     }
                 }
             }
@@ -101,37 +168,74 @@ fun OffersListScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OfferRow(details: OfferWithDetails, onClick: () -> Unit) {
     val offer = details.offer
     Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            StatusDot(offer.status)
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    offer.address.ifBlank { "(χωρίς διεύθυνση)" },
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                if (offer.kind.isNotBlank()) {
-                    Text(offer.kind, style = MaterialTheme.typography.bodyMedium)
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                StatusDot(offer.status)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        offer.address.ifBlank { "(χωρίς διεύθυνση)" },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (offer.kind.isNotBlank()) {
+                        Text(offer.kind, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Text(
+                        "${offer.dateEpochDay.asOfferDate()} · ${details.total.asMoney()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 Text(
-                    "${offer.dateEpochDay.asOfferDate()} · ${details.total.asMoney()}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    offer.status.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = statusColor(offer.status),
                 )
             }
-            Text(
-                offer.status.label,
-                style = MaterialTheme.typography.labelMedium,
-                color = statusColor(offer.status),
-            )
+
+            // Τι έχει σταλεί και πότε — με μια ματιά από τη λίστα
+            val badges = buildList {
+                offer.lastSentAt?.let { add(Triple(Icons.Default.Email, "Email", it)) }
+                offer.notifiedAt?.let { at ->
+                    val viber = offer.notifiedVia.equals("VIBER", ignoreCase = true)
+                    add(
+                        Triple(
+                            if (viber) Icons.Default.Send else Icons.Default.Sms,
+                            if (viber) "Viber" else "SMS",
+                            at,
+                        ),
+                    )
+                }
+            }
+            if (badges.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    badges.forEach { (icon, label, at) -> SentBadge(icon, label, at) }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun SentBadge(icon: ImageVector, label: String, at: Long) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, tint = SentGreen, modifier = Modifier.size(14.dp))
+        Text(
+            " $label ${at.asSentStamp()}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

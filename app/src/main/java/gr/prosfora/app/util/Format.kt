@@ -39,3 +39,23 @@ fun String.parseDecimal(): Double? {
     }
     return normalized.toDoubleOrNull()
 }
+
+/**
+ * Το «Είδος» γράφεται συχνά ως «Χρωματισμός διαμερίσματος». Στο PDF και στα
+ * μηνύματα η λέξη περισσεύει, γιατί το κείμενο λέει ήδη «προσφορά
+ * ελαιοχρωματισμών για την …». Αφαιρείται σε όποια πτώση κι αν είναι.
+ */
+fun String.strippedKind(): String =
+    replace(Regex("""χρωματισμ\S*""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s{2,}"""), " ")
+        .trim()
+        .trimStart('-', '–', ',')
+        .trim()
+
+/** Η διεύθυνση τυπώνεται με κεφαλαία στο PDF, όπως στο πρότυπο. */
+fun String.upperGreek(): String = uppercase(java.util.Locale.forLanguageTag("el-GR"))
+
+/** Σύντομη σφραγίδα χρόνου για «στάλθηκε στις …». */
+fun Long.asSentStamp(): String = java.text.DateFormat
+    .getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT, greek)
+    .format(java.util.Date(this))

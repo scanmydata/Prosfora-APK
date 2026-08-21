@@ -24,7 +24,7 @@ class Converters {
 
 @Database(
     entities = [OfferEntity::class, SpaceEntity::class, NoteEntity::class, NotePresetEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -50,6 +50,16 @@ abstract class ProsforaDatabase : RoomDatabase() {
                 connection.execSQL("ALTER TABLE notes ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
             }
         }
+        /** v3: στοιχεία επαφής και ιστορικό ειδοποίησης SMS/Viber. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                connection.execSQL("ALTER TABLE offers ADD COLUMN customerName TEXT NOT NULL DEFAULT ''")
+                connection.execSQL("ALTER TABLE offers ADD COLUMN customerPhone TEXT NOT NULL DEFAULT ''")
+                connection.execSQL("ALTER TABLE offers ADD COLUMN notifiedAt INTEGER")
+                connection.execSQL("ALTER TABLE offers ADD COLUMN notifiedVia TEXT")
+            }
+        }
+
         /**
          * Οι σημειώσεις που επαναλαμβάνονται σε κάθε προσφορά — από το δείγμα PDF
          * και το EnumList "Παρατηρήσεις Έργου" του AppSheet.
@@ -74,7 +84,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
                 ProsforaDatabase::class.java,
                 "prosfora.db",
             )
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {
                         super.onCreate(connection)

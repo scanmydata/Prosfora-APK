@@ -30,6 +30,9 @@ class OfferRepository(context: Context) {
 
     suspend fun markSent(id: String) = offers.markSent(id, System.currentTimeMillis())
 
+    suspend fun markNotified(id: String, via: String) =
+        offers.markNotified(id, System.currentTimeMillis(), via)
+
     suspend fun addSpace(offerId: String, description: String, area: Double, unitPrice: Double) {
         spaces.upsert(
             SpaceEntity(

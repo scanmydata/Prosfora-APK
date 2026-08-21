@@ -14,6 +14,7 @@ coroutines = "1.9.0"
 androidMail = "1.6.7"
 securityCrypto = "1.0.0"
 playServicesAuth = "21.3.0"
+coreSplashscreen = "1.0.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +38,7 @@ android-mail = { group = "com.sun.mail", name = "android-mail", version.ref = "a
 android-activation = { group = "com.sun.mail", name = "android-activation", version.ref = "androidMail" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
+androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

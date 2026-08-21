@@ -68,6 +68,9 @@ class OffersViewModel(app: Application) : AndroidViewModel(app) {
 
     fun markSent(id: String) = viewModelScope.launch { repo.markSent(id) }
 
+    fun markNotified(id: String, via: String) =
+        viewModelScope.launch { repo.markNotified(id, via) }
+
     fun setStatus(details: OfferWithDetails, status: OfferStatus) = viewModelScope.launch {
         if (status in details.availableStatuses) {
             repo.saveOffer(details.offer.copy(status = status))

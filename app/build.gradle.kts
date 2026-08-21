@@ -100,6 +100,7 @@ dependencies {
     implementation(libs.android.activation)
     implementation(libs.androidx.security.crypto)
     implementation(libs.play.services.auth)
+    implementation(libs.androidx.core.splashscreen)
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
 }

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#00E2A2</color>
+    <!-- Λευκό φόντο, όπως στο επίσημο λογότυπο του tovapsimo.gr -->
+    <color name="ic_launcher_background">#FFFFFF</color>
+    <color name="brand_green">#00E2A2</color>
 </resources>

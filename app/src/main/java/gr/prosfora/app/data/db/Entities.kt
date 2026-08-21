@@ -24,11 +24,18 @@ data class OfferEntity(
     /** Είδος (π.χ. "Χρωματισμός διαμερίσματος") */
     val kind: String = "",
     val email: String = "",
+    /** Ονοματεπώνυμο της επαφής — μπαίνει στην προσοφώνηση της ειδοποίησης. */
+    val customerName: String = "",
+    /** Κινητό για ειδοποίηση με SMS ή Viber μετά την αποστολή του email. */
+    val customerPhone: String = "",
     val status: OfferStatus = OfferStatus.CREATED,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     /** Πότε στάλθηκε τελευταία φορά email (null = ποτέ) */
     val lastSentAt: Long? = null,
+    /** Πότε στάλθηκε ειδοποίηση για το email (SMS/Viber) και με ποιο μέσο. */
+    val notifiedAt: Long? = null,
+    val notifiedVia: String? = null,
     /**
      * Soft delete. Οι διαγραφές πρέπει να ταξιδεύουν μέχρι τις άλλες συσκευές:
      * αν σβήναμε τη γραμμή, ο επόμενος συγχρονισμός θα την ξανακατέβαζε από το
@@ -148,4 +155,8 @@ data class OfferWithDetails(
 
     val canSendEmail: Boolean
         get() = offer.email.isNotBlank() && offer.status == OfferStatus.COMPLETED
+
+    /** Η ειδοποίηση έχει νόημα μόνο αφού φύγει το email και εφόσον υπάρχει κινητό. */
+    val canNotify: Boolean
+        get() = offer.customerPhone.isNotBlank() && offer.lastSentAt != null
 }

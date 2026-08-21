@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Prosfora" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Οθόνη εκκίνησης του συστήματος (Android 12+ την επιβάλλει). Κρατιέται
+         διακριτική ώστε να δένει με την εικόνα που ακολουθεί μέσα στο app. -->
+    <style name="Theme.Prosfora.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.Prosfora</item>
+    </style>
 </resources>
