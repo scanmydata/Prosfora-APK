@@ -9,14 +9,15 @@ Native αντικατάσταση του AppSheet app "ΠΡΟΣΦΟΡΕΣ" (Kotl
 | 0 | Καταγραφή AppSheet schema | ✅ [πλήρες schema](docs/phase0-appsheet-schema.md) |
 | 1 | Repo + CI/CD auto-release | ✅ κάθε push στο main → νέο GitHub Release |
 | 2 | Data layer (Room, offline-first) | ✅ |
-| 3 | Migration δεδομένων από το Sheet | ⏳ περιμένει το `.xlsx` export |
+| 3 | Migration δεδομένων από το Sheet | ✅ Ρυθμίσεις → Εισαγωγή δεδομένων |
 | 4 | Οθόνες + CRUD + νέα UX σημειώσεων | ✅ |
-| 5 | Email μέσω SMTP | ✅ (χωρίς συνημμένο ακόμη) |
-| 6 | Drive backup + PDF από το Google Doc template | ⏳ περιμένει Google OAuth client |
-| 7 | Testing + πρώτο σταθερό release | ⏳ περιμένει keystore |
+| 5 | Email: Gmail χωρίς κωδικό ή SMTP, με προεπισκόπηση & επεξεργασία | ✅ |
+| 6 | PDF από το πρότυπο του Drive + προεπισκόπηση A4 | ✅ |
+| 7 | Κοινόχρηστη βάση σε Google Sheet | ✅ |
+| 8 | Δοκιμή σε πραγματική συσκευή | ⏳ |
 
 Αρχιτεκτονική: [docs/architecture.md](docs/architecture.md) — **χωρίς Firebase**, χωρίς backend.
-Τι χρειάζομαι από σένα: [docs/assets-needed.md](docs/assets-needed.md)
+Google Cloud: [docs/google-cloud.md](docs/google-cloud.md)
 
 ## Build
 Δεν χρειάζεται Android Studio τοπικά — **το build γίνεται στο GitHub Actions**.
