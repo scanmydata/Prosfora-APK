@@ -7,6 +7,17 @@ import android.content.Context
  * κανένα μυστικό, γι' αυτό απλά SharedPreferences (τα διαπιστευτήρια SMTP είναι
  * αλλού, κρυπτογραφημένα).
  */
+enum class SendMethod(val label: String, val hint: String) {
+    GOOGLE(
+        "Λογαριασμός Google",
+        "Χωρίς κωδικό — μία έγκριση και τα email φεύγουν από τον λογαριασμό σου",
+    ),
+    SMTP(
+        "SMTP",
+        "Για δικό σου mail server ή πάροχο εκτός Google",
+    ),
+}
+
 class GoogleSettings(context: Context) {
 
     private val prefs = context.applicationContext
@@ -40,6 +51,16 @@ class GoogleSettings(context: Context) {
         get() = prefs.getString(KEY_EMAIL_BODY, DEFAULT_EMAIL_BODY) ?: DEFAULT_EMAIL_BODY
         set(value) = prefs.edit().putString(KEY_EMAIL_BODY, value).apply()
 
+    /** Πώς φεύγουν τα email: με τον συνδεδεμένο λογαριασμό Google ή με SMTP. */
+    var sendMethod: SendMethod
+        get() = runCatching { SendMethod.valueOf(prefs.getString(KEY_SEND_METHOD, null) ?: "") }
+            .getOrDefault(SendMethod.GOOGLE)
+        set(value) = prefs.edit().putString(KEY_SEND_METHOD, value.name).apply()
+
+    var senderName: String
+        get() = prefs.getString(KEY_SENDER_NAME, "Γιώργος Δουραμάνης").orEmpty()
+        set(value) = prefs.edit().putString(KEY_SENDER_NAME, value).apply()
+
     var emailSubjectTemplate: String
         get() = prefs.getString(KEY_EMAIL_SUBJECT, DEFAULT_EMAIL_SUBJECT) ?: DEFAULT_EMAIL_SUBJECT
         set(value) = prefs.edit().putString(KEY_EMAIL_SUBJECT, value).apply()
@@ -54,6 +75,8 @@ class GoogleSettings(context: Context) {
         private const val KEY_AUTO_SYNC = "auto_sync"
         private const val KEY_EMAIL_BODY = "email_body"
         private const val KEY_EMAIL_SUBJECT = "email_subject"
+        private const val KEY_SEND_METHOD = "send_method"
+        private const val KEY_SENDER_NAME = "sender_name"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
         const val TEMPLATE_NAME = "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — πρότυπο"

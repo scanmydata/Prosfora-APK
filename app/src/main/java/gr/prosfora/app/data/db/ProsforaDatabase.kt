@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -23,7 +24,7 @@ class Converters {
 
 @Database(
     entities = [OfferEntity::class, SpaceEntity::class, NoteEntity::class, NotePresetEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -35,6 +36,20 @@ abstract class ProsforaDatabase : RoomDatabase() {
     abstract fun notePresetDao(): NotePresetDao
 
     companion object {
+
+        /**
+         * v2: soft deletes + updatedAt στα παιδιά, ώστε να μπορεί να γίνει
+         * merge με το κοινόχρηστο Google Sheet.
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                connection.execSQL("ALTER TABLE offers ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE spaces ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE spaces ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE notes ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE notes ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+            }
+        }
         /**
          * Οι σημειώσεις που επαναλαμβάνονται σε κάθε προσφορά — από το δείγμα PDF
          * και το EnumList "Παρατηρήσεις Έργου" του AppSheet.
@@ -59,6 +74,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
                 ProsforaDatabase::class.java,
                 "prosfora.db",
             )
+                .addMigrations(MIGRATION_1_2)
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {
                         super.onCreate(connection)

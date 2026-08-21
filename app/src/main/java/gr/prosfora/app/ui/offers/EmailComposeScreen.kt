@@ -49,6 +49,8 @@ import gr.prosfora.app.doc.OfferPdf
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.rememberGoogleAuthorizer
+import gr.prosfora.app.google.SendMethod
+import gr.prosfora.app.mail.GmailSender
 import gr.prosfora.app.mail.MailSender
 import gr.prosfora.app.mail.OfferMail
 import gr.prosfora.app.settings.SmtpSettingsStore
@@ -76,6 +78,10 @@ fun EmailComposeScreen(
     val smtpStore = remember { SmtpSettingsStore(context) }
     val googleSettings = remember { GoogleSettings(context) }
     val smtp = remember { smtpStore.load() }
+    val sendMethod = remember { googleSettings.sendMethod }
+    // Με τον λογαριασμό Google δεν χρειάζεται καμία ρύθμιση· με SMTP πρέπει να
+    // έχουν συμπληρωθεί διακομιστής και διαπιστευτήρια.
+    val canSend = sendMethod == SendMethod.GOOGLE || smtp.isConfigured
 
     var to by remember(current.offer.id) { mutableStateOf(current.offer.email) }
     var subject by remember(current.offer.id) {
@@ -172,24 +178,38 @@ fun EmailComposeScreen(
                 },
             )
 
-            if (!smtp.isConfigured) {
+            if (!canSend) {
                 Text(
-                    "⚠️ Δεν έχουν ρυθμιστεί τα στοιχεία αποστολής — άνοιξε τις Ρυθμίσεις.",
+                    "⚠️ Δεν έχουν ρυθμιστεί τα στοιχεία SMTP — άνοιξε τις Ρυθμίσεις " +
+                        "ή διάλεξε αποστολή με τον λογαριασμό Google.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
+                )
+            } else {
+                Text(
+                    when (sendMethod) {
+                        SendMethod.GOOGLE -> "Θα σταλεί από τον λογαριασμό Google σου"
+                        SendMethod.SMTP -> "Θα σταλεί μέσω ${smtp.host}"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             Button(
-                enabled = busy == null && smtp.isConfigured && to.isNotBlank(),
+                enabled = busy == null && canSend && to.isNotBlank(),
                 onClick = {
                     scope.launch {
                         busy = "Αποστολή…"
+                        val outgoing = OfferMail.compose(to.trim(), subject, body, current, pdf)
                         val result = runCatching {
-                            MailSender.send(
-                                smtp,
-                                OfferMail.compose(to.trim(), subject, body, current, pdf),
-                            )
+                            when (sendMethod) {
+                                SendMethod.GOOGLE -> GmailSender.send(
+                                    accessToken = authorizer.accessToken(),
+                                    message = outgoing,
+                                )
+                                SendMethod.SMTP -> MailSender.send(smtp, outgoing)
+                            }
                         }
                         busy = null
                         result.onSuccess {

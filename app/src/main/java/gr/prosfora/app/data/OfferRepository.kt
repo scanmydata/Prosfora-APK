@@ -26,7 +26,7 @@ class OfferRepository(context: Context) {
     suspend fun saveOffer(offer: OfferEntity) =
         offers.upsert(offer.copy(updatedAt = System.currentTimeMillis()))
 
-    suspend fun deleteOffer(id: String) = offers.delete(id)
+    suspend fun deleteOffer(id: String) = offers.softDelete(id, System.currentTimeMillis())
 
     suspend fun markSent(id: String) = offers.markSent(id, System.currentTimeMillis())
 
@@ -44,12 +44,12 @@ class OfferRepository(context: Context) {
     }
 
     suspend fun updateSpace(space: SpaceEntity) {
-        spaces.upsert(space)
+        spaces.upsert(space.copy(updatedAt = System.currentTimeMillis()))
         touch(space.offerId)
     }
 
     suspend fun deleteSpace(space: SpaceEntity) {
-        spaces.delete(space)
+        spaces.softDelete(space.id, System.currentTimeMillis())
         touch(space.offerId)
     }
 
@@ -64,7 +64,7 @@ class OfferRepository(context: Context) {
             )
             presets.findByText(text)?.let { presets.bumpUse(it.id) }
         } else {
-            notes.deleteByText(offerId, text)
+            notes.softDeleteByText(offerId, text, System.currentTimeMillis())
         }
         touch(offerId)
     }
@@ -80,7 +80,7 @@ class OfferRepository(context: Context) {
     }
 
     suspend fun deleteNote(note: NoteEntity) {
-        notes.delete(note)
+        notes.softDelete(note.id, System.currentTimeMillis())
         touch(note.offerId)
     }
 

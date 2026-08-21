@@ -29,6 +29,12 @@ data class OfferEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     /** Πότε στάλθηκε τελευταία φορά email (null = ποτέ) */
     val lastSentAt: Long? = null,
+    /**
+     * Soft delete. Οι διαγραφές πρέπει να ταξιδεύουν μέχρι τις άλλες συσκευές:
+     * αν σβήναμε τη γραμμή, ο επόμενος συγχρονισμός θα την ξανακατέβαζε από το
+     * κοινόχρηστο Sheet σαν να μην έγινε τίποτα.
+     */
+    val deleted: Boolean = false,
 )
 
 enum class OfferStatus(val label: String) {
@@ -66,6 +72,8 @@ data class SpaceEntity(
     /** Τιμή Μονάδος */
     val unitPrice: Double = 0.0,
     val position: Int = 0,
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deleted: Boolean = false,
 ) {
     /**
      * Σύνολο Γραμμής — ήταν app formula στο AppSheet.
@@ -94,6 +102,8 @@ data class NoteEntity(
     val offerId: String,
     @ColumnInfo(name = "text") val text: String = "",
     val position: Int = 0,
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deleted: Boolean = false,
 )
 
 /**
@@ -113,10 +123,14 @@ data class NotePresetEntity(
 data class OfferWithDetails(
     @Embedded val offer: OfferEntity,
     @Relation(parentColumn = "id", entityColumn = "offerId")
-    val spaces: List<SpaceEntity> = emptyList(),
+    val spacesRaw: List<SpaceEntity> = emptyList(),
     @Relation(parentColumn = "id", entityColumn = "offerId")
-    val notes: List<NoteEntity> = emptyList(),
+    val notesRaw: List<NoteEntity> = emptyList(),
 ) {
+    /** Τα ζωντανά παιδιά — τα soft-deleted μένουν στη βάση για τον συγχρονισμό. */
+    val spaces: List<SpaceEntity> get() = spacesRaw.filter { !it.deleted }.sortedBy { it.position }
+    val notes: List<NoteEntity> get() = notesRaw.filter { !it.deleted }.sortedBy { it.position }
+
     /** Γενικό Σύνολο — ήταν virtual column + action snapshot στο AppSheet */
     val total: Double get() = spaces.sumOf { it.lineTotal }
 

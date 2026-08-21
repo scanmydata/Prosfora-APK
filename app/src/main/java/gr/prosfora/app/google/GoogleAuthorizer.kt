@@ -19,9 +19,9 @@ import kotlin.coroutines.resumeWithException
 /**
  * Παίρνει OAuth access token για τα Google APIs, με το consent window της Google.
  *
- * Το app ζητάει **μόνο** `drive.file`: πρόσβαση αποκλειστικά στα αρχεία που
- * δημιουργεί το ίδιο. Είναι non-sensitive scope, οπότε δεν εμφανίζεται
- * προειδοποίηση «μη επαληθευμένη εφαρμογή» και η έγκριση δεν λήγει.
+ * Ζητούνται τρία scopes σε ένα consent window: `drive.file` για το πρότυπο και
+ * τα PDF, `spreadsheets` για την κοινόχρηστη βάση, και `gmail.send` για την
+ * αποστολή — μόνο αποστολή, κανένα δικαίωμα ανάγνωσης αλληλογραφίας.
  *
  * Δεν χρειάζεται client ID στον κώδικα: ο Android OAuth client ταυτοποιείται
  * από το package name + το SHA-1 της υπογραφής — βλ. docs/google-cloud.md.
@@ -79,10 +79,17 @@ class GoogleAuthorizer internal constructor(
     }
 
     companion object {
+        /** Πρότυπο + παραγόμενα PDF. Non-sensitive: μόνο αρχεία του app. */
         const val DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
 
-        /** Ό,τι προστεθεί εδώ εμφανίζεται στο ίδιο consent window. */
-        val SCOPES = listOf(DRIVE_FILE)
+        /** Το κοινόχρηστο Sheet που παίζει τον ρόλο της βάσης. Sensitive. */
+        const val SPREADSHEETS = "https://www.googleapis.com/auth/spreadsheets"
+
+        /** Αποστολή email χωρίς app password. Sensitive — μόνο αποστολή, καμία ανάγνωση. */
+        const val GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
+
+        /** Όλα σε ένα consent window — ο χρήστης εγκρίνει μία φορά. */
+        val SCOPES = listOf(DRIVE_FILE, SPREADSHEETS, GMAIL_SEND)
     }
 }
 

@@ -26,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import gr.prosfora.app.BuildConfig
 import gr.prosfora.app.data.SeedImporter
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.google.SendMethod
 import gr.prosfora.app.mail.OfferMail
 import gr.prosfora.app.mail.MailSender
 import gr.prosfora.app.settings.SMTP_PRESETS
@@ -63,6 +65,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
     var testing by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     var presetHint by remember { mutableStateOf<String?>(null) }
+    var sendMethod by remember { mutableStateOf(googleSettings.sendMethod) }
+    var sheetInput by remember { mutableStateOf(googleSettings.spreadsheetId.orEmpty()) }
+    var autoSync by remember { mutableStateOf(googleSettings.autoSync) }
+    var lastSync by remember { mutableStateOf(googleSettings.lastSyncAt) }
+    var syncing by remember { mutableStateOf<String?>(null) }
 
     val googleSettings = remember { GoogleSettings(context) }
     var subjectTemplate by remember { mutableStateOf(googleSettings.emailSubjectTemplate) }
@@ -88,6 +95,32 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Τρόπος αποστολής", style = MaterialTheme.typography.titleMedium)
+                    SendMethod.entries.forEach { method ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = sendMethod == method,
+                                onClick = {
+                                    sendMethod = method
+                                    googleSettings.sendMethod = method
+                                },
+                            )
+                            Column(Modifier.padding(start = 4.dp)) {
+                                Text(method.label, style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    method.hint,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (sendMethod == SendMethod.SMTP) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Αποστολή email (SMTP)", style = MaterialTheme.typography.titleMedium)
@@ -158,6 +191,20 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
                 }
             }
 
+            }
+
+            SharedDatabaseCard(
+                sheetInput = sheetInput,
+                onSheetInputChange = { sheetInput = it },
+                autoSync = autoSync,
+                onAutoSyncChange = { autoSync = it; googleSettings.autoSync = it },
+                lastSync = lastSync,
+                syncing = syncing,
+                onSyncingChange = { syncing = it },
+                onSynced = { lastSync = googleSettings.lastSyncAt },
+                googleSettings = googleSettings,
+            )
+
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Αποστολέας", style = MaterialTheme.typography.titleMedium)
@@ -190,6 +237,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
                 Button(
                     onClick = {
                         store.save(settings)
+                        googleSettings.senderName = settings.fromName
                         Toast.makeText(context, "Αποθηκεύτηκε", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.weight(1f),

@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.Flow
 interface OfferDao {
 
     @Transaction
-    @Query("SELECT * FROM offers ORDER BY dateEpochDay DESC, createdAt DESC")
+    @Query("SELECT * FROM offers WHERE deleted = 0 ORDER BY dateEpochDay DESC, createdAt DESC")
     fun observeAll(): Flow<List<OfferWithDetails>>
 
     @Transaction
@@ -27,8 +27,13 @@ interface OfferDao {
     @Upsert
     suspend fun upsert(offer: OfferEntity)
 
-    @Query("DELETE FROM offers WHERE id = :id")
-    suspend fun delete(id: String)
+    /** Soft delete — η γραμμή μένει ώστε να ταξιδέψει η διαγραφή στον συγχρονισμό. */
+    @Query("UPDATE offers SET deleted = 1, updatedAt = :at WHERE id = :id")
+    suspend fun softDelete(id: String, at: Long)
+
+    /** Όλα, μαζί με τα διαγραμμένα — μόνο ο συγχρονισμός το χρειάζεται. */
+    @Query("SELECT * FROM offers")
+    suspend fun allForSync(): List<OfferEntity>
 
     @Query("UPDATE offers SET lastSentAt = :at, updatedAt = :at WHERE id = :id")
     suspend fun markSent(id: String, at: Long)
@@ -37,35 +42,41 @@ interface OfferDao {
 @Dao
 interface SpaceDao {
 
-    @Query("SELECT * FROM spaces WHERE offerId = :offerId ORDER BY position")
+    @Query("SELECT * FROM spaces WHERE offerId = :offerId AND deleted = 0 ORDER BY position")
     fun observeForOffer(offerId: String): Flow<List<SpaceEntity>>
+
+    @Query("SELECT * FROM spaces")
+    suspend fun allForSync(): List<SpaceEntity>
 
     @Upsert
     suspend fun upsert(space: SpaceEntity)
 
-    @Delete
-    suspend fun delete(space: SpaceEntity)
+    @Query("UPDATE spaces SET deleted = 1, updatedAt = :at WHERE id = :id")
+    suspend fun softDelete(id: String, at: Long)
 
-    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM spaces WHERE offerId = :offerId")
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM spaces WHERE offerId = :offerId AND deleted = 0")
     suspend fun nextPosition(offerId: String): Int
 }
 
 @Dao
 interface NoteDao {
 
-    @Query("SELECT * FROM notes WHERE offerId = :offerId ORDER BY position")
+    @Query("SELECT * FROM notes WHERE offerId = :offerId AND deleted = 0 ORDER BY position")
     fun observeForOffer(offerId: String): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes")
+    suspend fun allForSync(): List<NoteEntity>
 
     @Upsert
     suspend fun upsert(note: NoteEntity)
 
-    @Delete
-    suspend fun delete(note: NoteEntity)
+    @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE id = :id")
+    suspend fun softDelete(id: String, at: Long)
 
-    @Query("DELETE FROM notes WHERE offerId = :offerId AND text = :text")
-    suspend fun deleteByText(offerId: String, text: String)
+    @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND text = :text AND deleted = 0")
+    suspend fun softDeleteByText(offerId: String, text: String, at: Long)
 
-    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM notes WHERE offerId = :offerId")
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM notes WHERE offerId = :offerId AND deleted = 0")
     suspend fun nextPosition(offerId: String): Int
 }
 

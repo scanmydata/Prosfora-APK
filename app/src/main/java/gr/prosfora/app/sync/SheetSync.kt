@@ -1,0 +1,252 @@
+package gr.prosfora.app.sync
+
+import android.content.Context
+import gr.prosfora.app.data.db.NoteEntity
+import gr.prosfora.app.data.db.OfferEntity
+import gr.prosfora.app.data.db.OfferStatus
+import gr.prosfora.app.data.db.ProsforaDatabase
+import gr.prosfora.app.data.db.SpaceEntity
+import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.google.SheetsClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * Συγχρονισμός της τοπικής βάσης με το κοινόχρηστο Google Sheet.
+ *
+ * Η ίδια ιδέα με το AppSheet: το Sheet είναι η κοινή βάση, η συσκευή κρατάει
+ * τοπικό αντίγραφο ώστε να δουλεύει offline. Όποιος έχει πρόσβαση στο Sheet
+ * (μέσω κανονικού διαμοιρασμού Drive) βλέπει τα ίδια δεδομένα.
+ *
+ * **Συγχώνευση**: ανά εγγραφή, κερδίζει το πιο πρόσφατο `updatedAt`. Δεν είναι
+ * transactional — δύο άτομα που αλλάζουν την *ίδια* προσφορά ταυτόχρονα θα
+ * κρατήσουν την πιο πρόσφατη εκδοχή, όχι συγχώνευση πεδίων. Για μια ομάδα που
+ * δουλεύει σε διαφορετικές προσφορές είναι το σωστό συμβιβασμό.
+ */
+class SheetSync(
+    private val context: Context,
+    private val sheets: SheetsClient,
+    private val settings: GoogleSettings,
+) {
+
+    data class Report(
+        val pulledOffers: Int,
+        val pulledSpaces: Int,
+        val pulledNotes: Int,
+        val pushedRows: Int,
+    ) {
+        val summary: String
+            get() = "Λήφθηκαν $pulledOffers προσφορές / $pulledSpaces χώροι / " +
+                "$pulledNotes σημειώσεις · στάλθηκαν $pushedRows γραμμές"
+    }
+
+    private val db = ProsforaDatabase.get(context)
+
+    suspend fun sync(): Report = withContext(Dispatchers.IO) {
+        val spreadsheetId = settings.spreadsheetId
+            ?: error("Δεν έχει οριστεί κοινόχρηστο Sheet")
+
+        ensureTabs(spreadsheetId)
+
+        val remoteOffers = readOffers(spreadsheetId)
+        val remoteSpaces = readSpaces(spreadsheetId)
+        val remoteNotes = readNotes(spreadsheetId)
+
+        val localOffers = db.offerDao().allForSync()
+        val localSpaces = db.spaceDao().allForSync()
+        val localNotes = db.noteDao().allForSync()
+
+        val mergedOffers = merge(localOffers, remoteOffers, { it.id }, { it.updatedAt })
+        val mergedSpaces = merge(localSpaces, remoteSpaces, { it.id }, { it.updatedAt })
+        val mergedNotes = merge(localNotes, remoteNotes, { it.id }, { it.updatedAt })
+
+        var pulledOffers = 0
+        mergedOffers.forEach { merged ->
+            if (localOffers.none { it.id == merged.id && it == merged }) {
+                db.offerDao().upsert(merged)
+                pulledOffers++
+            }
+        }
+        var pulledSpaces = 0
+        mergedSpaces.forEach { merged ->
+            if (localSpaces.none { it.id == merged.id && it == merged }) {
+                db.spaceDao().upsert(merged)
+                pulledSpaces++
+            }
+        }
+        var pulledNotes = 0
+        mergedNotes.forEach { merged ->
+            if (localNotes.none { it.id == merged.id && it == merged }) {
+                db.noteDao().upsert(merged)
+                pulledNotes++
+            }
+        }
+
+        sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))
+        sheets.replaceRows(spreadsheetId, TAB_SPACES, spaceRows(mergedSpaces))
+        sheets.replaceRows(spreadsheetId, TAB_NOTES, noteRows(mergedNotes))
+
+        settings.lastSyncAt = System.currentTimeMillis()
+        Report(
+            pulledOffers = pulledOffers,
+            pulledSpaces = pulledSpaces,
+            pulledNotes = pulledNotes,
+            pushedRows = mergedOffers.size + mergedSpaces.size + mergedNotes.size,
+        )
+    }
+
+    /** Δημιουργεί νέο κοινόχρηστο Sheet με τα σωστά tabs και ανεβάζει τα τοπικά. */
+    suspend fun createSharedSheet(title: String): String = withContext(Dispatchers.IO) {
+        val id = sheets.createSpreadsheet(title, listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES))
+        settings.spreadsheetId = id
+        sync()
+        id
+    }
+
+    private suspend fun ensureTabs(spreadsheetId: String) {
+        val existing = sheets.sheetTitles(spreadsheetId)
+        listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES)
+            .filterNot { it in existing }
+            .forEach { sheets.addSheet(spreadsheetId, it) }
+    }
+
+    /**
+     * Ενώνει τοπικά και απομακρυσμένα: ό,τι υπάρχει και στα δύο κρίνεται από το
+     * `updatedAt`, ό,τι υπάρχει μόνο σε ένα περνάει ως έχει.
+     */
+    private fun <T> merge(
+        local: List<T>,
+        remote: List<T>,
+        id: (T) -> String,
+        updatedAt: (T) -> Long,
+    ): List<T> {
+        val byId = LinkedHashMap<String, T>()
+        local.forEach { byId[id(it)] = it }
+        remote.forEach { incoming ->
+            val key = id(incoming)
+            val existing = byId[key]
+            if (existing == null || updatedAt(incoming) > updatedAt(existing)) {
+                byId[key] = incoming
+            }
+        }
+        return byId.values.toList()
+    }
+
+    // ---- ανάγνωση -----------------------------------------------------------
+
+    private suspend fun readOffers(spreadsheetId: String): List<OfferEntity> =
+        dataRows(spreadsheetId, TAB_OFFERS, OFFER_HEADER.size).map { row ->
+            OfferEntity(
+                id = row[0],
+                address = row[1],
+                dateEpochDay = row[2].toLongOrNull() ?: 0L,
+                kind = row[3],
+                email = row[4],
+                status = runCatching { OfferStatus.valueOf(row[5]) }
+                    .getOrElse { OfferStatus.fromLabel(row[5]) },
+                createdAt = row[6].toLongOrNull() ?: 0L,
+                updatedAt = row[7].toLongOrNull() ?: 0L,
+                lastSentAt = row[8].toLongOrNull(),
+                deleted = row[9] == "1",
+            )
+        }
+
+    private suspend fun readSpaces(spreadsheetId: String): List<SpaceEntity> =
+        dataRows(spreadsheetId, TAB_SPACES, SPACE_HEADER.size).map { row ->
+            SpaceEntity(
+                id = row[0],
+                offerId = row[1],
+                description = row[2],
+                area = row[3].toDoubleOrNull() ?: 0.0,
+                unitPrice = row[4].toDoubleOrNull() ?: 0.0,
+                position = row[5].toIntOrNull() ?: 0,
+                updatedAt = row[6].toLongOrNull() ?: 0L,
+                deleted = row[7] == "1",
+            )
+        }
+
+    private suspend fun readNotes(spreadsheetId: String): List<NoteEntity> =
+        dataRows(spreadsheetId, TAB_NOTES, NOTE_HEADER.size).map { row ->
+            NoteEntity(
+                id = row[0],
+                offerId = row[1],
+                text = row[2],
+                position = row[3].toIntOrNull() ?: 0,
+                updatedAt = row[4].toLongOrNull() ?: 0L,
+                deleted = row[5] == "1",
+            )
+        }
+
+    /** Γραμμές δεδομένων, χωρίς την επικεφαλίδα, γεμισμένες σε σταθερό πλάτος. */
+    private suspend fun dataRows(
+        spreadsheetId: String,
+        tab: String,
+        width: Int,
+    ): List<List<String>> {
+        val rows = sheets.readRows(spreadsheetId, tab)
+        if (rows.isEmpty()) return emptyList()
+        return rows.drop(1)
+            .filter { it.firstOrNull()?.isNotBlank() == true }
+            .map { row -> List(width) { i -> row.getOrElse(i) { "" } } }
+    }
+
+    // ---- εγγραφή ------------------------------------------------------------
+
+    private fun offerRows(offers: List<OfferEntity>) = listOf(OFFER_HEADER) + offers.map {
+        listOf(
+            it.id,
+            it.address,
+            it.dateEpochDay.toString(),
+            it.kind,
+            it.email,
+            it.status.name,
+            it.createdAt.toString(),
+            it.updatedAt.toString(),
+            it.lastSentAt?.toString().orEmpty(),
+            if (it.deleted) "1" else "0",
+        )
+    }
+
+    private fun spaceRows(spaces: List<SpaceEntity>) = listOf(SPACE_HEADER) + spaces.map {
+        listOf(
+            it.id,
+            it.offerId,
+            it.description,
+            it.area.toString(),
+            it.unitPrice.toString(),
+            it.position.toString(),
+            it.updatedAt.toString(),
+            if (it.deleted) "1" else "0",
+        )
+    }
+
+    private fun noteRows(notes: List<NoteEntity>) = listOf(NOTE_HEADER) + notes.map {
+        listOf(
+            it.id,
+            it.offerId,
+            it.text,
+            it.position.toString(),
+            it.updatedAt.toString(),
+            if (it.deleted) "1" else "0",
+        )
+    }
+
+    companion object {
+        // Ίδια ονόματα tab με το AppSheet, ώστε το Sheet να παραμένει αναγνώσιμο
+        const val TAB_OFFERS = "Προσφορές"
+        const val TAB_SPACES = "Χώροι_έργου"
+        const val TAB_NOTES = "Λίστα_Παρατηρήσεων"
+
+        private val OFFER_HEADER = listOf(
+            "ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email",
+            "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο",
+        )
+        private val SPACE_HEADER = listOf(
+            "ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)",
+            "Τιμή Μονάδος", "Σειρά", "Ενημερώθηκε", "Διαγραμμένο",
+        )
+        private val NOTE_HEADER = listOf(
+            "ID_Παρατήρησης", "ID_Προσφοράς", "Κείμενο", "Σειρά", "Ενημερώθηκε", "Διαγραμμένο",
+        )
+    }
+}
