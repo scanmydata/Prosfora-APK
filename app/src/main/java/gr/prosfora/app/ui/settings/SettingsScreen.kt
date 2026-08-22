@@ -10,32 +10,32 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,29 +44,28 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.BuildConfig
-import gr.prosfora.app.data.SeedImporter
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SendMethod
-import gr.prosfora.app.mail.OfferMail
-import gr.prosfora.app.mail.MailSender
 import gr.prosfora.app.settings.SMTP_PRESETS
-import gr.prosfora.app.settings.SmtpSettings
 import gr.prosfora.app.settings.SmtpSettingsStore
-import kotlinx.coroutines.launch
+import gr.prosfora.app.ui.MenuButton
+import gr.prosfora.app.ui.offers.EditBlue
+import gr.prosfora.app.ui.offers.EmailAmber
+import gr.prosfora.app.ui.offers.SentGreen
 
+/**
+ * Οι ρυθμίσεις σε ενότητες που ανοιγοκλείνουν: μία οθόνη, επτά θέματα, ανοίγει
+ * μόνο αυτό που χρειάζεται τη στιγμή εκείνη.
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
+fun SettingsScreen(onMenu: () -> Unit, onOpenTemplate: () -> Unit) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val store = remember { SmtpSettingsStore(context) }
+    val googleSettings = remember { GoogleSettings(context) }
 
     var settings by remember { mutableStateOf(store.load()) }
-    var testing by remember { mutableStateOf(false) }
-    var importing by remember { mutableStateOf(false) }
     var presetHint by remember { mutableStateOf<String?>(null) }
-
-    val googleSettings = remember { GoogleSettings(context) }
     var sendMethod by remember { mutableStateOf(googleSettings.sendMethod) }
     var autoSync by remember { mutableStateOf(googleSettings.autoSync) }
     var lastSync by remember { mutableStateOf(googleSettings.lastSyncAt) }
@@ -76,11 +75,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("Ρυθμίσεις") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Πίσω")
-                    }
-                },
+                navigationIcon = { MenuButton(onMenu) },
             )
         },
     ) { padding ->
@@ -90,38 +85,38 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Τρόπος αποστολής", style = MaterialTheme.typography.titleMedium)
-                    SendMethod.entries.forEach { method ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = sendMethod == method,
-                                onClick = {
-                                    sendMethod = method
-                                    googleSettings.sendMethod = method
-                                },
+            SettingsSection(
+                title = "Αποστολή email",
+                subtitle = when (sendMethod) {
+                    SendMethod.GOOGLE -> "Μέσω του λογαριασμού Google"
+                    SendMethod.SMTP -> settings.host.ifBlank { "SMTP — δεν έχει ρυθμιστεί" }
+                },
+                icon = Icons.Default.Email,
+                tint = EmailAmber,
+            ) {
+                SendMethod.entries.forEach { method ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = sendMethod == method,
+                            onClick = {
+                                sendMethod = method
+                                googleSettings.sendMethod = method
+                            },
+                        )
+                        Column(Modifier.padding(start = 4.dp)) {
+                            Text(method.label, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                method.hint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Column(Modifier.padding(start = 4.dp)) {
-                                Text(method.label, style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    method.hint,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
                         }
                     }
                 }
-            }
 
-            if (sendMethod == SendMethod.SMTP) {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Αποστολή email (SMTP)", style = MaterialTheme.typography.titleMedium)
-
+                if (sendMethod == SendMethod.SMTP) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SMTP_PRESETS.forEach { preset ->
                             AssistChip(
@@ -180,33 +175,20 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
                     )
 
                     ToggleRow("STARTTLS", settings.useStartTls) {
-                        settings = settings.copy(useStartTls = it, useSsl = if (it) false else settings.useSsl)
+                        settings = settings.copy(
+                            useStartTls = it,
+                            useSsl = if (it) false else settings.useSsl,
+                        )
                     }
                     ToggleRow("SSL/TLS (θύρα 465)", settings.useSsl) {
-                        settings = settings.copy(useSsl = it, useStartTls = if (it) false else settings.useStartTls)
+                        settings = settings.copy(
+                            useSsl = it,
+                            useStartTls = if (it) false else settings.useStartTls,
+                        )
                     }
-                }
-            }
 
-            }
-
-            SharedDatabaseCard(
-                autoSync = autoSync,
-                onAutoSyncChange = { autoSync = it; googleSettings.autoSync = it },
-                lastSync = lastSync,
-                syncing = syncing,
-                onSyncingChange = { syncing = it },
-                onSynced = { lastSync = googleSettings.lastSyncAt },
-                googleSettings = googleSettings,
-            )
-
-            MessageTemplatesCard(googleSettings)
-
-            ReviewSettingsCard(googleSettings)
-
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Αποστολέας", style = MaterialTheme.typography.titleMedium)
+                    // Η διεύθυνση αποστολέα αφορά ΜΟΝΟ το SMTP: εκεί την ορίζουμε
+                    // εμείς στο μήνυμα. Με τον λογαριασμό Google τη βάζει η Gmail.
                     OutlinedTextField(
                         value = settings.fromAddress,
                         onValueChange = { settings = settings.copy(fromAddress = it) },
@@ -215,65 +197,188 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
-                        value = settings.fromName,
-                        onValueChange = { settings = settings.copy(fromName = it) },
-                        label = { Text("Όνομα αποστολέα") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
+                    Text(
+                        "Η διεύθυνση που θα δει ο πελάτης ως «Από» και στην οποία θα " +
+                            "απαντήσει. Συνήθως είναι ίδια με το όνομα χρήστη.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    OutlinedTextField(
-                        value = settings.signature,
-                        onValueChange = { settings = settings.copy(signature = it) },
-                        label = { Text("Υπογραφή") },
-                        minLines = 3,
-                        modifier = Modifier.fillMaxWidth(),
+                } else {
+                    Text(
+                        "Ο αποστολέας είναι ο συνδεδεμένος λογαριασμός Google — τη " +
+                            "διεύθυνση τη συμπληρώνει η ίδια η Gmail και τα μηνύματα " +
+                            "μπαίνουν κανονικά στα Απεσταλμένα σου.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = settings.fromName,
+                    onValueChange = { settings = settings.copy(fromName = it) },
+                    label = { Text("Όνομα αποστολέα") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = settings.signature,
+                    onValueChange = { settings = settings.copy(signature = it) },
+                    label = { Text("Υπογραφή") },
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
                 Button(
                     onClick = {
                         store.save(settings)
                         googleSettings.senderName = settings.fromName
                         Toast.makeText(context, "Αποθηκεύτηκε", Toast.LENGTH_SHORT).show()
                     },
-                    modifier = Modifier.weight(1f),
-                ) { Text("Αποθήκευση") }
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Αποθήκευση", maxLines = 1) }
 
-                OutlinedButton(
-                    enabled = !testing && settings.isConfigured,
-                    onClick = {
-                        testing = true
-                        scope.launch {
-                            val result = runCatching { MailSender.verify(settings) }
-                            testing = false
-                            val text = result.fold(
-                                onSuccess = { "Η σύνδεση πέτυχε" },
-                                onFailure = { "Απέτυχε: ${it.message}" },
-                            )
-                            Toast.makeText(context, text, Toast.LENGTH_LONG).show()
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    if (testing) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    } else {
-                        Text("Δοκιμή σύνδεσης")
-                    }
+                Text(
+                    "Ο κωδικός αποθηκεύεται κρυπτογραφημένος στη συσκευή και δεν φεύγει " +
+                        "ποτέ από αυτήν.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            SettingsSection(
+                title = "Κοινόχρηστη βάση",
+                subtitle = if (googleSettings.spreadsheetId == null) {
+                    "Δεν έχει συνδεθεί Sheet"
+                } else {
+                    "Google Sheet στον φάκελο ${GoogleSettings.DRIVE_FOLDER_NAME}"
+                },
+                icon = Icons.Default.CloudSync,
+                tint = EditBlue,
+            ) {
+                SharedDatabaseSettings(
+                    autoSync = autoSync,
+                    onAutoSyncChange = { autoSync = it; googleSettings.autoSync = it },
+                    lastSync = lastSync,
+                    syncing = syncing,
+                    onSyncingChange = { syncing = it },
+                    onSynced = { lastSync = googleSettings.lastSyncAt },
+                    googleSettings = googleSettings,
+                )
+            }
+
+            SettingsSection(
+                title = "Πρότυπο PDF",
+                subtitle = "Η εμφάνιση της τυπωμένης προσφοράς",
+                icon = Icons.Default.Description,
+            ) {
+                Text(
+                    "Το πρότυπο είναι ένα Google Doc στον φάκελο " +
+                        "«${GoogleSettings.DRIVE_FOLDER_NAME}». Μπορείς να αλλάξεις τα " +
+                        "κείμενά του μέσα από την εφαρμογή ή ολόκληρη τη διάταξη στο " +
+                        "Google Docs.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(onClick = onOpenTemplate, modifier = Modifier.fillMaxWidth()) {
+                    Text("Άνοιγμα προτύπου", maxLines = 1)
                 }
             }
 
-            Text(
-                "Ο κωδικός αποθηκεύεται κρυπτογραφημένος στη συσκευή και δεν φεύγει ποτέ από αυτήν.\n\n" +
-                    "Έκδοση ${BuildConfig.VERSION_NAME}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            SettingsSection(
+                title = "Προεπιλογές προσφοράς",
+                subtitle = "Ισχύς και τρόπος πληρωμής για κάθε νέα προσφορά",
+                icon = Icons.Default.Payments,
+                tint = SentGreen,
+            ) {
+                OfferDefaultsSettings(googleSettings)
+            }
+
+            SettingsSection(
+                title = "Πρότυπα μηνυμάτων",
+                subtitle = "Email, SMS και Viber",
+                icon = Icons.AutoMirrored.Filled.Chat,
+            ) {
+                MessageTemplatesSettings(googleSettings)
+            }
+
+            SettingsSection(
+                title = "Αξιολογήσεις",
+                subtitle = "Μετά από ${googleSettings.reviewDelayDays} μέρες από την ολοκλήρωση",
+                icon = Icons.Default.Star,
+                tint = EmailAmber,
+            ) {
+                ReviewSettings(googleSettings)
+            }
+
+            SettingsSection(
+                title = "Σχετικά",
+                subtitle = "Έκδοση ${BuildConfig.VERSION_NAME}",
+                icon = Icons.Default.Info,
+            ) {
+                Text(
+                    "Προσφορές — ΤοΒάψιμο.gr\n" +
+                        "Έκδοση ${BuildConfig.VERSION_NAME}\n\n" +
+                        "Οι ενημερώσεις έρχονται από το GitHub. Ο έλεγχος γίνεται με το " +
+                        "κουμπί ανανέωσης ή τραβώντας τη λίστα προσφορών προς τα κάτω.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Spacer(Modifier.padding(bottom = 8.dp))
         }
     }
+}
+
+/** Ισχύς και δόσεις που κληρονομεί κάθε νέα προσφορά. */
+@Composable
+private fun OfferDefaultsSettings(googleSettings: GoogleSettings) {
+    val context = LocalContext.current
+    var days by remember { mutableStateOf(googleSettings.offerValidDays.toString()) }
+    var terms by remember { mutableStateOf(googleSettings.defaultPaymentTerms) }
+
+    Text(
+        "Αυτά μπαίνουν αυτόματα σε κάθε νέα προσφορά και αλλάζουν ελεύθερα ανά " +
+            "προσφορά από την οθόνη της.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    OutlinedTextField(
+        value = days,
+        onValueChange = { days = it.filter(Char::isDigit).take(4) },
+        label = { Text("Ισχύς προσφοράς σε μέρες") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    OutlinedTextField(
+        value = terms,
+        onValueChange = { terms = it },
+        label = { Text("Τρόπος πληρωμής") },
+        minLines = 4,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        "Μία δόση ανά γραμμή — έτσι ακριβώς τυπώνονται στο PDF.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Button(
+        onClick = {
+            googleSettings.offerValidDays = days.toIntOrNull() ?: 60
+            googleSettings.defaultPaymentTerms = terms
+            Toast.makeText(context, "Αποθηκεύτηκε", Toast.LENGTH_SHORT).show()
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("Αποθήκευση", maxLines = 1) }
+
+    TextButton(
+        onClick = { terms = GoogleSettings.DEFAULT_PAYMENT_TERMS },
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("Επαναφορά προεπιλογής") }
 }
 
 @Composable

@@ -56,8 +56,19 @@ class OffersViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onQueryChange(value: String) { query.value = value }
 
+    /**
+     * Η νέα προσφορά ξεκινά με τη σημερινή ημερομηνία και με την ισχύ / τον
+     * τρόπο πληρωμής που έχει οριστεί στις Ρυθμίσεις — έτσι δεν ξαναγράφονται
+     * τα ίδια σε κάθε προσφορά.
+     */
     fun createOffer(onCreated: (String) -> Unit) = viewModelScope.launch {
-        val offer = OfferEntity(dateEpochDay = LocalDate.now().toEpochDay())
+        val settings = gr.prosfora.app.google.GoogleSettings(getApplication())
+        val today = LocalDate.now()
+        val offer = OfferEntity(
+            dateEpochDay = today.toEpochDay(),
+            validUntilDay = today.plusDays(settings.offerValidDays.toLong()).toEpochDay(),
+            paymentTerms = settings.defaultPaymentTerms,
+        )
         repo.saveOffer(offer)
         onCreated(offer.id)
     }

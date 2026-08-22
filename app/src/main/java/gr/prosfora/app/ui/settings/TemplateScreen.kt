@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -48,7 +50,8 @@ import gr.prosfora.app.mail.GmailSender
 import gr.prosfora.app.mail.MailSender
 import gr.prosfora.app.settings.SmtpSettingsStore
 import gr.prosfora.app.google.rememberGoogleAuthorizer
-import gr.prosfora.app.ui.pdf.PdfPreview
+import gr.prosfora.app.ui.components.ConfirmDialog
+import gr.prosfora.app.ui.pdf.PdfPreviewDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -69,6 +72,7 @@ fun TemplateScreen(onBack: () -> Unit, onEditText: () -> Unit) {
     var busy by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<File?>(null) }
     var templateId by remember { mutableStateOf(settings.templateFileId) }
+    var confirmReset by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -114,7 +118,11 @@ fun TemplateScreen(onBack: () -> Unit, onEditText: () -> Unit) {
         },
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Card(Modifier.fillMaxWidth()) {
@@ -224,6 +232,12 @@ fun TemplateScreen(onBack: () -> Unit, onEditText: () -> Unit) {
 
             OutlinedButton(
                 enabled = busy == null,
+                onClick = { confirmReset = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Επαναφορά εργοστασιακού προτύπου", maxLines = 1) }
+
+            OutlinedButton(
+                enabled = busy == null,
                 onClick = {
                     scope.launch {
                         busy = "Δημιουργία προεπισκόπησης…"
@@ -256,11 +270,50 @@ fun TemplateScreen(onBack: () -> Unit, onEditText: () -> Unit) {
                 )
             }
 
-            val file = preview
-            if (file != null) {
-                Box(Modifier.fillMaxSize()) { PdfPreview(file) }
-            }
         }
+    }
+
+    // Πλήρης οθόνη, με μεγέθυνση — η ενσωματωμένη προεπισκόπηση ήταν πολύ μικρή
+    preview?.let { file ->
+        PdfPreviewDialog(file) { preview = null }
+    }
+
+    if (confirmReset) {
+        ConfirmDialog(
+            title = "Επαναφορά προτύπου",
+            message = "Το πρότυπο στο Drive θα αντικατασταθεί από το εργοστασιακό της " +
+                "εφαρμογής. Ό,τι έχεις αλλάξει σε αυτό — κείμενα, εικόνες, διάταξη — " +
+                "θα χαθεί.",
+            confirmLabel = "Επαναφορά",
+            onConfirm = {
+                busy = "Επαναφορά…"
+                scope.launch {
+                    val result = runCatching {
+                        val bundled = context.assets.open("template.docx").use { it.readBytes() }
+                        val drive = DriveClient(authorizer.accessToken())
+                        settings.templateFileId?.let { old -> runCatching { drive.delete(old) } }
+                        settings.templateFileId = null
+                        val folder = DriveWorkspace(drive, settings).rootFolder()
+                        drive.upload(
+                            name = GoogleSettings.TEMPLATE_NAME,
+                            bytes = bundled,
+                            mimeType = DriveClient.DOCX_MIME,
+                            parentId = folder,
+                            convertToGoogleDoc = true,
+                        ).also { settings.templateFileId = it }
+                    }
+                    busy = null
+                    result.onSuccess {
+                        templateId = it
+                        preview = null
+                        Toast.makeText(context, "Το πρότυπο επανήλθε", Toast.LENGTH_LONG).show()
+                    }.onFailure {
+                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
+            onDismiss = { confirmReset = false },
+        )
     }
 }
 
@@ -296,7 +349,9 @@ private suspend fun renderSamplePdf(
 
 
 private val PLACEHOLDER_HELP = """
-    <<[Οδός / Περιοχή]>> · <<[Είδος]>> · <<[Ημερομηνία]>> · <<[Γενικό Σύνολο Live]>>
+    Κεφαλίδα: <<[Οδός / Περιοχή]>> · <<[Είδος]>> · <<[Ημερομηνία]>> · <<[Ισχύει έως]>>
+    Σύνολο: <<[Γενικό Σύνολο Live]>>
     Γραμμή χώρου: <<[Περιγραφή Χώρου]>> · <<[Επιφάνεια (τ.μ.)]>> · <<[Τιμή Μονάδος]>> · <<[Σύνολο Γραμμής]>>
-    Σημείωση: <<[Κείμενο]>>
+    Μία γραμμή ανά σημείωση: <<[Παρατηρήσεις]>>
+    Μία γραμμή ανά δόση: <<[Τρόπος Πληρωμής]>>
 """.trimIndent()

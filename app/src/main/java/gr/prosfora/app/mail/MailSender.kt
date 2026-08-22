@@ -29,7 +29,26 @@ object MailSender {
         val body: String,
         val attachment: File? = null,
         val attachmentName: String? = null,
+        /**
+         * Προαιρετική HTML εκδοχή του [body]. Μπαίνει ως εναλλακτικό μέρος, οπότε
+         * όποιος πελάτης email δεν δείχνει HTML βλέπει κανονικά το σκέτο κείμενο.
+         */
+        val html: String? = null,
     )
+
+    /**
+     * Το σώμα του μηνύματος: σκέτο κείμενο, ή text+html ως multipart/alternative.
+     * Κοινό ανάμεσα σε SMTP και Gmail API — χτίζεται με το ίδιο JavaMail.
+     */
+    internal fun bodyPart(message: Outgoing): MimeBodyPart {
+        val text = MimeBodyPart().apply { setText(message.body, "UTF-8") }
+        val html = message.html ?: return text
+        val alternative = MimeMultipart("alternative").apply {
+            addBodyPart(text)
+            addBodyPart(MimeBodyPart().apply { setContent(html, "text/html; charset=UTF-8") })
+        }
+        return MimeBodyPart().apply { setContent(alternative) }
+    }
 
     suspend fun send(settings: SmtpSettings, message: Outgoing) = withContext(Dispatchers.IO) {
         require(settings.isConfigured) { "Δεν έχουν συμπληρωθεί οι ρυθμίσεις SMTP" }
@@ -47,7 +66,7 @@ object MailSender {
             sentDate = java.util.Date()
         }
 
-        val textPart = MimeBodyPart().apply { setText(message.body, "UTF-8") }
+        val textPart = bodyPart(message)
 
         if (message.attachment != null) {
             val filePart = MimeBodyPart().apply {
@@ -60,14 +79,6 @@ object MailSender {
         }
 
         Transport.send(mime)
-    }
-
-    /** Δοκιμή σύνδεσης χωρίς να σταλεί μήνυμα — για το κουμπί «Δοκιμή» στις ρυθμίσεις. */
-    suspend fun verify(settings: SmtpSettings) = withContext(Dispatchers.IO) {
-        val session = Session.getInstance(buildProperties(settings))
-        session.getTransport("smtp").use { transport ->
-            transport.connect(settings.host, settings.port, settings.username, settings.password)
-        }
     }
 
     private fun buildProperties(settings: SmtpSettings) = Properties().apply {

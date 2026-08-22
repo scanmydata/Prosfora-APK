@@ -23,13 +23,17 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,6 +49,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -68,7 +74,9 @@ import gr.prosfora.app.util.asNumber
 import gr.prosfora.app.util.asOfferDate
 import gr.prosfora.app.util.asSentStamp
 import gr.prosfora.app.util.parseDecimal
+import gr.prosfora.app.google.GoogleSettings
 import java.time.LocalDate
+import java.time.ZoneOffset
 
 /** Πλάτος της στήλης ενεργειών του πίνακα — ίδιο σε επικεφαλίδα και γραμμές. */
 private val ACTIONS_WIDTH = 76.dp
@@ -118,6 +126,7 @@ fun OfferDetailScreen(
             item { HeaderCard(current, viewModel) }
             item { SpacesCard(current, viewModel) }
             item { NotesCard(current, presets.map { it.text }, selectedNotes, viewModel) }
+            item { TermsCard(current, viewModel) }
             if (current.offer.lastSentAt != null || current.offer.notifiedAt != null) {
                 item { HistoryCard(current) }
             }
@@ -609,6 +618,112 @@ private fun FreeNoteInput(onAdd: (String, Boolean) -> Unit) {
             Icon(Icons.Default.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("Προσθήκη σημείωσης", maxLines = 1)
+        }
+    }
+}
+
+// ------------------------------------------------- ισχύς & τρόπος πληρωμής ---
+
+/**
+ * Τα δύο στοιχεία που κλείνουν την προσφορά: ως πότε ισχύει και πώς πληρώνεται.
+ * Και τα δύο τυπώνονται στο PDF, όπως ακριβώς στα φύλλα προσφοράς που έφτιαχνε
+ * ο χρήστης με το χέρι.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TermsCard(details: OfferWithDetails, viewModel: OffersViewModel) {
+    val context = LocalContext.current
+    val offer = details.offer
+    var picking by remember { mutableStateOf(false) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Ισχύς & τρόπος πληρωμής", style = MaterialTheme.typography.titleMedium)
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AssistChip(
+                    onClick = { picking = true },
+                    label = {
+                        Text(
+                            offer.validUntilDay?.let { "Ισχύει έως ${it.asOfferDate()}" }
+                                ?: "Χωρίς ημερομηνία λήξης",
+                            maxLines = 1,
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.EventAvailable,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = if (details.expired()) DeleteRed else SentGreen,
+                        )
+                    },
+                )
+                if (offer.validUntilDay != null) {
+                    TextButton(onClick = {
+                        viewModel.updateOffer(offer.copy(validUntilDay = null))
+                    }) { Text("Καθαρισμός", maxLines = 1) }
+                }
+            }
+            if (details.expired()) {
+                Text(
+                    "Η προσφορά έχει λήξει — άλλαξε την ημερομηνία πριν τη στείλεις ξανά.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DeleteRed,
+                )
+            }
+
+            StableTextField(
+                value = offer.paymentTerms,
+                onValueChange = { viewModel.updateOffer(offer.copy(paymentTerms = it)) },
+                label = "Τρόπος πληρωμής",
+                placeholder = "Μία δόση ανά γραμμή",
+                singleLine = false,
+                minLines = 4,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "Κάθε γραμμή τυπώνεται ως ξεχωριστή δόση στο PDF.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (offer.paymentTerms.isBlank()) {
+                TextButton(
+                    onClick = {
+                        viewModel.updateOffer(
+                            offer.copy(paymentTerms = GoogleSettings(context).defaultPaymentTerms),
+                        )
+                    },
+                ) { Text("Συμπλήρωση από τις προεπιλογές", maxLines = 1) }
+            }
+        }
+    }
+
+    if (picking) {
+        val initial = offer.validUntilDay ?: LocalDate.now().plusDays(60).toEpochDay()
+        val state = rememberDatePickerState(initialSelectedDateMillis = initial * 86_400_000L)
+        DatePickerDialog(
+            onDismissRequest = { picking = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { millis ->
+                        // Ο DatePicker δουλεύει σε UTC· η μετατροπή γίνεται εκεί,
+                        // αλλιώς η τοπική ζώνη μετακινεί τη μέρα κατά μία
+                        val day = java.time.Instant.ofEpochMilli(millis)
+                            .atZone(ZoneOffset.UTC).toLocalDate().toEpochDay()
+                        viewModel.updateOffer(offer.copy(validUntilDay = day))
+                    }
+                    picking = false
+                }) { Text("Επιλογή") }
+            },
+            dismissButton = {
+                TextButton(onClick = { picking = false }) { Text("Άκυρο") }
+            },
+        ) {
+            DatePicker(state = state)
         }
     }
 }

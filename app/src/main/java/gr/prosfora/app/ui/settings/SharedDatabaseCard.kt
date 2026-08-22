@@ -49,7 +49,7 @@ import java.util.Date
  * δικαιώματα του Google Drive, όχι με κάτι δικό μας.
  */
 @Composable
-fun SharedDatabaseCard(
+fun SharedDatabaseSettings(
     autoSync: Boolean,
     onAutoSyncChange: (Boolean) -> Unit,
     lastSync: Long,
@@ -67,168 +67,163 @@ fun SharedDatabaseCard(
     var picking by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf(false) }
 
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Κοινόχρηστη βάση", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Τα δεδομένα ζουν σε ένα Google Sheet μέσα στον φάκελο " +
-                    "«${GoogleSettings.DRIVE_FOLDER_NAME}» του Drive σου. Μοίρασε τον φάκελο " +
-                    "και οι συνεργάτες σου βλέπουν τις ίδιες προσφορές και τα ίδια PDF.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Text(
+        "Τα δεδομένα ζουν σε ένα Google Sheet μέσα στον φάκελο " +
+            "«${GoogleSettings.DRIVE_FOLDER_NAME}» του Drive σου. Μοίρασε τον φάκελο " +
+            "και οι συνεργάτες σου βλέπουν τις ίδιες προσφορές και τα ίδια PDF.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    if (connectedId != null) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Default.Folder,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
             )
+            Text(
+                connectedName ?: "Συνδεδεμένο",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+    }
 
-            if (connectedId != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.Folder,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        connectedName ?: "Συνδεδεμένο",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(start = 8.dp),
-                    )
-                }
-            }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            enabled = syncing == null,
+            onClick = { picking = true },
+            modifier = Modifier.weight(1f),
+        ) { Text(if (connectedId == null) "Επιλογή" else "Αλλαγή", maxLines = 1) }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    enabled = syncing == null,
-                    onClick = { picking = true },
-                    modifier = Modifier.weight(1f),
-                ) { Text(if (connectedId == null) "Επιλογή" else "Αλλαγή", maxLines = 1) }
-
-                OutlinedButton(
-                    enabled = syncing == null,
-                    onClick = {
-                        onSyncingChange("Δημιουργία…")
-                        scope.launch {
-                            val result = runCatching {
-                                val token = authorizer.accessToken()
-                                SheetSync(context, SheetsClient(token), googleSettings)
-                                    .createSharedSheet(
-                                        "Προσφορές — βάση δεδομένων",
-                                        DriveClient(token),
-                                    )
-                            }
-                            onSyncingChange(null)
-                            result.onSuccess { id ->
-                                connectedId = id
-                                connectedName = "Προσφορές — βάση δεδομένων"
-                                onSynced()
-                                Toast.makeText(
-                                    context,
-                                    "Δημιουργήθηκε στον φάκελο ${GoogleSettings.DRIVE_FOLDER_NAME}",
-                                    Toast.LENGTH_LONG,
-                                ).show()
-                            }.onFailure {
-                                Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                ) { Text("Νέο Sheet", maxLines = 1) }
-            }
-
-            if (connectedId != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Αυτόματος συγχρονισμός", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.weight(1f))
-                    Switch(checked = autoSync, onCheckedChange = onAutoSyncChange)
-                }
-
-                Button(
-                    enabled = syncing == null,
-                    onClick = {
-                        onSyncingChange("Συγχρονισμός…")
-                        scope.launch {
-                            val result = runCatching {
-                                SheetSync(
-                                    context,
-                                    SheetsClient(authorizer.accessToken()),
-                                    googleSettings,
-                                ).sync()
-                            }
-                            onSyncingChange(null)
-                            result.onSuccess { report ->
-                                onSynced()
-                                Toast.makeText(context, report.summary, Toast.LENGTH_LONG).show()
-                            }.onFailure {
-                                Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (syncing != null) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text(syncing, maxLines = 1)
-                    } else {
-                        Text("Συγχρονισμός τώρα", maxLines = 1)
+        OutlinedButton(
+            enabled = syncing == null,
+            onClick = {
+                onSyncingChange("Δημιουργία…")
+                scope.launch {
+                    val result = runCatching {
+                        val token = authorizer.accessToken()
+                        SheetSync(context, SheetsClient(token), googleSettings)
+                            .createSharedSheet(
+                                "Προσφορές — βάση δεδομένων",
+                                DriveClient(token),
+                            )
+                    }
+                    onSyncingChange(null)
+                    result.onSuccess { id ->
+                        connectedId = id
+                        connectedName = "Προσφορές — βάση δεδομένων"
+                        onSynced()
+                        Toast.makeText(
+                            context,
+                            "Δημιουργήθηκε στον φάκελο ${GoogleSettings.DRIVE_FOLDER_NAME}",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }.onFailure {
+                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
                     }
                 }
+            },
+            modifier = Modifier.weight(1f),
+        ) { Text("Νέο Sheet", maxLines = 1) }
+    }
 
-                Button(
-                    onClick = { sharing = true },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Default.PersonAdd, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Πρόσκληση συντάκτη", maxLines = 1)
+    if (connectedId != null) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Αυτόματος συγχρονισμός", style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.weight(1f))
+            Switch(checked = autoSync, onCheckedChange = onAutoSyncChange)
+        }
+
+        Button(
+            enabled = syncing == null,
+            onClick = {
+                onSyncingChange("Συγχρονισμός…")
+                scope.launch {
+                    val result = runCatching {
+                        SheetSync(
+                            context,
+                            SheetsClient(authorizer.accessToken()),
+                            googleSettings,
+                        ).sync()
+                    }
+                    onSyncingChange(null)
+                    result.onSuccess { report ->
+                        onSynced()
+                        Toast.makeText(context, report.summary, Toast.LENGTH_LONG).show()
+                    }.onFailure {
+                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                    }
                 }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (syncing != null) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text(syncing, maxLines = 1)
+            } else {
+                Text("Συγχρονισμός τώρα", maxLines = 1)
+            }
+        }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        onClick = {
+        Button(
+            onClick = { sharing = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Default.PersonAdd, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Πρόσκληση συντάκτη", maxLines = 1)
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("https://docs.google.com/spreadsheets/d/$connectedId/edit"),
+                        ),
+                    )
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("Άνοιγμα Sheet", maxLines = 1) }
+
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        runCatching {
+                            val drive = DriveClient(authorizer.accessToken())
+                            DriveWorkspace(drive, googleSettings).rootFolder()
+                        }.onSuccess { folder ->
                             context.startActivity(
                                 Intent(
                                     Intent.ACTION_VIEW,
-                                    Uri.parse("https://docs.google.com/spreadsheets/d/$connectedId/edit"),
+                                    Uri.parse("https://drive.google.com/drive/folders/$folder"),
                                 ),
                             )
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Άνοιγμα Sheet", maxLines = 1) }
-
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                runCatching {
-                                    val drive = DriveClient(authorizer.accessToken())
-                                    DriveWorkspace(drive, googleSettings).rootFolder()
-                                }.onSuccess { folder ->
-                                    context.startActivity(
-                                        Intent(
-                                            Intent.ACTION_VIEW,
-                                            Uri.parse("https://drive.google.com/drive/folders/$folder"),
-                                        ),
-                                    )
-                                }.onFailure {
-                                    Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Άνοιγμα φακέλου", maxLines = 1) }
-                }
-
-                Text(
-                    if (lastSync > 0) {
-                        "Τελευταίος συγχρονισμός: " +
-                            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-                                .format(Date(lastSync))
-                    } else {
-                        "Δεν έχει γίνει συγχρονισμός ακόμη"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+                        }.onFailure {
+                            Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("Άνοιγμα φακέλου", maxLines = 1) }
         }
+
+        Text(
+            if (lastSync > 0) {
+                "Τελευταίος συγχρονισμός: " +
+                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                        .format(Date(lastSync))
+            } else {
+                "Δεν έχει γίνει συγχρονισμός ακόμη"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 
     if (sharing) {

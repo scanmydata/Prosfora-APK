@@ -21,6 +21,8 @@ object SampleOffer {
             customerName = "Μαρία Παπαδοπούλου",
             email = "sample@example.com",
             customerPhone = "6941234567",
+            validUntilDay = LocalDate.now().plusDays(60).toEpochDay(),
+            paymentTerms = gr.prosfora.app.google.GoogleSettings.DEFAULT_PAYMENT_TERMS,
         )
         OfferWithDetails(
             offer = offer,

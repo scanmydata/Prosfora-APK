@@ -20,12 +20,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Handyman
-import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -71,11 +67,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun OffersListScreen(
     viewModel: OffersViewModel,
+    onMenu: () -> Unit,
     onOpenOffer: (String) -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenArchive: () -> Unit,
-    onOpenJobs: () -> Unit,
-    onOpenStats: () -> Unit,
 ) {
     val offers by viewModel.offers.collectAsState()
     val query by viewModel.query.collectAsState()
@@ -92,21 +85,8 @@ fun OffersListScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Προσφορές") },
-                actions = {
-                    IconButton(onClick = onOpenJobs) {
-                        Icon(Icons.Default.Handyman, contentDescription = "Δουλειές")
-                    }
-                    IconButton(onClick = onOpenStats) {
-                        Icon(Icons.Default.BarChart, contentDescription = "Στατιστικά")
-                    }
-                    IconButton(onClick = onOpenArchive) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = "Αρχείο PDF")
-                    }
-                    UpdateAction()
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Ρυθμίσεις")
-                    }
-                },
+                navigationIcon = { gr.prosfora.app.ui.MenuButton(onMenu) },
+                actions = { UpdateAction() },
             )
         },
         floatingActionButton = {

@@ -97,4 +97,28 @@ object MessageTemplates {
     """.trimIndent()
 
     const val REVIEW_SUBJECT = "Ευχαριστώ για τη συνεργασία"
+
+    /** Το κείμενο του κουμπιού που αντικαθιστά τον σύνδεσμο μέσα στο email. */
+    const val LINK_LABEL = "Πατήστε εδώ για να αφήσετε αξιολόγηση"
+
+    /**
+     * Το ίδιο μήνυμα σε HTML, ώστε ο τεράστιος σύνδεσμος της Google να γίνει
+     * μια πατημένη φράση αντί για τρεις γραμμές ακαταλαβίστικων χαρακτήρων.
+     *
+     * Δουλεύει πάνω στο κείμενο *όπως το άφησε ο χρήστης* — αν το πείραξε στην
+     * προεπισκόπηση, ο σύνδεσμος εντοπίζεται και πάλι αυτούσιος μέσα του.
+     */
+    fun asHtml(text: String, link: String = "", label: String = LINK_LABEL): String {
+        var html = text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        if (link.isNotBlank()) {
+            val escaped = link.replace("&", "&amp;")
+            val anchor = """<a href="$escaped" style="color:#1a73e8">$label</a>"""
+            html = html.replace(escaped, anchor)
+        }
+        html = html.lineSequence().joinToString("<br>")
+        return """<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#202124">$html</div>"""
+    }
 }

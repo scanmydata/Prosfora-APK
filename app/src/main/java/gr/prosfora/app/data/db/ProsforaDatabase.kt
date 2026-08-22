@@ -24,7 +24,7 @@ class Converters {
 
 @Database(
     entities = [OfferEntity::class, SpaceEntity::class, NoteEntity::class, NotePresetEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -69,6 +69,14 @@ abstract class ProsforaDatabase : RoomDatabase() {
             }
         }
 
+        /** v5: ισχύς προσφοράς και τρόπος πληρωμής. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                connection.execSQL("ALTER TABLE offers ADD COLUMN validUntilDay INTEGER")
+                connection.execSQL("ALTER TABLE offers ADD COLUMN paymentTerms TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         /**
          * Οι σημειώσεις που επαναλαμβάνονται σε κάθε προσφορά — από το δείγμα PDF
          * και το EnumList "Παρατηρήσεις Έργου" του AppSheet.
@@ -93,7 +101,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
                 ProsforaDatabase::class.java,
                 "prosfora.db",
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {
                         super.onCreate(connection)

@@ -43,6 +43,16 @@ data class OfferEntity(
     /** Πότε στάλθηκε το αίτημα αξιολόγησης, ώστε να μη σταλεί δεύτερη φορά. */
     val reviewSentAt: Long? = null,
     /**
+     * Μέχρι πότε ισχύει η προσφορά, ως epoch day. Τυπώνεται στο PDF
+     * («Η προσφορά ισχύει έως …»). null = δεν έχει οριστεί λήξη.
+     */
+    val validUntilDay: Long? = null,
+    /**
+     * Τρόπος πληρωμής — μία δόση ανά γραμμή. Στο PDF κάθε γραμμή γίνεται
+     * ξεχωριστή παράγραφος, όπως στο πρότυπο xls.
+     */
+    val paymentTerms: String = "",
+    /**
      * Soft delete. Οι διαγραφές πρέπει να ταξιδεύουν μέχρι τις άλλες συσκευές:
      * αν σβήναμε τη γραμμή, ο επόμενος συγχρονισμός θα την ξανακατέβαζε από το
      * κοινόχρηστο Sheet σαν να μην έγινε τίποτα.
@@ -176,6 +186,14 @@ data class OfferWithDetails(
     /** Ώριμη για αίτημα αξιολόγησης: ολοκληρώθηκε, πέρασαν οι μέρες, δεν στάλθηκε. */
     fun reviewDue(delayDays: Int, today: java.time.LocalDate = java.time.LocalDate.now()): Boolean =
         offer.reviewSentAt == null && (daysSinceFinish(today) ?: -1) >= delayDays
+
+    /** Οι δόσεις του τρόπου πληρωμής, μία ανά γραμμή, χωρίς κενές. */
+    val paymentLines: List<String>
+        get() = offer.paymentTerms.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+    /** Έχει λήξει η ισχύς της προσφοράς; */
+    fun expired(today: java.time.LocalDate = java.time.LocalDate.now()): Boolean =
+        offer.validUntilDay?.let { it < today.toEpochDay() } == true
 
 
     /**

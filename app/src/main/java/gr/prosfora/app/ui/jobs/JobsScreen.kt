@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
@@ -55,7 +54,7 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 
 /**
- * Οι τρέχουσες δουλειές: ποιες ολοκληρωμένες προσφορές έγιναν έργα, πότε
+ * Οι τρέχουσες εργασίες: ποιες ολοκληρωμένες προσφορές έγιναν έργα, πότε
  * ξεκίνησαν και πότε τελείωσαν.
  *
  * Μόνο οι **ολοκληρωμένες** προσφορές εμφανίζονται εδώ — μια προσφορά που δεν
@@ -65,7 +64,7 @@ import java.time.ZoneOffset
 @Composable
 fun JobsScreen(
     viewModel: OffersViewModel,
-    onBack: () -> Unit,
+    onMenu: () -> Unit,
     onRequestReview: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -83,12 +82,8 @@ fun JobsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Δουλειές") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Πίσω")
-                    }
-                },
+                title = { Text("Εργασίες") },
+                navigationIcon = { gr.prosfora.app.ui.MenuButton(onMenu) },
             )
         },
     ) { padding ->

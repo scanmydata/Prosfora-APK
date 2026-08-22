@@ -12,13 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -57,7 +53,7 @@ private val MONTHS = listOf(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StatsScreen(viewModel: OffersViewModel, onBack: () -> Unit) {
+fun StatsScreen(viewModel: OffersViewModel, onMenu: () -> Unit) {
     val offers by viewModel.offers.collectAsState()
 
     val years = remember(offers) {
@@ -74,11 +70,8 @@ fun StatsScreen(viewModel: OffersViewModel, onBack: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("Στατιστικά") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Πίσω")
-                    }
-                },
+                navigationIcon = { gr.prosfora.app.ui.MenuButton(onMenu) },
+                actions = { gr.prosfora.app.ui.offers.UpdateAction() },
             )
         },
     ) { padding ->
@@ -113,19 +106,21 @@ fun StatsScreen(viewModel: OffersViewModel, onBack: () -> Unit) {
 
             item {
                 ChartCard(
-                    title = "Τζίρος ολοκληρωμένων ανά μήνα (€)",
-                    series = listOf(Series("Ευρώ", stats.revenuePerMonth, EmailAmber)),
-                    valueLabel = { it.toDouble().asMoney() },
-                )
-            }
-
-            item {
-                ChartCard(
-                    title = "Δουλειές ανά μήνα",
+                    title = "Εργασίες ανά μήνα",
                     series = listOf(
                         Series("Έναρξη", stats.startedPerMonth, EmailAmber),
                         Series("Ολοκλήρωση", stats.finishedPerMonth, SentGreen),
                     ),
+                )
+            }
+
+            // Ο τζίρος τελευταίος: είναι το συμπέρασμα, όχι η αφετηρία
+            item {
+                ChartCard(
+                    title = "Τζίρος ανά μήνα — καθαρή αξία (€)",
+                    series = listOf(Series("Ευρώ", stats.revenuePerMonth, EmailAmber)),
+                    valueLabel = { it.toDouble().asMoney() },
+                    footnote = "Οι τιμές των προσφορών είναι καθαρή αξία· ο ΦΠΑ δεν περιλαμβάνεται.",
                 )
             }
         }
@@ -196,12 +191,17 @@ private fun SummaryCard(stats: YearStats) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Metric("Προσφορές", stats.totalOffers.toString())
                 Metric("Ολοκληρωμένες", stats.totalCompleted.toString())
-                Metric("Δουλειές", stats.totalJobsFinished.toString())
+                Metric("Εργασίες", stats.totalJobsFinished.toString())
             }
             Text(
                 "Τζίρος ολοκληρωμένων: ${stats.totalRevenue.asMoney()}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "Καθαρή αξία, χωρίς ΦΠΑ",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -224,6 +224,7 @@ private fun ChartCard(
     title: String,
     series: List<Series>,
     valueLabel: (Float) -> String = { it.toInt().toString() },
+    footnote: String? = null,
 ) {
     val max = series.flatMap { it.values }.maxOrNull() ?: 0f
     val peak = series.flatMap { it.values }.withIndex().maxByOrNull { it.value }
@@ -302,6 +303,14 @@ private fun ChartCard(
                 Text(
                     "Κορυφή: ${MONTHS[monthIndex]} · ${valueLabel(it.value)}",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            footnote?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

@@ -27,9 +27,21 @@ object DocxTemplate {
     private const val DOCUMENT_ENTRY = "word/document.xml"
 
     // Στο XML τα < > είναι ήδη escaped, οπότε τα markers ψάχνονται ως &lt;&lt;…&gt;&gt;
-    private const val SPACES_START = "&lt;&lt;Start:[Related Ανάλυση_Χώρων]&gt;&gt;"
     private const val LOOP_END = "&lt;&lt;End&gt;&gt;"
+
+    /**
+     * Η αρχή της επανάληψης χώρων. Δέχεται και τη γραφή του παλιού προτύπου
+     * (`Related Ανάλυση_Χώρων`, κληρονομιά του AppSheet) και τη σύντομη `Χώροι`
+     * του καινούριου, ώστε να παίζει όποιο πρότυπο κι αν έχει ο χρήστης στο Drive.
+     */
+    private val SPACES_START = Regex(
+        "&lt;&lt;Start:\\s*\\[?(?:Related Ανάλυση_Χώρων|Χώροι)\\]?&gt;&gt;",
+    )
     private val NOTES_START = Regex("&lt;&lt;Start:\\s*SELECT\\(.*?&gt;&gt;", RegexOption.DOT_MATCHES_ALL)
+
+    /** Παράγραφοι που επαναλαμβάνονται μία φορά ανά γραμμή, χωρίς Start/End. */
+    private const val NOTE_LINE = "&lt;&lt;[Παρατηρήσεις]&gt;&gt;"
+    private const val PAYMENT_LINE = "&lt;&lt;[Τρόπος Πληρωμής]&gt;&gt;"
 
     fun render(templateDocx: ByteArray, details: OfferWithDetails): ByteArray {
         val entries = readZip(templateDocx)
@@ -42,19 +54,19 @@ object DocxTemplate {
     internal fun renderXml(xml: String, details: OfferWithDetails): String {
         var result = expandSpaceRows(xml, details)
         result = expandNoteBullets(result, details)
+        result = repeatParagraph(result, NOTE_LINE, details.notes.map { it.text })
+        result = repeatParagraph(result, PAYMENT_LINE, details.paymentLines)
         return fillSimpleFields(result, details)
     }
 
     /** Η γραμμή του πίνακα ανάμεσα σε `<<Start:…>>` και `<<End>>` επαναλαμβάνεται ανά χώρο. */
     private fun expandSpaceRows(xml: String, details: OfferWithDetails): String {
-        val marker = xml.indexOf(SPACES_START)
-        if (marker < 0) return xml
+        val marker = SPACES_START.find(xml)?.range?.first ?: return xml
         val (rowStart, rowEnd) = enclosingTag(xml, marker, "w:tr")
         val rowTemplate = xml.substring(rowStart, rowEnd)
 
         val rows = details.spaces.sortedBy { it.position }.joinToString("") { space ->
-            rowTemplate
-                .replace(SPACES_START, "")
+            SPACES_START.replace(rowTemplate, "")
                 .replace(LOOP_END, "")
                 .replace("&lt;&lt;[Περιγραφή Χώρου]&gt;&gt;", escape(space.description))
                 // Το πρότυπο γράφει την Επιφάνεια χωρίς αγκύλες — δεχόμαστε και τις δύο γραφές
@@ -86,6 +98,23 @@ object DocxTemplate {
         return xml.substring(0, startOpen) + bullets + xml.substring(endClose)
     }
 
+    /**
+     * Η παράγραφος που περιέχει το [marker] επαναλαμβάνεται μία φορά ανά γραμμή.
+     *
+     * Αντικαθιστά τη ροή Start/σώμα/End: στο πρότυπο μένει μία μόνο γραμμή, ενώ
+     * η μορφοποίησή της (κουκκίδα, στοίχιση, γραμματοσειρά) αντιγράφεται
+     * αυτούσια σε κάθε επανάληψη. Χωρίς γραμμές, η παράγραφος φεύγει εντελώς
+     * αντί να μείνει κενή και να τρώει χώρο στη σελίδα.
+     */
+    private fun repeatParagraph(xml: String, marker: String, lines: List<String>): String {
+        val at = xml.indexOf(marker)
+        if (at < 0) return xml
+        val (open, close) = enclosingTag(xml, at, "w:p")
+        val template = xml.substring(open, close)
+        val expanded = lines.joinToString("") { line -> template.replace(marker, escape(line)) }
+        return xml.substring(0, open) + expanded + xml.substring(close)
+    }
+
     private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {
         val offer = details.offer
         val total = details.total.asMoney()
@@ -95,6 +124,12 @@ object DocxTemplate {
             .replace("&lt;&lt;[Είδος]&gt;&gt;", escape(offer.kind.strippedKind()))
             .replace("&lt;&lt;[Οδός / Περιοχή]&gt;&gt;", escape(offer.address.upperGreek()))
             .replace("&lt;&lt;[Ημερομηνία]&gt;&gt;", escape(offer.dateEpochDay.asOfferDate()))
+            // Χωρίς ημερομηνία λήξης η φράση «ισχύει έως …» δεν έχει νόημα, οπότε
+            // μπαίνει παύλα αντί για κενό που θα έμοιαζε με λάθος του προτύπου.
+            .replace(
+                "&lt;&lt;[Ισχύει έως]&gt;&gt;",
+                escape(offer.validUntilDay?.asOfferDate() ?: "—"),
+            )
             .replace("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", escape(total))
             .replace("&lt;&lt;[Γενικό Σύνολο]&gt;&gt;", escape(total))
     }

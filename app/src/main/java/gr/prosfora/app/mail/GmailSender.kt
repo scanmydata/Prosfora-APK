@@ -79,8 +79,7 @@ object GmailSender {
             sentDate = java.util.Date()
         }
 
-        val textPart = MimeBodyPart().apply { setText(message.body, "UTF-8") }
-        val multipart = MimeMultipart().apply { addBodyPart(textPart) }
+        val multipart = MimeMultipart().apply { addBodyPart(MailSender.bodyPart(message)) }
 
         message.attachment?.let { file ->
             multipart.addBodyPart(

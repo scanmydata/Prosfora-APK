@@ -238,6 +238,9 @@ fun ReviewComposeScreen(
                                     to = recipient.trim(),
                                     subject = MessageTemplates.REVIEW_SUBJECT,
                                     body = text,
+                                    // Στο email ο σύνδεσμος γίνεται «Πατήστε εδώ»·
+                                    // το σκέτο κείμενο μένει ως εναλλακτικό μέρος
+                                    html = MessageTemplates.asHtml(text, settings.reviewLink),
                                 )
                                 val result = runCatching {
                                     if (settings.sendMethod == SendMethod.GOOGLE) {

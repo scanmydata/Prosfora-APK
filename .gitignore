@@ -13,3 +13,4 @@ local.properties
 google-services.json
 *.p12
 PASSWORD.txt
+__pycache__/

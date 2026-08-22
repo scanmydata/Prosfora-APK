@@ -44,7 +44,7 @@ private enum class TemplateTab(val label: String) {
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun MessageTemplatesCard(googleSettings: GoogleSettings) {
+fun MessageTemplatesSettings(googleSettings: GoogleSettings) {
     val context = LocalContext.current
     var tab by remember { mutableStateOf(TemplateTab.EMAIL) }
 
@@ -62,111 +62,106 @@ fun MessageTemplatesCard(googleSettings: GoogleSettings) {
         return TextFieldValue(text, TextRange(at + token.length))
     }
 
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Πρότυπα μηνυμάτων", style = MaterialTheme.typography.titleMedium)
 
-            TabRow(selectedTabIndex = tab.ordinal) {
-                TemplateTab.entries.forEach { entry ->
-                    Tab(
-                        selected = tab == entry,
-                        onClick = { tab = entry },
-                        text = { Text(entry.label, maxLines = 1) },
-                    )
-                }
-            }
-
-            if (tab == TemplateTab.EMAIL) {
-                OutlinedTextField(
-                    value = subject,
-                    onValueChange = { subject = it },
-                    label = { Text("Θέμα") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            val body = when (tab) {
-                TemplateTab.EMAIL -> emailBody
-                TemplateTab.SMS -> sms
-                TemplateTab.VIBER -> viber
-            }
-            OutlinedTextField(
-                value = body,
-                onValueChange = {
-                    when (tab) {
-                        TemplateTab.EMAIL -> emailBody = it
-                        TemplateTab.SMS -> sms = it
-                        TemplateTab.VIBER -> viber = it
-                    }
-                },
-                label = { Text("Κείμενο") },
-                minLines = 5,
-                modifier = Modifier.fillMaxWidth(),
+    TabRow(selectedTabIndex = tab.ordinal) {
+        TemplateTab.entries.forEach { entry ->
+            Tab(
+                selected = tab == entry,
+                onClick = { tab = entry },
+                text = { Text(entry.label, maxLines = 1) },
             )
-
-            Text(
-                "Δυναμικά πεδία — πάτα για εισαγωγή στη θέση του κέρσορα",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MessageField.entries.forEach { field ->
-                    AssistChip(
-                        onClick = {
-                            when (tab) {
-                                TemplateTab.EMAIL -> emailBody = insert(emailBody, field.token)
-                                TemplateTab.SMS -> sms = insert(sms, field.token)
-                                TemplateTab.VIBER -> viber = insert(viber, field.token)
-                            }
-                        },
-                        label = { Text(field.label, maxLines = 1) },
-                    )
-                }
-            }
-            if (tab == TemplateTab.EMAIL) {
-                TextButton(onClick = { subject = insert(subject, MessageField.ADDRESS.token) }) {
-                    Text("+ {διεύθυνση} στο θέμα")
-                }
-            }
-
-            HorizontalDivider()
-
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Παράδειγμα", style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        MessageTemplates.render(body.text, SampleOffer.value),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                }
-            }
-
-            Button(
-                onClick = {
-                    googleSettings.emailSubjectTemplate = subject.text
-                    googleSettings.emailBodyTemplate = emailBody.text
-                    googleSettings.smsTemplate = sms.text
-                    googleSettings.viberTemplate = viber.text
-                    Toast.makeText(context, "Τα πρότυπα αποθηκεύτηκαν", Toast.LENGTH_SHORT).show()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Αποθήκευση προτύπων", maxLines = 1) }
-
-            TextButton(
-                onClick = {
-                    subject = TextFieldValue(MessageTemplates.DEFAULT_EMAIL_SUBJECT)
-                    emailBody = TextFieldValue(MessageTemplates.DEFAULT_EMAIL_BODY)
-                    sms = TextFieldValue(MessageTemplates.DEFAULT_SMS)
-                    viber = TextFieldValue(MessageTemplates.DEFAULT_VIBER)
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Επαναφορά προεπιλογών") }
         }
     }
+
+    if (tab == TemplateTab.EMAIL) {
+        OutlinedTextField(
+            value = subject,
+            onValueChange = { subject = it },
+            label = { Text("Θέμα") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
+    val body = when (tab) {
+        TemplateTab.EMAIL -> emailBody
+        TemplateTab.SMS -> sms
+        TemplateTab.VIBER -> viber
+    }
+    OutlinedTextField(
+        value = body,
+        onValueChange = {
+            when (tab) {
+                TemplateTab.EMAIL -> emailBody = it
+                TemplateTab.SMS -> sms = it
+                TemplateTab.VIBER -> viber = it
+            }
+        },
+        label = { Text("Κείμενο") },
+        minLines = 5,
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    Text(
+        "Δυναμικά πεδία — πάτα για εισαγωγή στη θέση του κέρσορα",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MessageField.entries.forEach { field ->
+            AssistChip(
+                onClick = {
+                    when (tab) {
+                        TemplateTab.EMAIL -> emailBody = insert(emailBody, field.token)
+                        TemplateTab.SMS -> sms = insert(sms, field.token)
+                        TemplateTab.VIBER -> viber = insert(viber, field.token)
+                    }
+                },
+                label = { Text(field.label, maxLines = 1) },
+            )
+        }
+    }
+    if (tab == TemplateTab.EMAIL) {
+        TextButton(onClick = { subject = insert(subject, MessageField.ADDRESS.token) }) {
+            Text("+ {διεύθυνση} στο θέμα")
+        }
+    }
+
+    HorizontalDivider()
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Παράδειγμα", style = MaterialTheme.typography.labelLarge)
+            Text(
+                MessageTemplates.render(body.text, SampleOffer.value),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+
+    Button(
+        onClick = {
+            googleSettings.emailSubjectTemplate = subject.text
+            googleSettings.emailBodyTemplate = emailBody.text
+            googleSettings.smsTemplate = sms.text
+            googleSettings.viberTemplate = viber.text
+            Toast.makeText(context, "Τα πρότυπα αποθηκεύτηκαν", Toast.LENGTH_SHORT).show()
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("Αποθήκευση προτύπων", maxLines = 1) }
+
+    TextButton(
+        onClick = {
+            subject = TextFieldValue(MessageTemplates.DEFAULT_EMAIL_SUBJECT)
+            emailBody = TextFieldValue(MessageTemplates.DEFAULT_EMAIL_BODY)
+            sms = TextFieldValue(MessageTemplates.DEFAULT_SMS)
+            viber = TextFieldValue(MessageTemplates.DEFAULT_VIBER)
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("Επαναφορά προεπιλογών") }
 }

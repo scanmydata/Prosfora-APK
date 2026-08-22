@@ -106,6 +106,19 @@ class GoogleSettings(context: Context) {
         get() = prefs.getString(KEY_REVIEW_LINK, DEFAULT_REVIEW_LINK) ?: DEFAULT_REVIEW_LINK
         set(value) = prefs.edit().putString(KEY_REVIEW_LINK, value.trim()).apply()
 
+    /**
+     * Πόσες μέρες ισχύει μια νέα προσφορά. Μπαίνει αυτόματα στο «ισχύει έως»
+     * κάθε νέας προσφοράς — αλλάζει ελεύθερα ανά προσφορά.
+     */
+    var offerValidDays: Int
+        get() = prefs.getInt(KEY_VALID_DAYS, 60)
+        set(value) = prefs.edit().putInt(KEY_VALID_DAYS, value.coerceIn(1, 3650)).apply()
+
+    /** Ο προεπιλεγμένος τρόπος πληρωμής — μία δόση ανά γραμμή. */
+    var defaultPaymentTerms: String
+        get() = prefs.getString(KEY_PAYMENT_TERMS, DEFAULT_PAYMENT_TERMS) ?: DEFAULT_PAYMENT_TERMS
+        set(value) = prefs.edit().putString(KEY_PAYMENT_TERMS, value).apply()
+
     var reviewTemplate: String
         get() = prefs.getString(KEY_REVIEW_TEMPLATE, MessageTemplates.DEFAULT_REVIEW)
             ?: MessageTemplates.DEFAULT_REVIEW
@@ -130,6 +143,8 @@ class GoogleSettings(context: Context) {
         private const val KEY_REVIEW_DELAY = "review_delay_days"
         private const val KEY_REVIEW_LINK = "review_link"
         private const val KEY_REVIEW_TEMPLATE = "review_template"
+        private const val KEY_VALID_DAYS = "offer_valid_days"
+        private const val KEY_PAYMENT_TERMS = "default_payment_terms"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
 
@@ -141,6 +156,14 @@ class GoogleSettings(context: Context) {
         const val DEFAULT_REVIEW_LINK =
             "https://www.google.com/search?sca_esv=faef517198de48e6&sxsrf=APpeQnsNZphqJuT4MHKHXH44GKCkHZnD4g:1787396921174&q=tovapsimo&si=APenkKm7iecQ4G6P-TsbSMFKIQtv3EFIqRAFw-i8uEbk55Z-_zMIB2TTEOESsRGZcitMJR4C6ZCfQDHpOm-TOHvLnX5KJ7--tzuev5vDfGjwf4BlCN7vN4Y%3D&uds=AJ5uw192rzALllUuaB2bJuLcuxCm6NkqFwo97LiWIr3XYWdW96aegZObi6cVFnchLgADHbfT1SmVu-TAALPaBzg-VlTWay0u-WFs88GF57hvtogFQK4pGvg&sa=X"
         const val TEMPLATE_NAME = "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — πρότυπο"
+
+        /** Οι συνηθισμένες δόσεις, όπως στα υπάρχοντα φύλλα προσφοράς. */
+        val DEFAULT_PAYMENT_TERMS = """
+            20% του ποσού με την έναρξη των εργασιών
+            30% με την πρόοδο των εργασιών
+            30% με την πρόοδο των εργασιών
+            20% με την παράδοση του έργου
+        """.trimIndent()
 
         val DEFAULT_EMAIL_SUBJECT = MessageTemplates.DEFAULT_EMAIL_SUBJECT
 

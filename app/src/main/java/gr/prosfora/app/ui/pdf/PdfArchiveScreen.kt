@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
@@ -50,7 +49,7 @@ import java.io.File
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PdfArchiveScreen(viewModel: OffersViewModel, onBack: () -> Unit) {
+fun PdfArchiveScreen(viewModel: OffersViewModel, onMenu: () -> Unit) {
     val context = LocalContext.current
     val offers by viewModel.offers.collectAsState()
     var preview by remember { mutableStateOf<File?>(null) }
@@ -67,11 +66,7 @@ fun PdfArchiveScreen(viewModel: OffersViewModel, onBack: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("Αρχείο PDF") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Πίσω")
-                    }
-                },
+                navigationIcon = { gr.prosfora.app.ui.MenuButton(onMenu) },
             )
         },
     ) { padding ->
