@@ -241,11 +241,7 @@ fun ReviewComposeScreen(
                                 )
                                 val result = runCatching {
                                     if (settings.sendMethod == SendMethod.GOOGLE) {
-                                        GmailSender.send(
-                                            authorizer.accessToken(),
-                                            settings.senderName,
-                                            message,
-                                        )
+                                        GmailSender.send(authorizer.accessToken(), message)
                                     } else {
                                         MailSender.send(smtp, message)
                                     }
