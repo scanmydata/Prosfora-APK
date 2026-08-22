@@ -126,6 +126,96 @@ object DocxTemplate {
         .replace("<", "&lt;")
         .replace(">", "&gt;")
 
+    // ------------------------------------------------ επεξεργασία κειμένου ---
+
+    /**
+     * Μία επεξεργάσιμη παράγραφος του προτύπου.
+     *
+     * [hasPlaceholder] σημαίνει ότι το κείμενο περιέχει πεδίο ή δείκτη
+     * επανάληψης: τέτοιες παραγράφους μπορεί να τις αλλάξει ο χρήστης, αλλά αν
+     * σβήσει τα `<<…>>` το PDF θα βγει με κενά, οπότε προειδοποιείται.
+     */
+    data class Paragraph(
+        val index: Int,
+        val text: String,
+        val hasPlaceholder: Boolean,
+    )
+
+    private val PARAGRAPH = Regex("<w:p[ >].*?</w:p>", RegexOption.DOT_MATCHES_ALL)
+    private val TEXT_RUN = Regex("(<w:t[^>]*>)([^<]*)(</w:t>)")
+
+    /** Το κείμενο κάθε μη κενής παραγράφου, με τη σειρά που εμφανίζεται. */
+    fun extractParagraphs(templateDocx: ByteArray): List<Paragraph> {
+        val xml = documentXml(templateDocx)
+        var index = -1
+        return PARAGRAPH.findAll(xml).mapNotNull { match ->
+            val text = TEXT_RUN.findAll(match.value)
+                .joinToString("") { it.groupValues[2] }
+                .unescapeXml()
+            if (text.isBlank()) return@mapNotNull null
+            index++
+            Paragraph(
+                index = index,
+                text = text,
+                hasPlaceholder = text.contains("<<") || text.contains(">>"),
+            )
+        }.toList()
+    }
+
+    /**
+     * Γράφει πίσω τα αλλαγμένα κείμενα.
+     *
+     * Όλο το κείμενο μπαίνει στο **πρώτο** run της παραγράφου και τα υπόλοιπα
+     * αδειάζουν· έτσι διατηρείται η μορφοποίηση του πρώτου run και δεν χάνονται
+     * εικόνες ή πίνακες, που ζουν εκτός `<w:t>`.
+     */
+    fun applyParagraphEdits(templateDocx: ByteArray, edits: Map<Int, String>): ByteArray {
+        if (edits.isEmpty()) return templateDocx
+        val entries = readZip(templateDocx)
+        val xml = documentXml(templateDocx)
+
+        var paragraphIndex = -1
+        val rebuilt = PARAGRAPH.replace(xml) { match ->
+            val block = match.value
+            val current = TEXT_RUN.findAll(block).joinToString("") { it.groupValues[2] }
+            if (current.isBlank()) return@replace block
+            paragraphIndex++
+
+            val replacement = edits[paragraphIndex] ?: return@replace block
+            var first = true
+            TEXT_RUN.replace(block) { run ->
+                val open = run.groupValues[1]
+                val close = run.groupValues[3]
+                if (first) {
+                    first = false
+                    // Το xml:space="preserve" κρατάει τα κενά στην αρχή και το τέλος
+                    val tag = if (open.contains("xml:space")) {
+                        open
+                    } else {
+                        open.dropLast(1) + " xml:space=\"preserve\">"
+                    }
+                    tag + escape(replacement) + close
+                } else {
+                    open + close
+                }
+            }
+        }
+
+        entries[DOCUMENT_ENTRY] = rebuilt.toByteArray(Charsets.UTF_8)
+        return writeZip(entries)
+    }
+
+    private fun documentXml(docx: ByteArray): String =
+        readZip(docx)[DOCUMENT_ENTRY]?.toString(Charsets.UTF_8)
+            ?: error("Το πρότυπο δεν είναι έγκυρο .docx (λείπει το $DOCUMENT_ENTRY)")
+
+    private fun String.unescapeXml(): String = this
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+
     private fun readZip(bytes: ByteArray): LinkedHashMap<String, ByteArray> {
         val entries = LinkedHashMap<String, ByteArray>()
         ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->

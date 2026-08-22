@@ -18,6 +18,7 @@ import gr.prosfora.app.ui.jobs.ReviewComposeScreen
 import gr.prosfora.app.ui.pdf.PdfArchiveScreen
 import gr.prosfora.app.ui.stats.StatsScreen
 import gr.prosfora.app.ui.settings.SettingsScreen
+import gr.prosfora.app.ui.settings.TemplateEditorScreen
 import gr.prosfora.app.ui.settings.TemplateScreen
 
 private const val ROUTE_LIST = "offers"
@@ -30,6 +31,7 @@ private const val ROUTE_JOBS = "jobs"
 private const val ROUTE_REVIEW = "jobs/review"
 private const val ROUTE_STATS = "stats"
 private const val ROUTE_TEMPLATE = "settings/template"
+private const val ROUTE_TEMPLATE_EDIT = "settings/template/edit"
 
 @Composable
 fun ProsforaNavHost() {
@@ -115,7 +117,13 @@ fun ProsforaNavHost() {
             )
         }
         composable(ROUTE_TEMPLATE) {
-            TemplateScreen(onBack = { navController.popBackStack() })
+            TemplateScreen(
+                onBack = { navController.popBackStack() },
+                onEditText = { navController.navigate(ROUTE_TEMPLATE_EDIT) },
+            )
+        }
+        composable(ROUTE_TEMPLATE_EDIT) {
+            TemplateEditorScreen(onBack = { navController.popBackStack() })
         }
     }
 }

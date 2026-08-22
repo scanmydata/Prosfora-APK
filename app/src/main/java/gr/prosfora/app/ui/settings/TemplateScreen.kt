@@ -60,7 +60,7 @@ import java.io.File
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TemplateScreen(onBack: () -> Unit) {
+fun TemplateScreen(onBack: () -> Unit, onEditText: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val authorizer = rememberGoogleAuthorizer()
@@ -163,6 +163,12 @@ fun TemplateScreen(onBack: () -> Unit) {
                 Spacer(Modifier.size(8.dp))
                 Text("Επεξεργασία στο Google Docs")
             }
+
+            Button(
+                enabled = busy == null,
+                onClick = onEditText,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Επεξεργασία κειμένων εδώ", maxLines = 1) }
 
             OutlinedButton(
                 enabled = busy == null,
