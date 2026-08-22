@@ -163,6 +163,9 @@ class SheetSync(
                 customerPhone = row[11],
                 notifiedAt = row[12].toLongOrNull(),
                 notifiedVia = row[13].ifBlank { null },
+                workStartDay = row[14].toLongOrNull(),
+                workEndDay = row[15].toLongOrNull(),
+                reviewSentAt = row[16].toLongOrNull(),
             )
         }
 
@@ -223,6 +226,9 @@ class SheetSync(
             it.customerPhone,
             it.notifiedAt?.toString().orEmpty(),
             it.notifiedVia.orEmpty(),
+            it.workStartDay?.toString().orEmpty(),
+            it.workEndDay?.toString().orEmpty(),
+            it.reviewSentAt?.toString().orEmpty(),
         )
     }
 
@@ -260,6 +266,7 @@ class SheetSync(
             "ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email",
             "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο",
             "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης",
+            "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση",
         )
         private val SPACE_HEADER = listOf(
             "ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)",

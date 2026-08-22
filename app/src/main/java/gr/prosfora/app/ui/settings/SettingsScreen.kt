@@ -202,6 +202,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTemplate: () -> Unit) {
 
             MessageTemplatesCard(googleSettings)
 
+            ReviewSettingsCard(googleSettings)
+
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Αποστολέας", style = MaterialTheme.typography.titleMedium)

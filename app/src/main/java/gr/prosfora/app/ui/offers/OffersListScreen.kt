@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Handyman
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
@@ -72,6 +74,8 @@ fun OffersListScreen(
     onOpenOffer: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenArchive: () -> Unit,
+    onOpenJobs: () -> Unit,
+    onOpenStats: () -> Unit,
 ) {
     val offers by viewModel.offers.collectAsState()
     val query by viewModel.query.collectAsState()
@@ -89,6 +93,12 @@ fun OffersListScreen(
             TopAppBar(
                 title = { Text("Προσφορές") },
                 actions = {
+                    IconButton(onClick = onOpenJobs) {
+                        Icon(Icons.Default.Handyman, contentDescription = "Δουλειές")
+                    }
+                    IconButton(onClick = onOpenStats) {
+                        Icon(Icons.Default.BarChart, contentDescription = "Στατιστικά")
+                    }
                     IconButton(onClick = onOpenArchive) {
                         Icon(Icons.Default.PictureAsPdf, contentDescription = "Αρχείο PDF")
                     }

@@ -20,15 +20,19 @@ enum class MessageField(val token: String, val label: String) {
     TOTAL("{σύνολο}", "Γενικό σύνολο"),
     EMAIL("{email}", "Email πελάτη"),
     PHONE("{κινητό}", "Κινητό πελάτη"),
+    REVIEW_LINK("{αξιολόγηση}", "Σύνδεσμος αξιολόγησης"),
     ;
 
-    fun valueFor(details: OfferWithDetails): String {
+    fun valueFor(details: OfferWithDetails, reviewLink: String = ""): String {
         val offer = details.offer
         return when (this) {
-            GREETING -> if (offer.customerName.isNotBlank()) {
-                "Καλησπέρα ${offer.customerName.trim()},"
-            } else {
-                "Καλησπέρα,"
+            GREETING -> {
+                val word = timeOfDayGreeting()
+                if (offer.customerName.isNotBlank()) {
+                    "$word ${offer.customerName.trim()},"
+                } else {
+                    "$word,"
+                }
             }
             NAME -> offer.customerName
             ADDRESS -> offer.address
@@ -37,17 +41,30 @@ enum class MessageField(val token: String, val label: String) {
             TOTAL -> details.total.asMoney()
             EMAIL -> offer.email
             PHONE -> offer.customerPhone
+            // Ο σύνδεσμος έρχεται από τις ρυθμίσεις, όχι από την προσφορά
+            REVIEW_LINK -> reviewLink
         }
     }
 }
 
+/**
+ * «Καλημέρα» ως τις 12:00, «Καλησπέρα» μετά — με βάση την ώρα που πατιέται η
+ * αποστολή, όχι την ώρα που γράφτηκε η προσφορά.
+ */
+internal fun timeOfDayGreeting(now: java.time.LocalTime = java.time.LocalTime.now()): String =
+    if (now.hour < 12) "Καλημέρα" else "Καλησπέρα"
+
 object MessageTemplates {
 
     /** Αντικαθιστά όλα τα `{πεδία}` με τις τιμές της συγκεκριμένης προσφοράς. */
-    fun render(template: String, details: OfferWithDetails): String {
+    fun render(
+        template: String,
+        details: OfferWithDetails,
+        reviewLink: String = "",
+    ): String {
         var text = template
         MessageField.entries.forEach { field ->
-            text = text.replace(field.token, field.valueFor(details))
+            text = text.replace(field.token, field.valueFor(details, reviewLink))
         }
         return text.trim()
     }
@@ -67,4 +84,17 @@ object MessageTemplates {
 
     /** Το Viber δεν έχει όριο χαρακτήρων όπως το SMS, αλλά το κείμενο μένει ίδιο. */
     val DEFAULT_VIBER = DEFAULT_SMS
+
+    val DEFAULT_REVIEW = """
+        {χαιρετισμός}
+
+        Ελπίζω να μείνατε ευχαριστημένοι από τις εργασίες στην {είδος} σας επί της οδού {διεύθυνση}.
+        Αν θέλετε, μια σύντομη αξιολόγηση θα μας βοηθούσε πολύ:
+
+        {αξιολόγηση}
+
+        Σας ευχαριστώ!
+    """.trimIndent()
+
+    const val REVIEW_SUBJECT = "Ευχαριστώ για τη συνεργασία"
 }

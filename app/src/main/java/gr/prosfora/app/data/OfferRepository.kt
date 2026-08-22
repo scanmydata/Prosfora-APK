@@ -30,6 +30,15 @@ class OfferRepository(context: Context) {
 
     suspend fun markSent(id: String) = offers.markSent(id, System.currentTimeMillis())
 
+    suspend fun setWorkStart(offer: OfferEntity, day: Long?) =
+        saveOffer(offer.copy(workStartDay = day))
+
+    suspend fun setWorkEnd(offer: OfferEntity, day: Long?) =
+        saveOffer(offer.copy(workEndDay = day))
+
+    suspend fun markReviewSent(offer: OfferEntity) =
+        saveOffer(offer.copy(reviewSentAt = System.currentTimeMillis()))
+
     suspend fun markNotified(id: String, via: String) =
         offers.markNotified(id, System.currentTimeMillis(), via)
 

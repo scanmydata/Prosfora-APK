@@ -97,6 +97,20 @@ class GoogleSettings(context: Context) {
         prefs.edit().putString(KEY_PDF_YEARS, json.toString()).apply()
     }
 
+    /** Μέρες μετά την ολοκλήρωση για να ζητηθεί αξιολόγηση. */
+    var reviewDelayDays: Int
+        get() = prefs.getInt(KEY_REVIEW_DELAY, 3)
+        set(value) = prefs.edit().putInt(KEY_REVIEW_DELAY, value.coerceIn(0, 365)).apply()
+
+    var reviewLink: String
+        get() = prefs.getString(KEY_REVIEW_LINK, DEFAULT_REVIEW_LINK) ?: DEFAULT_REVIEW_LINK
+        set(value) = prefs.edit().putString(KEY_REVIEW_LINK, value.trim()).apply()
+
+    var reviewTemplate: String
+        get() = prefs.getString(KEY_REVIEW_TEMPLATE, MessageTemplates.DEFAULT_REVIEW)
+            ?: MessageTemplates.DEFAULT_REVIEW
+        set(value) = prefs.edit().putString(KEY_REVIEW_TEMPLATE, value).apply()
+
     fun clear() = prefs.edit().clear().apply()
 
     companion object {
@@ -113,8 +127,19 @@ class GoogleSettings(context: Context) {
         private const val KEY_VIBER = "viber_template"
         private const val KEY_PDF_FOLDER = "pdf_folder_id"
         private const val KEY_PDF_YEARS = "pdf_year_folders"
+        private const val KEY_REVIEW_DELAY = "review_delay_days"
+        private const val KEY_REVIEW_LINK = "review_link"
+        private const val KEY_REVIEW_TEMPLATE = "review_template"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
+
+        /**
+         * Ο σύνδεσμος αξιολόγησης στο Google. Είναι επεξεργάσιμος από τις
+         * ρυθμίσεις: οι παράμετροι που δίνει η αναζήτηση της Google παλιώνουν,
+         * οπότε αν κάποτε πάψει να δουλεύει αντικαθίσταται από εκεί.
+         */
+        const val DEFAULT_REVIEW_LINK =
+            "https://www.google.com/search?sca_esv=faef517198de48e6&sxsrf=APpeQnsNZphqJuT4MHKHXH44GKCkHZnD4g:1787396921174&q=tovapsimo&si=APenkKm7iecQ4G6P-TsbSMFKIQtv3EFIqRAFw-i8uEbk55Z-_zMIB2TTEOESsRGZcitMJR4C6ZCfQDHpOm-TOHvLnX5KJ7--tzuev5vDfGjwf4BlCN7vN4Y%3D&uds=AJ5uw192rzALllUuaB2bJuLcuxCm6NkqFwo97LiWIr3XYWdW96aegZObi6cVFnchLgADHbfT1SmVu-TAALPaBzg-VlTWay0u-WFs88GF57hvtogFQK4pGvg&sa=X"
         const val TEMPLATE_NAME = "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — πρότυπο"
 
         val DEFAULT_EMAIL_SUBJECT = MessageTemplates.DEFAULT_EMAIL_SUBJECT

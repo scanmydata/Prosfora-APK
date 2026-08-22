@@ -1,42 +1,26 @@
 package gr.prosfora.app.mail
 
 import gr.prosfora.app.data.db.OfferWithDetails
+import gr.prosfora.app.message.MessageTemplates
 import gr.prosfora.app.settings.SmtpSettings
-import gr.prosfora.app.util.asMoney
-import gr.prosfora.app.util.asOfferDate
 import java.io.File
 
 /**
- * Χτίζει το email μιας προσφοράς. Το θέμα και το σώμα είναι πρότυπα που ο
- * χρήστης επεξεργάζεται στις Ρυθμίσεις, με placeholders σε αγκύλες.
+ * Χτίζει το email μιας προσφοράς.
  *
- * Αντικαθιστά το AppSheet bot `Send_Offer_Email` που δεν επιτρεπόταν στο free tier.
+ * Η αντικατάσταση των πεδίων γίνεται **αποκλειστικά** από το [MessageTemplates],
+ * όπως και σε SMS και Viber. Παλιότερα εδώ υπήρχε δεύτερη, μικρότερη λίστα
+ * πεδίων· έτσι το `{χαιρετισμός}` έφτανε αυτούσιο στο email ενώ δούλευε παντού
+ * αλλού.
  */
 object OfferMail {
 
-    /** Τα πεδία που μπορεί να χρησιμοποιήσει ο χρήστης μέσα στα πρότυπα. */
-    val PLACEHOLDERS = listOf(
-        "{διεύθυνση}" to "Οδός / Περιοχή",
-        "{είδος}" to "Είδος έργου",
-        "{ημερομηνία}" to "Ημερομηνία προσφοράς",
-        "{σύνολο}" to "Γενικό σύνολο",
-    )
-
-    fun fill(template: String, details: OfferWithDetails): String {
-        val offer = details.offer
-        return template
-            .replace("{διεύθυνση}", offer.address)
-            .replace("{είδος}", offer.kind.ifBlank { "κατοικίας" })
-            .replace("{ημερομηνία}", offer.dateEpochDay.asOfferDate())
-            .replace("{σύνολο}", details.total.asMoney())
-    }
-
     fun subject(template: String, details: OfferWithDetails): String =
-        fill(template, details).trim()
+        MessageTemplates.render(template, details)
 
     fun body(template: String, details: OfferWithDetails, settings: SmtpSettings): String =
         buildString {
-            append(fill(template, details).trimEnd())
+            append(MessageTemplates.render(template, details).trimEnd())
             append("\n\n\n")
             append(settings.signature)
         }

@@ -13,7 +13,10 @@ import gr.prosfora.app.ui.offers.MessageComposeScreen
 import gr.prosfora.app.ui.offers.OfferDetailScreen
 import gr.prosfora.app.ui.offers.OffersListScreen
 import gr.prosfora.app.ui.offers.OffersViewModel
+import gr.prosfora.app.ui.jobs.JobsScreen
+import gr.prosfora.app.ui.jobs.ReviewComposeScreen
 import gr.prosfora.app.ui.pdf.PdfArchiveScreen
+import gr.prosfora.app.ui.stats.StatsScreen
 import gr.prosfora.app.ui.settings.SettingsScreen
 import gr.prosfora.app.ui.settings.TemplateScreen
 
@@ -23,6 +26,9 @@ private const val ROUTE_EMAIL = "offer/email"
 private const val ROUTE_MESSAGE = "offer/message"
 private const val ROUTE_SETTINGS = "settings"
 private const val ROUTE_ARCHIVE = "archive"
+private const val ROUTE_JOBS = "jobs"
+private const val ROUTE_REVIEW = "jobs/review"
+private const val ROUTE_STATS = "stats"
 private const val ROUTE_TEMPLATE = "settings/template"
 
 @Composable
@@ -40,6 +46,8 @@ fun ProsforaNavHost() {
                 },
                 onOpenSettings = { navController.navigate(ROUTE_SETTINGS) },
                 onOpenArchive = { navController.navigate(ROUTE_ARCHIVE) },
+                onOpenJobs = { navController.navigate(ROUTE_JOBS) },
+                onOpenStats = { navController.navigate(ROUTE_STATS) },
             )
         }
         composable(ROUTE_DETAIL) {
@@ -79,6 +87,26 @@ fun ProsforaNavHost() {
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
             )
+        }
+        composable(ROUTE_JOBS) {
+            JobsScreen(
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
+                onRequestReview = { id -> navController.navigate("$ROUTE_REVIEW/$id") },
+            )
+        }
+        composable(
+            route = "$ROUTE_REVIEW/{offerId}",
+            arguments = listOf(navArgument("offerId") { type = NavType.StringType }),
+        ) { entry ->
+            ReviewComposeScreen(
+                viewModel = viewModel,
+                offerId = entry.arguments?.getString("offerId").orEmpty(),
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(ROUTE_STATS) {
+            StatsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
         }
         composable(ROUTE_SETTINGS) {
             SettingsScreen(

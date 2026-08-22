@@ -68,6 +68,15 @@ class OffersViewModel(app: Application) : AndroidViewModel(app) {
 
     fun markSent(id: String) = viewModelScope.launch { repo.markSent(id) }
 
+    fun setWorkStart(offer: gr.prosfora.app.data.db.OfferEntity, day: Long?) =
+        viewModelScope.launch { repo.setWorkStart(offer, day) }
+
+    fun setWorkEnd(offer: gr.prosfora.app.data.db.OfferEntity, day: Long?) =
+        viewModelScope.launch { repo.setWorkEnd(offer, day) }
+
+    fun markReviewSent(offer: gr.prosfora.app.data.db.OfferEntity) =
+        viewModelScope.launch { repo.markReviewSent(offer) }
+
     fun markNotified(id: String, via: String) =
         viewModelScope.launch { repo.markNotified(id, via) }
 

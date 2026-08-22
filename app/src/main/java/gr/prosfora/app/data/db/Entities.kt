@@ -36,6 +36,12 @@ data class OfferEntity(
     /** Πότε στάλθηκε ειδοποίηση για το email (SMS/Viber) και με ποιο μέσο. */
     val notifiedAt: Long? = null,
     val notifiedVia: String? = null,
+    /** Έναρξη εργασιών, ως epoch day. null = δεν έχει ξεκινήσει. */
+    val workStartDay: Long? = null,
+    /** Ολοκλήρωση εργασιών, ως epoch day. */
+    val workEndDay: Long? = null,
+    /** Πότε στάλθηκε το αίτημα αξιολόγησης, ώστε να μη σταλεί δεύτερη φορά. */
+    val reviewSentAt: Long? = null,
     /**
      * Soft delete. Οι διαγραφές πρέπει να ταξιδεύουν μέχρι τις άλλες συσκευές:
      * αν σβήναμε τη γραμμή, ο επόμενος συγχρονισμός θα την ξανακατέβαζε από το
@@ -43,6 +49,13 @@ data class OfferEntity(
      */
     val deleted: Boolean = false,
 )
+
+enum class JobStage(val label: String) {
+    NOT_A_JOB("—"),
+    PENDING("Χωρίς έναρξη"),
+    IN_PROGRESS("Σε εξέλιξη"),
+    FINISHED("Ολοκληρώθηκε"),
+}
 
 enum class OfferStatus(val label: String) {
     CREATED("Δημιουργήθηκε"),
@@ -143,6 +156,26 @@ data class OfferWithDetails(
 
     /** Έτος έκδοσης — με βάση αυτό οργανώνονται τα PDF σε φακέλους. */
     val year: Int get() = java.time.LocalDate.ofEpochDay(offer.dateEpochDay).year
+
+    /**
+     * Στάδιο εργασιών. Μόνο ολοκληρωμένες προσφορές μπαίνουν στη ροή δουλειών —
+     * μια προσφορά που δεν έχει σταλεί δεν έχει νόημα να «ξεκινήσει».
+     */
+    val jobStage: JobStage
+        get() = when {
+            offer.status != OfferStatus.COMPLETED -> JobStage.NOT_A_JOB
+            offer.workEndDay != null -> JobStage.FINISHED
+            offer.workStartDay != null -> JobStage.IN_PROGRESS
+            else -> JobStage.PENDING
+        }
+
+    /** Πόσες μέρες πέρασαν από την ολοκλήρωση· null αν δεν έχει ολοκληρωθεί. */
+    fun daysSinceFinish(today: java.time.LocalDate = java.time.LocalDate.now()): Long? =
+        offer.workEndDay?.let { today.toEpochDay() - it }
+
+    /** Ώριμη για αίτημα αξιολόγησης: ολοκληρώθηκε, πέρασαν οι μέρες, δεν στάλθηκε. */
+    fun reviewDue(delayDays: Int, today: java.time.LocalDate = java.time.LocalDate.now()): Boolean =
+        offer.reviewSentAt == null && (daysSinceFinish(today) ?: -1) >= delayDays
 
 
     /**
