@@ -3,29 +3,34 @@ package gr.prosfora.app.ui.settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.data.HistoryImporter
-import gr.prosfora.app.ui.components.ConfirmDialog
 import gr.prosfora.app.util.asMoney
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -45,6 +50,8 @@ fun HistoryImportSettings() {
 
     var busy by remember { mutableStateOf<String?>(null) }
     var bundle by remember { mutableStateOf<HistoryImporter.Bundle?>(null) }
+    var existing by remember { mutableStateOf(0) }
+    var updateExisting by remember { mutableStateOf(false) }
     var done by remember { mutableStateOf<String?>(null) }
 
     val picker = rememberLauncherForActivityResult(
@@ -59,10 +66,15 @@ fun HistoryImportSettings() {
                         it.bufferedReader().readText()
                     } ?: error("Δεν διαβάστηκε το αρχείο")
                 }
-                HistoryImporter.parse(text)
+                val parsed = HistoryImporter.parse(text)
+                parsed to HistoryImporter.countExisting(context, parsed)
             }
             busy = null
-            result.onSuccess { bundle = it }.onFailure {
+            result.onSuccess { (parsed, already) ->
+                bundle = parsed
+                existing = already
+                updateExisting = false
+            }.onFailure {
                 Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
             }
         }
@@ -113,40 +125,101 @@ fun HistoryImportSettings() {
     }
 
     bundle?.let { found ->
-        ConfirmDialog(
-            title = "Εισαγωγή ${found.offers.size} προσφορών",
-            message = buildString {
-                append("Από «${found.source}», έτη ${found.years}.\n\n")
-                append("• ${found.offers.size} προσφορές (${found.completed} ολοκληρωμένες)\n")
-                append("• ${found.spaces.size} γραμμές χώρων\n")
-                append("• ${found.notes.size} σημειώσεις\n")
-                append("• συνολική αξία ${found.total.asMoney()}\n")
-                if (found.approximateDates > 0) {
-                    append("\n${found.approximateDates} προσφορές δεν είχαν ημερομηνία μέσα ")
-                    append("στο φύλλο· μπήκε η χρονιά του φακέλου.")
-                }
-                append("\n\nΘα προστεθούν στην τοπική βάση και θα φύγουν στο ")
-                append("κοινόχρηστο Sheet με τον επόμενο συγχρονισμό.")
-            },
-            confirmLabel = "Εισαγωγή",
-            confirmColor = MaterialTheme.colorScheme.primary,
-            onConfirm = {
-                busy = "Εισαγωγή…"
-                scope.launch {
-                    val result = runCatching {
-                        HistoryImporter.store(context, found) { stage -> busy = stage }
+        val fresh = found.offers.size - existing
+        AlertDialog(
+            onDismissRequest = { if (busy == null) bundle = null },
+            title = { Text("Εισαγωγή ιστορικού") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Από «${found.source}», έτη ${found.years}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        """
+                            • ${found.offers.size} προσφορές (${found.completed} ολοκληρωμένες)
+                            • ${found.spaces.size} γραμμές χώρων
+                            • ${found.notes.size} σημειώσεις
+                            • συνολική αξία ${found.total.asMoney()}
+                        """.trimIndent(),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (found.approximateDates > 0) {
+                        Text(
+                            "${found.approximateDates} προσφορές δεν είχαν ημερομηνία μέσα " +
+                                "στο φύλλο· μπήκε η χρονιά του φακέλου.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    busy = null
-                    result.onSuccess {
-                        done = "${found.offers.size} προσφορές, ${found.spaces.size} χώροι, " +
-                            "${found.notes.size} σημειώσεις"
-                        Toast.makeText(context, "Το ιστορικό μπήκε", Toast.LENGTH_LONG).show()
-                    }.onFailure {
-                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+
+                    if (existing > 0) {
+                        Text(
+                            "$existing από αυτές υπάρχουν ήδη στη βάση, $fresh είναι νέες.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = updateExisting,
+                                onCheckedChange = { updateExisting = it },
+                            )
+                            Text(
+                                "Ενημέρωση και των υπαρχόντων",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
+                        Text(
+                            if (updateExisting) {
+                                "Προσοχή: όσες έχεις αλλάξει μέσα από την εφαρμογή θα " +
+                                    "γυρίσουν στο περιεχόμενο του αρχείου."
+                            } else {
+                                "Οι υπάρχουσες μένουν όπως είναι — θα μπουν μόνο οι νέες."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (updateExisting) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
                     }
                 }
             },
-            onDismiss = { bundle = null },
+            confirmButton = {
+                TextButton(
+                    enabled = busy == null && (updateExisting || fresh > 0),
+                    onClick = {
+                        busy = "Εισαγωγή…"
+                        scope.launch {
+                            val result = runCatching {
+                                HistoryImporter.store(
+                                    context = context,
+                                    bundle = found,
+                                    updateExisting = updateExisting,
+                                ) { stage -> busy = stage }
+                            }
+                            busy = null
+                            bundle = null
+                            result.onSuccess { written ->
+                                done = "Γράφτηκαν $written προσφορές"
+                                Toast.makeText(context, done, Toast.LENGTH_LONG).show()
+                            }.onFailure {
+                                Toast.makeText(
+                                    context,
+                                    "Απέτυχε: ${it.message}",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }
+                    },
+                ) {
+                    Text(if (updateExisting) "Εισαγωγή όλων" else "Εισαγωγή $fresh νέων")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = busy == null, onClick = { bundle = null }) { Text("Άκυρο") }
+            },
         )
     }
 }

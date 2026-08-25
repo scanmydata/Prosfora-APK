@@ -39,6 +39,10 @@ interface OfferDao {
     @Query("SELECT * FROM offers")
     suspend fun allForSync(): List<OfferEntity>
 
+    /** Μόνο τα αναγνωριστικά — η εισαγωγή ιστορικού ελέγχει τι υπάρχει ήδη. */
+    @Query("SELECT id FROM offers")
+    suspend fun allIds(): List<String>
+
     @Query("UPDATE offers SET lastSentAt = :at, updatedAt = :at WHERE id = :id")
     suspend fun markSent(id: String, at: Long)
 

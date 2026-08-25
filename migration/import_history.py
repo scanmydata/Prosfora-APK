@@ -258,9 +258,16 @@ def parse_date_text(value: str) -> dt.date | None:
 
 # ------------------------------------------------------------------ εισαγωγή ---
 
-def offer_id(relpath: str) -> str:
-    digest = hashlib.sha1(relpath.encode("utf-8")).hexdigest()[:16]
-    return f"hist-{digest}"
+def offer_id(relpath: str, address: str, epoch_day: int) -> str:
+    """Σταθερό αναγνωριστικό, ανεξάρτητο από τον φάκελο.
+
+    Ο φάκελος αλλάζει συνέχεια — ένα φύλλο μετακομίζει από «ΠΡΟΣΦΟΡΕΣ» σε
+    «DONE» μόλις κλείσει η δουλειά. Αν το id κρατούσε τη διαδρομή, η επόμενη
+    εισαγωγή θα έφτιαχνε δεύτερη προσφορά αντί να ενημερώσει την υπάρχουσα.
+    Όνομα αρχείου + διεύθυνση + ημερομηνία επιβιώνουν της μετακόμισης.
+    """
+    key = f"{os.path.basename(relpath).lower()}|{address.lower()}|{epoch_day}"
+    return "hist-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
 
 
 def convert(path: str, root: str) -> tuple[dict | None, str]:
@@ -301,7 +308,7 @@ def convert(path: str, root: str) -> tuple[dict | None, str]:
         address = os.path.splitext(os.path.basename(path))[0]
 
     return {
-        "id": offer_id(relpath),
+        "id": offer_id(relpath, address, (when - EPOCH).days),
         "address": address,
         "kind": kind,
         "dateEpochDay": (when - EPOCH).days,
@@ -330,18 +337,18 @@ def main() -> int:
                 files.append(os.path.join(dirpath, name))
     files.sort()
 
-    offers, spaces, notes, skipped = [], [], [], []
+    offers, spaces, notes, skipped, merged = [], [], [], [], []
     seen_ids = {}
     for path in files:
         record, reason = convert(path, root)
         if record is None:
             skipped.append((os.path.relpath(path, root), reason))
             continue
-        # Δύο αρχεία με ίδια διαδρομή είναι αδύνατο, αλλά ας μη σπάσει σιωπηλά
+        # Το ίδιο φύλλο υπάρχει καμιά φορά σε δύο φακέλους· κρατιέται μία φορά
         if record["id"] in seen_ids:
-            skipped.append((record["source"], "διπλό id"))
+            merged.append((record["source"], seen_ids[record["id"]]))
             continue
-        seen_ids[record["id"]] = True
+        seen_ids[record["id"]] = record["source"]
 
         for i, space in enumerate(record.pop("spaces")):
             spaces.append({
@@ -387,6 +394,7 @@ def main() -> int:
     print("συνολική αξία: " + f"{total:,.2f}".replace(",", "~").replace(".", ",")
           .replace("~", ".") + " €")
     print(f"ημερομηνία κατά προσέγγιση σε: {approx}")
+    print(f"διπλότυπα που ενώθηκαν: {len(merged)}")
     print(f"παραλείφθηκαν: {len(skipped)}")
     print(f"γράφτηκε: {args.out} ({os.path.getsize(args.out) / 1e6:.1f} MB)")
 

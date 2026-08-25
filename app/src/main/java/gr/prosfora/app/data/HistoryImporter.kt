@@ -114,24 +114,44 @@ object HistoryImporter {
         )
     }
 
+    /** Πόσες από τις προσφορές του αρχείου υπάρχουν ήδη στη βάση. */
+    suspend fun countExisting(context: Context, bundle: Bundle): Int =
+        withContext(Dispatchers.IO) {
+            val known = ProsforaDatabase.get(context).offerDao().allIds().toSet()
+            bundle.offers.count { it.id in known }
+        }
+
     /**
      * Γράφει τα πάντα σε μία δοσοληψία: ή μπαίνει όλο το ιστορικό ή τίποτα.
      * Χωρίς αυτό, μια αποτυχία στη μέση θα άφηνε προσφορές χωρίς τους χώρους τους.
+     *
+     * Με [updateExisting] = false περνούν μόνο οι προσφορές που δεν υπάρχουν ήδη.
+     * Αυτή είναι και η προεπιλογή: μια δεύτερη εισαγωγή δεν πρέπει να σβήσει
+     * αλλαγές που έγιναν στο μεταξύ μέσα από την εφαρμογή.
      */
     suspend fun store(
         context: Context,
         bundle: Bundle,
+        updateExisting: Boolean = false,
         onProgress: (String) -> Unit = {},
-    ) = withContext(Dispatchers.IO) {
+    ): Int = withContext(Dispatchers.IO) {
         val db = ProsforaDatabase.get(context)
+        val known = db.offerDao().allIds().toSet()
+
+        val offers = if (updateExisting) bundle.offers else bundle.offers.filter { it.id !in known }
+        val wanted = offers.map { it.id }.toSet()
+        val spaces = bundle.spaces.filter { it.offerId in wanted }
+        val notes = bundle.notes.filter { it.offerId in wanted }
+
         db.withTransaction {
             onProgress("Προσφορές…")
-            bundle.offers.chunked(CHUNK).forEach { db.offerDao().upsertAll(it) }
+            offers.chunked(CHUNK).forEach { db.offerDao().upsertAll(it) }
             onProgress("Χώροι…")
-            bundle.spaces.chunked(CHUNK).forEach { db.spaceDao().upsertAll(it) }
+            spaces.chunked(CHUNK).forEach { db.spaceDao().upsertAll(it) }
             onProgress("Σημειώσεις…")
-            bundle.notes.chunked(CHUNK).forEach { db.noteDao().upsertAll(it) }
+            notes.chunked(CHUNK).forEach { db.noteDao().upsertAll(it) }
         }
+        offers.size
     }
 
     private const val KIND = "prosfora-history"
