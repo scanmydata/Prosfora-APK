@@ -20,9 +20,9 @@ import java.time.LocalDate
  * `migration/import_history.py` σαρώνει τον φάκελο «ΕΠΙΜΕΤΡΗΣΕΙΣ ΔΟΥΛΕΙΕΣ» και
  * γράφει ένα JSON. Εδώ απλώς διαβάζεται και μπαίνει στη βάση.
  *
- * Τα IDs έρχονται έτοιμα από το script και βγαίνουν από τη διαδρομή του κάθε
- * αρχείου: αν η εισαγωγή ξανατρέξει, οι ίδιες προσφορές **ενημερώνονται** αντί
- * να διπλασιαστούν.
+ * Τα IDs έρχονται έτοιμα από το script και αντιστοιχούν στη διαδρομή του κάθε
+ * αρχείου. Έτσι μια δεύτερη εισαγωγή αναγνωρίζει τι υπάρχει ήδη — και ξεχωρίζει
+ * ποια από αυτά άλλαξαν μέσα στο φύλλο.
  */
 object HistoryImporter {
 
@@ -47,6 +47,19 @@ object HistoryImporter {
 
         val completed: Int get() = offers.count { it.status == OfferStatus.COMPLETED }
     }
+
+    /**
+     * Πώς συγκρίνεται το αρχείο με ό,τι υπάρχει ήδη στη βάση.
+     *
+     * Ο χωρισμός σε «νέες» και «άλλαξαν» υπάρχει επειδή τα φύλλα δουλεύονται
+     * ξανά και ξανά στη θέση τους. Χωρίς αυτόν, ή θα χάνονταν οι διορθώσεις του
+     * Excel ή θα σβήνονταν αλλαγές που έγιναν από την εφαρμογή.
+     */
+    data class Plan(
+        val fresh: Set<String>,
+        val changed: Set<String>,
+        val unchanged: Int,
+    )
 
     class InvalidFile(message: String) : IllegalArgumentException(message)
 
@@ -114,46 +127,108 @@ object HistoryImporter {
         )
     }
 
-    /** Πόσες από τις προσφορές του αρχείου υπάρχουν ήδη στη βάση. */
-    suspend fun countExisting(context: Context, bundle: Bundle): Int =
-        withContext(Dispatchers.IO) {
-            val known = ProsforaDatabase.get(context).offerDao().allIds().toSet()
-            bundle.offers.count { it.id in known }
+    /** Συγκρίνει το αρχείο με τη βάση, χωρίς να γράψει τίποτα. */
+    suspend fun plan(context: Context, bundle: Bundle): Plan = withContext(Dispatchers.IO) {
+        val db = ProsforaDatabase.get(context)
+        val stored = db.offerDao().allForSync().associateBy { it.id }
+        val storedSpaces = db.spaceDao().allForSync()
+            .filter { !it.deleted }.groupBy { it.offerId }
+        val storedNotes = db.noteDao().allForSync()
+            .filter { !it.deleted }.groupBy { it.offerId }
+
+        val incomingSpaces = bundle.spaces.groupBy { it.offerId }
+        val incomingNotes = bundle.notes.groupBy { it.offerId }
+
+        val fresh = mutableSetOf<String>()
+        val changed = mutableSetOf<String>()
+        var unchanged = 0
+
+        bundle.offers.forEach { offer ->
+            val existing = stored[offer.id]
+            if (existing == null || existing.deleted) {
+                fresh += offer.id
+                return@forEach
+            }
+            val before = signature(
+                existing,
+                storedSpaces[offer.id].orEmpty(),
+                storedNotes[offer.id].orEmpty(),
+            )
+            val after = signature(
+                offer,
+                incomingSpaces[offer.id].orEmpty(),
+                incomingNotes[offer.id].orEmpty(),
+            )
+            if (before == after) unchanged++ else changed += offer.id
         }
 
+        Plan(fresh = fresh, changed = changed, unchanged = unchanged)
+    }
+
     /**
-     * Γράφει τα πάντα σε μία δοσοληψία: ή μπαίνει όλο το ιστορικό ή τίποτα.
-     * Χωρίς αυτό, μια αποτυχία στη μέση θα άφηνε προσφορές χωρίς τους χώρους τους.
-     *
-     * Με [updateExisting] = false περνούν μόνο οι προσφορές που δεν υπάρχουν ήδη.
-     * Αυτή είναι και η προεπιλογή: μια δεύτερη εισαγωγή δεν πρέπει να σβήσει
-     * αλλαγές που έγιναν στο μεταξύ μέσα από την εφαρμογή.
+     * Γράφει τις προσφορές με τα δοσμένα [ids] σε μία δοσοληψία: ή μπαίνουν όλες
+     * ή καμία. Χωρίς αυτό, μια αποτυχία στη μέση θα άφηνε προσφορές χωρίς τους
+     * χώρους τους.
      */
     suspend fun store(
         context: Context,
         bundle: Bundle,
-        updateExisting: Boolean = false,
+        ids: Set<String>,
         onProgress: (String) -> Unit = {},
     ): Int = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) return@withContext 0
         val db = ProsforaDatabase.get(context)
-        val known = db.offerDao().allIds().toSet()
+        val now = System.currentTimeMillis()
 
-        val offers = if (updateExisting) bundle.offers else bundle.offers.filter { it.id !in known }
-        val wanted = offers.map { it.id }.toSet()
-        val spaces = bundle.spaces.filter { it.offerId in wanted }
-        val notes = bundle.notes.filter { it.offerId in wanted }
+        val offers = bundle.offers.filter { it.id in ids }
+        val spaces = bundle.spaces.filter { it.offerId in ids }
+        val notes = bundle.notes.filter { it.offerId in ids }
 
         db.withTransaction {
             onProgress("Προσφορές…")
             offers.chunked(CHUNK).forEach { db.offerDao().upsertAll(it) }
+
+            // Ό,τι είχε η προσφορά πριν σβήνεται πρώτα: το φύλλο είναι η πηγή
+            // αλήθειας και μια γραμμή που διαγράφηκε στο Excel δεν πρέπει να
+            // επιβιώσει στη βάση επειδή απλώς δεν ξαναήρθε.
             onProgress("Χώροι…")
+            ids.forEach { db.spaceDao().softDeleteForOffer(it, now) }
             spaces.chunked(CHUNK).forEach { db.spaceDao().upsertAll(it) }
+
             onProgress("Σημειώσεις…")
+            ids.forEach { db.noteDao().softDeleteForOffer(it, now) }
             notes.chunked(CHUNK).forEach { db.noteDao().upsertAll(it) }
         }
         offers.size
     }
 
+    /**
+     * Ό,τι μετράει για να πούμε ότι μια προσφορά «άλλαξε». Το `updatedAt` και τα
+     * ιστορικά αποστολών μένουν απ' έξω επίτηδες: αλλάζουν χωρίς να αλλάζει το
+     * περιεχόμενο του φύλλου.
+     */
+    private fun signature(
+        offer: OfferEntity,
+        spaces: List<SpaceEntity>,
+        notes: List<NoteEntity>,
+    ): String = buildString {
+        append(offer.address).append(SEP)
+        append(offer.kind).append(SEP)
+        append(offer.dateEpochDay).append(SEP)
+        append(offer.validUntilDay).append(SEP)
+        append(offer.paymentTerms).append(SEP)
+        append(offer.status.name).append(SEP)
+        spaces.sortedBy { it.position }.forEach {
+            append(it.description).append(':')
+            append(it.area).append(':')
+            append(it.unitPrice).append(SEP)
+        }
+        append(SEP)
+        notes.sortedBy { it.position }.forEach { append(it.text).append(SEP) }
+    }
+
+    /** Διαχωριστικό υπογραφής — δεν εμφανίζεται σε κείμενο προσφοράς. */
+    private const val SEP = "<|>"
     private const val KIND = "prosfora-history"
     private const val CHUNK = 400
 }

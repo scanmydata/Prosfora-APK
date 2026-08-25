@@ -15,6 +15,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -50,8 +51,8 @@ fun HistoryImportSettings() {
 
     var busy by remember { mutableStateOf<String?>(null) }
     var bundle by remember { mutableStateOf<HistoryImporter.Bundle?>(null) }
-    var existing by remember { mutableStateOf(0) }
-    var updateExisting by remember { mutableStateOf(false) }
+    var plan by remember { mutableStateOf<HistoryImporter.Plan?>(null) }
+    var includeChanged by remember { mutableStateOf(true) }
     var done by remember { mutableStateOf<String?>(null) }
 
     val picker = rememberLauncherForActivityResult(
@@ -67,13 +68,13 @@ fun HistoryImportSettings() {
                     } ?: error("Δεν διαβάστηκε το αρχείο")
                 }
                 val parsed = HistoryImporter.parse(text)
-                parsed to HistoryImporter.countExisting(context, parsed)
+                parsed to HistoryImporter.plan(context, parsed)
             }
             busy = null
-            result.onSuccess { (parsed, already) ->
+            result.onSuccess { (parsed, comparison) ->
                 bundle = parsed
-                existing = already
-                updateExisting = false
+                plan = comparison
+                includeChanged = true
             }.onFailure {
                 Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
             }
@@ -124,10 +125,13 @@ fun HistoryImportSettings() {
         }
     }
 
-    bundle?.let { found ->
-        val fresh = found.offers.size - existing
+    val comparison = plan
+    if (bundle != null && comparison != null) {
+        val found = bundle!!
+        val ids = comparison.fresh + if (includeChanged) comparison.changed else emptySet()
+
         AlertDialog(
-            onDismissRequest = { if (busy == null) bundle = null },
+            onDismissRequest = { if (busy == null) { bundle = null; plan = null } },
             title = { Text("Εισαγωγή ιστορικού") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -137,13 +141,49 @@ fun HistoryImportSettings() {
                     )
                     Text(
                         """
-                            • ${found.offers.size} προσφορές (${found.completed} ολοκληρωμένες)
-                            • ${found.spaces.size} γραμμές χώρων
-                            • ${found.notes.size} σημειώσεις
+                            • ${found.offers.size} προσφορές στο αρχείο
+                            • ${found.spaces.size} γραμμές χώρων, ${found.notes.size} σημειώσεις
                             • συνολική αξία ${found.total.asMoney()}
                         """.trimIndent(),
                         style = MaterialTheme.typography.bodySmall,
                     )
+
+                    HorizontalDivider()
+
+                    Text(
+                        """
+                            Νέες: ${comparison.fresh.size}
+                            Άλλαξαν στο φύλλο: ${comparison.changed.size}
+                            Ίδιες: ${comparison.unchanged}
+                        """.trimIndent(),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+
+                    if (comparison.changed.isNotEmpty()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = includeChanged,
+                                onCheckedChange = { includeChanged = it },
+                            )
+                            Text(
+                                "Ενημέρωση όσων άλλαξαν",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
+                        Text(
+                            if (includeChanged) {
+                                "Θα πάρουν το περιεχόμενο του φύλλου. Αν κάποια από " +
+                                    "αυτές την πείραξες και μέσα από την εφαρμογή, εκείνες " +
+                                    "οι αλλαγές θα χαθούν."
+                            } else {
+                                "Θα μπουν μόνο οι νέες· οι υπόλοιπες μένουν όπως είναι."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
                     if (found.approximateDates > 0) {
                         Text(
                             "${found.approximateDates} προσφορές δεν είχαν ημερομηνία μέσα " +
@@ -152,55 +192,20 @@ fun HistoryImportSettings() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-
-                    if (existing > 0) {
-                        Text(
-                            "$existing από αυτές υπάρχουν ήδη στη βάση, $fresh είναι νέες.",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(
-                                checked = updateExisting,
-                                onCheckedChange = { updateExisting = it },
-                            )
-                            Text(
-                                "Ενημέρωση και των υπαρχόντων",
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(start = 4.dp),
-                            )
-                        }
-                        Text(
-                            if (updateExisting) {
-                                "Προσοχή: όσες έχεις αλλάξει μέσα από την εφαρμογή θα " +
-                                    "γυρίσουν στο περιεχόμενο του αρχείου."
-                            } else {
-                                "Οι υπάρχουσες μένουν όπως είναι — θα μπουν μόνο οι νέες."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (updateExisting) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
                 }
             },
             confirmButton = {
                 TextButton(
-                    enabled = busy == null && (updateExisting || fresh > 0),
+                    enabled = busy == null && ids.isNotEmpty(),
                     onClick = {
                         busy = "Εισαγωγή…"
                         scope.launch {
                             val result = runCatching {
-                                HistoryImporter.store(
-                                    context = context,
-                                    bundle = found,
-                                    updateExisting = updateExisting,
-                                ) { stage -> busy = stage }
+                                HistoryImporter.store(context, found, ids) { stage -> busy = stage }
                             }
                             busy = null
                             bundle = null
+                            plan = null
                             result.onSuccess { written ->
                                 done = "Γράφτηκαν $written προσφορές"
                                 Toast.makeText(context, done, Toast.LENGTH_LONG).show()
@@ -214,11 +219,14 @@ fun HistoryImportSettings() {
                         }
                     },
                 ) {
-                    Text(if (updateExisting) "Εισαγωγή όλων" else "Εισαγωγή $fresh νέων")
+                    Text(if (ids.isEmpty()) "Τίποτα νέο" else "Εισαγωγή ${ids.size}")
                 }
             },
             dismissButton = {
-                TextButton(enabled = busy == null, onClick = { bundle = null }) { Text("Άκυρο") }
+                TextButton(
+                    enabled = busy == null,
+                    onClick = { bundle = null; plan = null },
+                ) { Text("Άκυρο") }
             },
         )
     }

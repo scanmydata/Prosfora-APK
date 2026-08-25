@@ -258,16 +258,29 @@ def parse_date_text(value: str) -> dt.date | None:
 
 # ------------------------------------------------------------------ εισαγωγή ---
 
-def offer_id(relpath: str, address: str, epoch_day: int) -> str:
-    """Σταθερό αναγνωριστικό, ανεξάρτητο από τον φάκελο.
+def offer_id(relpath: str) -> str:
+    """Σταθερό αναγνωριστικό: η διαδρομή του αρχείου μέσα στον φάκελο.
 
-    Ο φάκελος αλλάζει συνέχεια — ένα φύλλο μετακομίζει από «ΠΡΟΣΦΟΡΕΣ» σε
-    «DONE» μόλις κλείσει η δουλειά. Αν το id κρατούσε τη διαδρομή, η επόμενη
-    εισαγωγή θα έφτιαχνε δεύτερη προσφορά αντί να ενημερώσει την υπάρχουσα.
-    Όνομα αρχείου + διεύθυνση + ημερομηνία επιβιώνουν της μετακόμισης.
+    Τα φύλλα δεν μετακομίζουν — επεξεργάζονται εκεί που είναι, και τα καινούρια
+    μπαίνουν στον φάκελο της χρονιάς. Άρα η διαδρομή είναι το σταθερό στοιχείο,
+    ενώ το περιεχόμενο (διεύθυνση, ημερομηνία, γραμμές) αλλάζει. Id βασισμένο
+    στο περιεχόμενο θα έφτιαχνε νέα προσφορά κάθε φορά που διορθώνεται μια
+    διεύθυνση.
     """
-    key = f"{os.path.basename(relpath).lower()}|{address.lower()}|{epoch_day}"
-    return "hist-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return "hist-" + hashlib.sha1(relpath.encode("utf-8")).hexdigest()[:16]
+
+
+def content_key(record: dict) -> str:
+    """Υπογραφή περιεχομένου, μόνο για την αναφορά.
+
+    Δύο αρχεία με ίδιο περιεχόμενο είναι σχεδόν πάντα αντίγραφο της προηγούμενης
+    προσφοράς που δεν συμπληρώθηκε ακόμη. Αναφέρονται ώστε να φανούν, αλλά δεν
+    ενώνονται: το αρχείο υπάρχει, άρα η προσφορά υπάρχει.
+    """
+    parts = [record["address"], str(record["dateEpochDay"])]
+    parts += [f'{s["description"]}:{s["area"]}:{s["unitPrice"]}' for s in record["spaces"]]
+    parts += record["notes"]
+    return "".join(parts)
 
 
 def convert(path: str, root: str) -> tuple[dict | None, str]:
@@ -308,7 +321,7 @@ def convert(path: str, root: str) -> tuple[dict | None, str]:
         address = os.path.splitext(os.path.basename(path))[0]
 
     return {
-        "id": offer_id(relpath, address, (when - EPOCH).days),
+        "id": offer_id(relpath),
         "address": address,
         "kind": kind,
         "dateEpochDay": (when - EPOCH).days,
@@ -337,18 +350,21 @@ def main() -> int:
                 files.append(os.path.join(dirpath, name))
     files.sort()
 
-    offers, spaces, notes, skipped, merged = [], [], [], [], []
+    offers, spaces, notes, skipped, twins = [], [], [], [], []
     seen_ids = {}
     for path in files:
         record, reason = convert(path, root)
         if record is None:
             skipped.append((os.path.relpath(path, root), reason))
             continue
-        # Το ίδιο φύλλο υπάρχει καμιά φορά σε δύο φακέλους· κρατιέται μία φορά
-        if record["id"] in seen_ids:
-            merged.append((record["source"], seen_ids[record["id"]]))
-            continue
-        seen_ids[record["id"]] = record["source"]
+        # Κάθε αρχείο γίνεται μία προσφορά, ακόμη κι αν το περιεχόμενο είναι
+        # πανομοιότυπο με άλλου. Πανομοιότυπα σημαίνει συνήθως αντίγραφο που δεν
+        # συμπληρώθηκε ακόμη — χρήσιμη πληροφορία, όχι λόγος να χαθεί το αρχείο.
+        key = content_key(record)
+        if key in seen_ids:
+            twins.append((record["source"], seen_ids[key]))
+        else:
+            seen_ids[key] = record["source"]
 
         for i, space in enumerate(record.pop("spaces")):
             spaces.append({
@@ -394,7 +410,7 @@ def main() -> int:
     print("συνολική αξία: " + f"{total:,.2f}".replace(",", "~").replace(".", ",")
           .replace("~", ".") + " €")
     print(f"ημερομηνία κατά προσέγγιση σε: {approx}")
-    print(f"διπλότυπα που ενώθηκαν: {len(merged)}")
+    print(f"με ίδιο περιεχόμενο με άλλο αρχείο: {len(twins)}")
     print(f"παραλείφθηκαν: {len(skipped)}")
     print(f"γράφτηκε: {args.out} ({os.path.getsize(args.out) / 1e6:.1f} MB)")
 
@@ -402,6 +418,8 @@ def main() -> int:
         with open(args.report, "w", encoding="utf-8") as handle:
             for relpath, reason in skipped:
                 handle.write(f"{reason}\t{relpath}\n")
+            for relpath, original in twins:
+                handle.write(f"ίδιο περιεχόμενο με «{original}»\t{relpath}\n")
         print(f"αναφορά: {args.report}")
     return 0
 

@@ -69,6 +69,10 @@ interface SpaceDao {
     @Query("UPDATE spaces SET deleted = 1, updatedAt = :at WHERE id = :id")
     suspend fun softDelete(id: String, at: Long)
 
+    /** Όλα τα παιδιά μιας προσφοράς — η εισαγωγή ιστορικού τα ξαναγράφει από την αρχή. */
+    @Query("UPDATE spaces SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND deleted = 0")
+    suspend fun softDeleteForOffer(offerId: String, at: Long)
+
     @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM spaces WHERE offerId = :offerId AND deleted = 0")
     suspend fun nextPosition(offerId: String): Int
 }
@@ -91,6 +95,10 @@ interface NoteDao {
 
     @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE id = :id")
     suspend fun softDelete(id: String, at: Long)
+
+    /** Όλα τα παιδιά μιας προσφοράς — η εισαγωγή ιστορικού τα ξαναγράφει από την αρχή. */
+    @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND deleted = 0")
+    suspend fun softDeleteForOffer(offerId: String, at: Long)
 
     @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND text = :text AND deleted = 0")
     suspend fun softDeleteByText(offerId: String, text: String, at: Long)
