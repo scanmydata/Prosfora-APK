@@ -9,5 +9,6 @@ title: Προσφορές — tovapsimo.gr
 
 - [Πολιτική Απορρήτου](privacy-policy.html)
 - [Λήψη τελευταίας έκδοσης](https://github.com/scanmydata/Prosfora-APK/releases/latest)
+- [Σύνδεση με κοινόχρηστη βάση](connect.html) — ανοίγει από τον σύνδεσμο της πρόσκλησης
 
 Επικοινωνία: adonis.douramanis@gmail.com · 6945773605

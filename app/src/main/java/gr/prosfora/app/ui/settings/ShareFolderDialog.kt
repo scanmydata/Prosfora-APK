@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -41,7 +42,13 @@ import androidx.compose.ui.unit.dp
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.google.ConnectLink
+import gr.prosfora.app.google.SendMethod
 import gr.prosfora.app.google.rememberGoogleAuthorizer
+import gr.prosfora.app.mail.GmailSender
+import gr.prosfora.app.mail.MailSender
+import gr.prosfora.app.message.MessageTemplates
+import gr.prosfora.app.settings.SmtpSettingsStore
 import gr.prosfora.app.ui.components.ConfirmDialog
 import gr.prosfora.app.ui.offers.DeleteRed
 import kotlinx.coroutines.launch
@@ -68,6 +75,7 @@ fun ShareFolderDialog(
     var busy by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var canEdit by remember { mutableStateOf(true) }
+    var sendInvite by remember { mutableStateOf(true) }
     var pendingInvite by remember { mutableStateOf<String?>(null) }
     var pendingRevoke by remember { mutableStateOf<DriveClient.Collaborator?>(null) }
 
@@ -121,6 +129,22 @@ fun ShareFolderDialog(
                         label = { Text("Μόνο ανάγνωση", maxLines = 1) },
                     )
                 }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = sendInvite, onCheckedChange = { sendInvite = it })
+                    Text(
+                        "Email με σύνδεσμο αυτόματης σύνδεσης",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                }
+                Text(
+                    "Το Google στέλνει τη δική του ειδοποίηση πρόσβασης. Αυτό είναι " +
+                        "ένα δεύτερο, δικό μας email: πατώντας τον σύνδεσμο, η εφαρμογή " +
+                        "του συνεργάτη συνδέεται μόνη της με τη βάση και τον φάκελο.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
 
                 Button(
                     enabled = !busy && email.trim().contains("@"),
@@ -197,11 +221,23 @@ fun ShareFolderDialog(
                             email = target,
                             role = if (canEdit) DriveClient.ROLE_WRITER else DriveClient.ROLE_READER,
                         )
+                        id
+                    }
+                    var mailError: String? = null
+                    if (sendInvite) {
+                        result.getOrNull()?.let { id ->
+                            mailError = sendConnectEmail(context, authorizer.accessToken(), googleSettings, target, id)
+                        }
                     }
                     result.onSuccess {
                         email = ""
                         reload()
-                        Toast.makeText(context, "Στάλθηκε πρόσκληση στο $target", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            context,
+                            mailError?.let { "Δόθηκε πρόσβαση, το email δεν στάλθηκε: $it" }
+                                ?: "Στάλθηκε πρόσκληση στο $target",
+                            Toast.LENGTH_LONG,
+                        ).show()
                     }.onFailure {
                         Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
                     }
@@ -235,4 +271,50 @@ fun ShareFolderDialog(
             onDismiss = { pendingRevoke = null },
         )
     }
+}
+
+/**
+ * Το email της πρόσκλησης, με τον σύνδεσμο που ρυθμίζει την εφαρμογή του
+ * παραλήπτη. Επιστρέφει το μήνυμα σφάλματος αν δεν στάλθηκε, αλλιώς null — η
+ * πρόσβαση έχει ήδη δοθεί, οπότε μια αποτυχία εδώ δεν ακυρώνει τίποτα.
+ */
+private suspend fun sendConnectEmail(
+    context: android.content.Context,
+    accessToken: String,
+    googleSettings: GoogleSettings,
+    to: String,
+    folderId: String,
+): String? {
+    val sender = googleSettings.senderName.ifBlank { "Προσφορές" }
+    val link = ConnectLink.build(
+        spreadsheetId = googleSettings.spreadsheetId,
+        folderId = folderId,
+        templateId = googleSettings.templateFileId,
+        from = sender,
+    )
+    val body = """
+        Πρόσκληση από τον/την $sender.
+
+        Έχεις πλέον πρόσβαση στον φάκελο «${GoogleSettings.DRIVE_FOLDER_NAME}» στο Google
+        Drive: τη βάση των προσφορών, το πρότυπο και τα PDF.
+
+        Για να ρυθμιστεί μόνη της η εφαρμογή στο κινητό σου, άνοιξε:
+        $link
+
+        Αν δεν έχεις ακόμη την εφαρμογή, κατέβασέ την από:
+        https://github.com/scanmydata/Prosfora-APK/releases/latest
+    """.trimIndent()
+    val message = MailSender.Outgoing(
+        to = to,
+        subject = "Πρόσκληση στις Προσφορές — $sender",
+        body = body,
+        html = MessageTemplates.asHtml(body, link, "Ρύθμιση της εφαρμογής"),
+    )
+    return runCatching {
+        if (googleSettings.sendMethod == SendMethod.GOOGLE) {
+            GmailSender.send(accessToken, message)
+        } else {
+            MailSender.send(SmtpSettingsStore(context).load(), message)
+        }
+    }.exceptionOrNull()?.let { it.message ?: it.toString() }
 }

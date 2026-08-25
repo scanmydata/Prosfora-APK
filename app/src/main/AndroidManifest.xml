@@ -35,10 +35,22 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Prosfora.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Ο σύνδεσμος πρόσκλησης συνεργάτη. Δικό μας scheme και όχι https:
+                 τα https links θέλουν επαλήθευση με assetlinks.json για να τα
+                 ανοίγει η εφαρμογή, οπότε το email δείχνει σε μια σελίδα που
+                 προωθεί εδώ. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="prosfora" android:host="connect" />
             </intent-filter>
         </activity>
 

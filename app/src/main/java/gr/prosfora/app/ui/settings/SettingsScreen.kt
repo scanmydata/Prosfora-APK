@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
@@ -308,6 +309,14 @@ fun SettingsScreen(onMenu: () -> Unit, onOpenTemplate: () -> Unit) {
                 tint = EmailAmber,
             ) {
                 ReviewSettings(googleSettings)
+            }
+
+            SettingsSection(
+                title = "Δεδομένα",
+                subtitle = "Εισαγωγή παλιών προσφορών από Excel",
+                icon = Icons.Default.Inventory2,
+            ) {
+                HistoryImportSettings()
             }
 
             SettingsSection(

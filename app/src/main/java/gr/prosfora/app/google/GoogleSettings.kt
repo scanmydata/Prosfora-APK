@@ -97,6 +97,9 @@ class GoogleSettings(context: Context) {
         prefs.edit().putString(KEY_PDF_YEARS, json.toString()).apply()
     }
 
+    /** Ξεχνάει τους φακέλους PDF ανά έτος — τους ξαναβρίσκει στον νέο χώρο εργασίας. */
+    fun clearPdfFolders() = prefs.edit().remove(KEY_PDF_FOLDER).remove(KEY_PDF_YEARS).apply()
+
     /** Μέρες μετά την ολοκλήρωση για να ζητηθεί αξιολόγηση. */
     var reviewDelayDays: Int
         get() = prefs.getInt(KEY_REVIEW_DELAY, 3)

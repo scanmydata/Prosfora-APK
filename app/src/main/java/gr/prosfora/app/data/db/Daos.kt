@@ -27,6 +27,10 @@ interface OfferDao {
     @Upsert
     suspend fun upsert(offer: OfferEntity)
 
+    /** Μαζική εισαγωγή — το ιστορικό είναι χιλιάδες γραμμές, μία-μία θα κρατούσε λεπτά. */
+    @Upsert
+    suspend fun upsertAll(items: List<OfferEntity>)
+
     /** Soft delete — η γραμμή μένει ώστε να ταξιδέψει η διαγραφή στον συγχρονισμό. */
     @Query("UPDATE offers SET deleted = 1, updatedAt = :at WHERE id = :id")
     suspend fun softDelete(id: String, at: Long)
@@ -54,6 +58,10 @@ interface SpaceDao {
     @Upsert
     suspend fun upsert(space: SpaceEntity)
 
+    /** Μαζική εισαγωγή — το ιστορικό είναι χιλιάδες γραμμές, μία-μία θα κρατούσε λεπτά. */
+    @Upsert
+    suspend fun upsertAll(items: List<SpaceEntity>)
+
     @Query("UPDATE spaces SET deleted = 1, updatedAt = :at WHERE id = :id")
     suspend fun softDelete(id: String, at: Long)
 
@@ -72,6 +80,10 @@ interface NoteDao {
 
     @Upsert
     suspend fun upsert(note: NoteEntity)
+
+    /** Μαζική εισαγωγή — το ιστορικό είναι χιλιάδες γραμμές, μία-μία θα κρατούσε λεπτά. */
+    @Upsert
+    suspend fun upsertAll(items: List<NoteEntity>)
 
     @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE id = :id")
     suspend fun softDelete(id: String, at: Long)

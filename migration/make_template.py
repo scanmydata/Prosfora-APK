@@ -26,6 +26,9 @@ FONT = "Arial"          # ασφαλές για ελληνικά και στο W
 
 OUT = "assets/pdf-template/ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ.docx"
 
+# Πόσος αέρας μπαίνει στην κορυφή των σελίδων μετά την πρώτη, σε στιγμές
+TOP_AIR_PT = 34
+
 
 # --------------------------------------------------------------- helpers ---
 
@@ -116,6 +119,77 @@ def para(container, align=WD_ALIGN_PARAGRAPH.LEFT, before=0, after=0, line=1.0):
     return p
 
 
+def field(paragraph, instruction, placeholder, size, color):
+    """Πεδίο του Word (PAGE, NUMPAGES) — υπολογίζεται από τον επεξεργαστή."""
+    def run(child):
+        r = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        fonts = OxmlElement("w:rFonts")
+        fonts.set(qn("w:ascii"), FONT)
+        fonts.set(qn("w:hAnsi"), FONT)
+        rPr.append(fonts)
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), str(int(size * 2)))
+        rPr.append(sz)
+        col = OxmlElement("w:color")
+        col.set(qn("w:val"), color)
+        rPr.append(col)
+        r.append(rPr)
+        r.append(child)
+        paragraph._p.append(r)
+
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    run(begin)
+
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = instruction
+    run(instr)
+
+    sep = OxmlElement("w:fldChar")
+    sep.set(qn("w:fldCharType"), "separate")
+    run(sep)
+
+    # Η τιμή που βλέπει όποιος δεν υπολογίζει το πεδίο· ο επεξεργαστής τη διορθώνει
+    cached = OxmlElement("w:t")
+    cached.text = placeholder
+    run(cached)
+
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    run(end)
+
+
+def page_furniture(section):
+    """Αρίθμηση κάτω δεξιά, και αέρας στην κορυφή από τη 2η σελίδα και μετά.
+
+    Το περιθώριο της σελίδας είναι ίδιο σε όλες τις σελίδες — δεν αλλάζει ανά
+    σελίδα. Ο χώρος στην κορυφή των επόμενων σελίδων βγαίνει από την κεφαλίδα:
+    με «διαφορετική πρώτη σελίδα», η πρώτη έχει κεφαλίδα μηδενικού ύψους ενώ οι
+    υπόλοιπες μια κενή που σπρώχνει το κείμενο πιο κάτω. Αλλιώς το κείμενο της
+    2ης σελίδας ξεκινά κολλητά στο πάνω χείλος.
+    """
+    section.different_first_page_header_footer = True
+
+    first = section.first_page_header.paragraphs[0]
+    first.paragraph_format.space_after = Pt(0)
+    write(first, " ", size=1)
+
+    rest = section.header.paragraphs[0]
+    rest.paragraph_format.space_after = Pt(TOP_AIR_PT)
+    write(rest, " ", size=1)
+
+    for footer in (section.first_page_footer, section.footer):
+        p = footer.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        p.paragraph_format.space_before = Pt(0)
+        write(p, "Σελίδα ", size=7.5, color=GREY)
+        field(p, " PAGE ", "1", size=7.5, color="595959")
+        write(p, " από ", size=7.5, color=GREY)
+        field(p, " NUMPAGES ", "1", size=7.5, color="595959")
+
+
 def hanging(paragraph, indent_cm=0.45):
     """Κρεμαστή εσοχή: η δεύτερη γραμμή μιας παρατήρησης δεν πέφτει κάτω από την κουκκίδα."""
     pf = paragraph.paragraph_format
@@ -136,11 +210,18 @@ def build():
     style.paragraph_format.line_spacing = 1.0
 
     section = doc.sections[0]
+    # Το πρότυπο του python-docx είναι Letter· χωρίς αυτό το PDF βγαίνει σε λάθος χαρτί
+    section.page_width = Cm(21.0)
+    section.page_height = Cm(29.7)
     section.top_margin = Cm(1.1)
     section.bottom_margin = Cm(1.0)
     section.left_margin = Cm(1.6)
     section.right_margin = Cm(1.6)
+    section.header_distance = Cm(0.6)
+    section.footer_distance = Cm(0.6)
     width = section.page_width - section.left_margin - section.right_margin
+
+    page_furniture(section)
 
     # --- επικεφαλίδα: ταυτότητα αριστερά, επικοινωνία δεξιά ---------------
     head = doc.add_table(rows=1, cols=2)
