@@ -168,6 +168,7 @@ class SheetSync(
                 reviewSentAt = row[16].toLongOrNull(),
                 validUntilDay = row[17].toLongOrNull(),
                 paymentTerms = row[18],
+                source = row[19],
             )
         }
 
@@ -233,6 +234,7 @@ class SheetSync(
             it.reviewSentAt?.toString().orEmpty(),
             it.validUntilDay?.toString().orEmpty(),
             it.paymentTerms,
+            it.source,
         )
     }
 
@@ -271,7 +273,7 @@ class SheetSync(
             "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο",
             "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης",
             "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση",
-            "Ισχύει έως", "Τρόπος πληρωμής",
+            "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή",
         )
         private val SPACE_HEADER = listOf(
             "ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)",

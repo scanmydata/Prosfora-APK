@@ -53,6 +53,13 @@ data class OfferEntity(
      */
     val paymentTerms: String = "",
     /**
+     * Από ποιο αρχείο ήρθε, αν ήρθε από εισαγωγή ιστορικού. Κενό σημαίνει ότι
+     * γράφτηκε μέσα στην εφαρμογή. Τα εισαγόμενα είναι παλιές επιμετρήσεις που
+     * δεν ξέρουμε σίγουρα αν έγιναν δουλειές, οπότε τα στατιστικά μπορούν να
+     * τα αφήσουν απ' έξω.
+     */
+    val source: String = "",
+    /**
      * Soft delete. Οι διαγραφές πρέπει να ταξιδεύουν μέχρι τις άλλες συσκευές:
      * αν σβήναμε τη γραμμή, ο επόμενος συγχρονισμός θα την ξανακατέβαζε από το
      * κοινόχρηστο Sheet σαν να μην έγινε τίποτα.
@@ -190,6 +197,9 @@ data class OfferWithDetails(
     /** Οι δόσεις του τρόπου πληρωμής, μία ανά γραμμή, χωρίς κενές. */
     val paymentLines: List<String>
         get() = offer.paymentTerms.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+    /** Ήρθε από εισαγωγή αρχείου και όχι από την εφαρμογή. */
+    val imported: Boolean get() = offer.source.isNotBlank()
 
     /** Έχει λήξει η ισχύς της προσφοράς; */
     fun expired(today: java.time.LocalDate = java.time.LocalDate.now()): Boolean =

@@ -237,7 +237,7 @@ def guess_status(relpath: str) -> str:
 
 def guess_year(relpath: str) -> int | None:
     for part in relpath.split(os.sep):
-        match = re.fullmatch(r"(20\d{2})", part.strip())
+        match = re.fullmatch(r"((?:19|20)\d{2})", part.strip())
         if match:
             return int(match.group(1))
     return None

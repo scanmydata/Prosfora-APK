@@ -87,6 +87,7 @@ object HistoryImporter {
                     .getOrDefault(OfferStatus.COMPLETED),
                 validUntilDay = item.optLong("validUntilDay", -1L).takeIf { it >= 0 },
                 paymentTerms = item.optString("paymentTerms"),
+                source = item.optString("source").ifBlank { "ιστορικό" },
                 createdAt = now,
                 updatedAt = now,
             )
@@ -218,6 +219,9 @@ object HistoryImporter {
         append(offer.validUntilDay).append(SEP)
         append(offer.paymentTerms).append(SEP)
         append(offer.status.name).append(SEP)
+        // Η πηγή μπαίνει κι αυτή: προσφορές που εισήχθησαν πριν υπάρξει η στήλη
+        // την έχουν κενή, και πρέπει να συμπληρωθεί με μια επανεισαγωγή
+        append(offer.source).append(SEP)
         spaces.sortedBy { it.position }.forEach {
             append(it.description).append(':')
             append(it.area).append(':')

@@ -97,6 +97,14 @@ class GoogleSettings(context: Context) {
         prefs.edit().putString(KEY_PDF_YEARS, json.toString()).apply()
     }
 
+    /**
+     * Αν τα στατιστικά μετράνε και τις προσφορές που ήρθαν από εισαγωγή αρχείου.
+     * Είναι παλιές επιμετρήσεις που δεν ξέρουμε σίγουρα αν έγιναν δουλειές.
+     */
+    var statsIncludeImported: Boolean
+        get() = prefs.getBoolean(KEY_STATS_IMPORTED, true)
+        set(value) = prefs.edit().putBoolean(KEY_STATS_IMPORTED, value).apply()
+
     /** Ξεχνάει τους φακέλους PDF ανά έτος — τους ξαναβρίσκει στον νέο χώρο εργασίας. */
     fun clearPdfFolders() = prefs.edit().remove(KEY_PDF_FOLDER).remove(KEY_PDF_YEARS).apply()
 
@@ -148,6 +156,7 @@ class GoogleSettings(context: Context) {
         private const val KEY_REVIEW_TEMPLATE = "review_template"
         private const val KEY_VALID_DAYS = "offer_valid_days"
         private const val KEY_PAYMENT_TERMS = "default_payment_terms"
+        private const val KEY_STATS_IMPORTED = "stats_include_imported"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
 

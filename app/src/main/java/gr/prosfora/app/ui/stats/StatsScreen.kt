@@ -12,11 +12,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -27,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -34,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.data.db.OfferStatus
 import gr.prosfora.app.data.db.OfferWithDetails
+import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.ui.offers.EditBlue
 import gr.prosfora.app.ui.offers.EmailAmber
 import gr.prosfora.app.ui.offers.OffersViewModel
@@ -55,16 +61,25 @@ private val MONTHS = listOf(
 @Composable
 fun StatsScreen(viewModel: OffersViewModel, onMenu: () -> Unit) {
     val offers by viewModel.offers.collectAsState()
+    val context = LocalContext.current
+    val settings = remember { GoogleSettings(context) }
 
-    val years = remember(offers) {
-        offers.map { LocalDate.ofEpochDay(it.offer.dateEpochDay).year }
+    var includeImported by remember { mutableStateOf(settings.statsIncludeImported) }
+    val importedCount = remember(offers) { offers.count { it.imported } }
+
+    val visible = remember(offers, includeImported) {
+        if (includeImported) offers else offers.filter { !it.imported }
+    }
+
+    val years = remember(visible) {
+        visible.map { LocalDate.ofEpochDay(it.offer.dateEpochDay).year }
             .distinct()
             .sortedDescending()
             .ifEmpty { listOf(LocalDate.now().year) }
     }
     var year by remember(years) { mutableStateOf(years.first()) }
 
-    val stats = remember(offers, year) { YearStats.from(offers, year) }
+    val stats = remember(visible, year) { YearStats.from(visible, year) }
 
     Scaffold(
         topBar = {
@@ -81,14 +96,28 @@ fun StatsScreen(viewModel: OffersViewModel, onMenu: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    years.forEach { candidate ->
+                // Πολλά έτη: η σειρά κυλάει οριζόντια αντί να στριμωχτούν
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(years) { candidate ->
                         FilterChip(
                             selected = year == candidate,
                             onClick = { year = candidate },
                             label = { Text(candidate.toString(), maxLines = 1) },
                         )
                     }
+                }
+            }
+
+            if (importedCount > 0) {
+                item {
+                    ImportedToggle(
+                        included = includeImported,
+                        count = importedCount,
+                        onChange = {
+                            includeImported = it
+                            settings.statsIncludeImported = it
+                        },
+                    )
                 }
             }
 
@@ -123,6 +152,40 @@ fun StatsScreen(viewModel: OffersViewModel, onMenu: () -> Unit) {
                     footnote = "Οι τιμές των προσφορών είναι καθαρή αξία· ο ΦΠΑ δεν περιλαμβάνεται.",
                 )
             }
+        }
+    }
+}
+
+/**
+ * Οι εισαγόμενες προσφορές είναι παλιές επιμετρήσεις: δεν ξέρουμε σίγουρα ποιες
+ * έγιναν δουλειές, οπότε ο τζίρος τους είναι ένδειξη και όχι απολογισμός. Ο
+ * διακόπτης τις βγάζει από τους υπολογισμούς χωρίς να τις σβήσει από πουθενά.
+ */
+@Composable
+private fun ImportedToggle(included: Boolean, count: Int, onChange: (Boolean) -> Unit) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Ιστορικό από Excel", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (included) {
+                        "$count παλιές προσφορές μετράνε στους αριθμούς"
+                    } else {
+                        "$count παλιές προσφορές μένουν έξω"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = included, onCheckedChange = onChange)
         }
     }
 }
