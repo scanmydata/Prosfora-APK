@@ -39,8 +39,11 @@ class DocumentText(
             problems += "η εξαγωγή κειμένου δεν απέδωσε"
         }
 
-        if (bytes != null && ocr != null) {
-            runCatching { ocr.read(bytes, "παραστατικό") }
+        // Τοπικό αντίγραφο: το smart cast δεν περνάει μέσα σε lambda όταν η
+        // ιδιότητα ανήκει στην κλάση
+        val engine = ocr
+        if (bytes != null && engine != null) {
+            runCatching { engine.read(bytes, "παραστατικό") }
                 .onSuccess { return Result(it, Route.OCR_SPACE) }
                 .onFailure { problems += it.message.orEmpty() }
         }
