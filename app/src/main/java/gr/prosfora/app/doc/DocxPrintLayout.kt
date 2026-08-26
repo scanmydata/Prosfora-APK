@@ -59,7 +59,11 @@ object DocxPrintLayout {
 
         if (!section.contains("w:footerReference")) {
             val reference = """<w:footerReference w:type="default" r:id="$FOOTER_ID"/>"""
-            section = SECTION_OPEN.replaceFirst(section) { it.value + reference }
+            // Η αναφορά μπαίνει αμέσως μετά το άνοιγμα του sectPr: η σειρά των
+            // παιδιών μετράει στο OOXML και οι αναφορές προηγούνται όλων
+            val opening = SECTION_OPEN.find(section) ?: return docx
+            val after = opening.range.last + 1
+            section = section.substring(0, after) + reference + section.substring(after)
 
             val rels = entries[RELS]?.toString(Charsets.UTF_8) ?: return docx
             val types = entries[TYPES]?.toString(Charsets.UTF_8) ?: return docx
