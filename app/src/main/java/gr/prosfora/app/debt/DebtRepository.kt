@@ -4,10 +4,12 @@ import android.content.Context
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.ProsforaDatabase
+import gr.prosfora.app.google.GoogleSettings
 import kotlinx.coroutines.flow.Flow
 
 class DebtRepository(context: Context) {
 
+    private val settings = GoogleSettings(context)
     private val database = ProsforaDatabase.get(context)
     private val debts = database.debtDao()
     private val employees = database.employeeDao()
@@ -19,8 +21,12 @@ class DebtRepository(context: Context) {
     suspend fun saveEmployee(employee: EmployeeEntity) =
         employees.upsert(employee.copy(updatedAt = System.currentTimeMillis()))
 
-    suspend fun save(debt: DebtEntity) =
-        debts.upsert(debt.copy(updatedAt = System.currentTimeMillis()))
+    suspend fun save(debt: DebtEntity) = debts.upsert(
+        debt.copy(
+            updatedAt = System.currentTimeMillis(),
+            createdBy = debt.createdBy.ifBlank { settings.ownerEmail },
+        ),
+    )
 
     /**
      * Αποθηκεύει ό,τι διάβασε η σάρωση. Ό,τι υπάρχει ήδη κρατάει την κατάσταση
@@ -32,11 +38,12 @@ class DebtRepository(context: Context) {
         val merged = items.map { incoming ->
             val existing = debts.getById(incoming.id)
             if (existing == null) {
-                incoming.copy(updatedAt = now)
+                incoming.copy(updatedAt = now, createdBy = settings.ownerEmail)
             } else {
                 incoming.copy(
                     paid = existing.paid,
                     paidAt = existing.paidAt,
+                    createdBy = existing.createdBy.ifBlank { settings.ownerEmail },
                     createdAt = existing.createdAt,
                     updatedAt = now,
                     deleted = false,
@@ -81,6 +88,12 @@ class DebtRepository(context: Context) {
     }
 
     suspend fun delete(id: String) = debts.softDelete(id, System.currentTimeMillis())
+
+    /** Μαζική διαγραφή — για ό,τι διάλεξε ο χρήστης στη λίστα. */
+    suspend fun delete(ids: Collection<String>) {
+        val now = System.currentTimeMillis()
+        ids.forEach { debts.softDelete(it, now) }
+    }
 
     /**
      * Σβήνει ό,τι ήρθε από ένα συγκεκριμένο αρχείο.

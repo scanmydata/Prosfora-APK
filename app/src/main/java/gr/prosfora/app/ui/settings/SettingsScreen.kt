@@ -45,7 +45,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.rememberCoroutineScope
 import gr.prosfora.app.BuildConfig
+import gr.prosfora.app.debt.OcrSpaceClient
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SendMethod
 import gr.prosfora.app.settings.SMTP_PRESETS
@@ -54,6 +56,7 @@ import gr.prosfora.app.ui.MenuButton
 import gr.prosfora.app.ui.offers.EditBlue
 import gr.prosfora.app.ui.offers.EmailAmber
 import gr.prosfora.app.ui.offers.SentGreen
+import kotlinx.coroutines.launch
 
 /**
  * Οι ρυθμίσεις σε ενότητες που ανοιγοκλείνουν: μία οθόνη, επτά θέματα, ανοίγει
@@ -420,6 +423,9 @@ private fun DebtSettings(settings: GoogleSettings) {
     var askDate by remember { mutableStateOf(settings.askPaidDate) }
     var notify by remember { mutableStateOf(settings.notifyDriveChanges) }
     var key by remember { mutableStateOf(settings.ocrApiKey) }
+    var checking by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     Row(
         Modifier.fillMaxWidth(),
@@ -473,4 +479,24 @@ private fun DebtSettings(settings: GoogleSettings) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    // Ο έλεγχος στέλνει μια εικόνα ενός εικονοστοιχείου: μαθαίνεται αν το
+    // κλειδί περνάει, χωρίς να ανέβει πουθενά πραγματικό παραστατικό
+    TextButton(
+        enabled = !checking && key.isNotBlank(),
+        onClick = {
+            checking = true
+            scope.launch {
+                val outcome = runCatching { OcrSpaceClient(key.trim()).check() }
+                checking = false
+                Toast.makeText(
+                    context,
+                    outcome.fold(
+                        onSuccess = { "Το κλειδί δουλεύει" },
+                        onFailure = { "Απέτυχε: ${it.message}" },
+                    ),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        },
+    ) { Text(if (checking) "Έλεγχος…" else "Δοκιμή κλειδιού") }
 }

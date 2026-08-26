@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
@@ -38,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import gr.prosfora.app.data.db.DebtAgency
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.DebtKind
 import gr.prosfora.app.data.db.EmployeeEntity
@@ -51,43 +51,6 @@ import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
 import gr.prosfora.app.util.parseDecimal
 import kotlinx.coroutines.launch
-
-/**
- * Σε ποιον φάκελο πάει το αρχείο που θα διαλέξει ο χρήστης.
- *
- * Ρωτιέται πριν τον επιλογέα και όχι μετά, γιατί ο φάκελος καθορίζει και πού
- * ανεβαίνει το αντίγραφο — το *είδος* μέσα στον φορέα (ΙΚΑ ή ΤΕΚΑ, μισθοδοσία
- * ή δώρο) το βρίσκει μόνη της η ανάγνωση.
- */
-@Composable
-fun AgencyPicker(onDismiss: () -> Unit, onPick: (DebtAgency) -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Τι παραστατικό είναι;") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    "Διάλεξε φορέα — εκεί θα μπει το αντίγραφο στο Drive. " +
-                        "Δέχεται PDF ή φωτογραφία / στιγμιότυπο οθόνης.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                DebtAgency.entries.forEach { agency ->
-                    Text(
-                        agency.label,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onPick(agency) }
-                            .padding(vertical = 12.dp),
-                    )
-                    HorizontalDivider()
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Άκυρο") } },
-    )
-}
 
 /**
  * Χειροκίνητη καταχώρηση ή διόρθωση μιας οφειλής.
@@ -441,6 +404,11 @@ fun EmployeeIndexDialog(
                         }
                         totals[employee.id]?.takeIf { it > 0.0 }?.let {
                             Text(it.asMoney(), style = MaterialTheme.typography.bodyMedium)
+                        }
+                        // Η γραμμή ανοίγει και με απλό πάτημα· το εικονίδιο
+                        // είναι εκεί για να φαίνεται ότι γίνεται
+                        IconButton(onClick = { editing = employee }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Επεξεργασία")
                         }
                     }
                     HorizontalDivider()

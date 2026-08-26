@@ -8,8 +8,9 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,8 +26,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.UploadFile
@@ -72,6 +75,7 @@ import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.ui.MenuButton
+import gr.prosfora.app.ui.components.ConfirmDialog
 import gr.prosfora.app.ui.offers.DeleteRed
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
@@ -113,11 +117,9 @@ fun DebtsScreen(onMenu: () -> Unit) {
     var pending by remember { mutableStateOf<DebtImporter.Report?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var showPeople by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(emptySet<String>()) }
+    var confirmBulk by remember { mutableStateOf(false) }
     var payingFor by remember { mutableStateOf<DebtEntity?>(null) }
-    // Ο φορέας διαλέγεται πριν το αρχείο: αυτός ορίζει τον φάκελο του Drive
-    var pickingFor by remember { mutableStateOf<DebtAgency?>(null) }
-    var askAgency by remember { mutableStateOf(false) }
-
     val years = remember(debts) {
         debts.map { it.periodYear }.filter { it > 0 }.distinct().sortedDescending()
             .ifEmpty { listOf(LocalDate.now().year) }
@@ -129,9 +131,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
-        val target = pickingFor
-        pickingFor = null
-        if (uri == null || target == null) return@rememberLauncherForActivityResult
+        if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             busy = "Ανέβασμα και ανάγνωση…"
             val result = runCatching {
@@ -139,7 +139,9 @@ fun DebtsScreen(onMenu: () -> Unit) {
                     ?: error("Δεν διαβάστηκε το αρχείο")
                 val name = displayName(context, uri)
                 val drive = DriveClient(authorizer.accessToken())
-                DebtImporter(drive, settings).importFile(target, name, bytes)
+                // Δεν ρωτάμε τι είναι: το κείμενο του παραστατικού το λέει,
+                // και το αρχείο μετακινείται μόνο του στον σωστό φάκελο
+                DebtImporter(drive, settings).importFile(name, bytes)
             }
             busy = null
             result.onSuccess { found ->
@@ -200,28 +202,51 @@ fun DebtsScreen(onMenu: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Οφειλές") },
-                navigationIcon = { MenuButton(onMenu) },
-                actions = {
-                    IconButton(onClick = { showPeople = true }) {
-                        Icon(Icons.Default.Groups, contentDescription = "Εργαζόμενοι")
-                    }
-                    IconButton(onClick = { openFolder() }) {
-                        Icon(Icons.Default.FolderOpen, contentDescription = "Φάκελος στο Drive")
-                    }
-                    IconButton(onClick = { askAgency = true }) {
-                        Icon(Icons.Default.UploadFile, contentDescription = "Εισαγωγή αρχείου")
-                    }
-                    IconButton(onClick = { scanDrive() }) {
-                        Icon(Icons.Default.CloudSync, contentDescription = "Σάρωση Drive")
-                    }
-                },
-            )
+            if (selected.isEmpty()) {
+                TopAppBar(
+                    title = { Text("Οφειλές") },
+                    navigationIcon = { MenuButton(onMenu) },
+                    actions = {
+                        IconButton(onClick = { showPeople = true }) {
+                            Icon(Icons.Default.Groups, contentDescription = "Εργαζόμενοι")
+                        }
+                        IconButton(onClick = { openFolder() }) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = "Φάκελος στο Drive")
+                        }
+                        IconButton(onClick = { picker.launch(arrayOf("*/*")) }) {
+                            Icon(Icons.Default.UploadFile, contentDescription = "Εισαγωγή αρχείου")
+                        }
+                        IconButton(onClick = { scanDrive() }) {
+                            Icon(Icons.Default.CloudSync, contentDescription = "Σάρωση Drive")
+                        }
+                    },
+                )
+            } else {
+                // Μπάρα επιλογής: αντικαθιστά την κανονική όσο υπάρχουν επιλεγμένες
+                TopAppBar(
+                    title = { Text("${selected.size} επιλεγμένες") },
+                    navigationIcon = {
+                        IconButton(onClick = { selected = emptySet() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Ακύρωση επιλογής")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { confirmBulk = true }) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Διαγραφή",
+                                tint = DeleteRed,
+                            )
+                        }
+                    },
+                )
+            }
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { editing = DebtEntity() }) {
-                Icon(Icons.Default.Add, contentDescription = "Νέα οφειλή")
+            if (selected.isEmpty()) {
+                FloatingActionButton(onClick = { editing = DebtEntity() }) {
+                    Icon(Icons.Default.Add, contentDescription = "Νέα οφειλή")
+                }
             }
         },
     ) { padding ->
@@ -317,8 +342,17 @@ fun DebtsScreen(onMenu: () -> Unit) {
                     DebtRow(
                         debt = debt,
                         title = titleFor(debt, aliases),
+                        selected = debt.id in selected,
+                        selecting = selected.isNotEmpty(),
                         onToggle = { togglePaid(debt) },
                         onOpen = { editing = debt },
+                        onSelect = {
+                            selected = if (debt.id in selected) {
+                                selected - debt.id
+                            } else {
+                                selected + debt.id
+                            }
+                        },
                         onCopy = { copyToClipboard(context, it, debt.title) },
                     )
                 }
@@ -326,15 +360,18 @@ fun DebtsScreen(onMenu: () -> Unit) {
         }
     }
 
-    if (askAgency) {
-        AgencyPicker(
-            onDismiss = { askAgency = false },
-            onPick = { chosen ->
-                askAgency = false
-                pickingFor = chosen
-                // Και PDF και στιγμιότυπα οθόνης· ο έλεγχος γίνεται στα bytes
-                picker.launch(arrayOf("*/*"))
+    if (confirmBulk) {
+        val victims = selected
+        ConfirmDialog(
+            title = "Διαγραφή ${victims.size} οφειλών",
+            message = "Θα σβηστούν από τη βάση και από τις άλλες συσκευές.",
+            confirmLabel = "Διαγραφή",
+            onConfirm = {
+                confirmBulk = false
+                selected = emptySet()
+                scope.launch { repository.delete(victims) }
             },
+            onDismiss = { confirmBulk = false },
         )
     }
 
@@ -479,17 +516,32 @@ private fun PeriodHeader(label: String, total: Double) {
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun DebtRow(
     debt: DebtEntity,
     title: String,
+    selected: Boolean,
+    selecting: Boolean,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
+    onSelect: () -> Unit,
     onCopy: (String) -> Unit,
 ) {
     val today = LocalDate.now()
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surface),
+        // Παρατεταμένο πάτημα ανοίγει την επιλογή· από εκεί και πέρα το απλό
+        // πάτημα επιλέγει αντί να ανοίγει τη φόρμα
+        modifier = Modifier.fillMaxWidth().combinedClickable(
+            onClick = { if (selecting) onSelect() else onOpen() },
+            onLongClick = onSelect,
+        ),
+        colors = CardDefaults.cardColors(
+            if (selected) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),

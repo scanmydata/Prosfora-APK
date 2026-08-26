@@ -12,7 +12,9 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import gr.prosfora.app.MainActivity
 import gr.prosfora.app.R
+import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.google.DriveWatch
+import gr.prosfora.app.util.asMoney
 
 /**
  * Ειδοποίηση στο κινητό όταν κάτι αλλάζει στον κοινόχρηστο φάκελο του Drive.
@@ -28,6 +30,7 @@ object DriveNotifier {
 
     private const val CHANNEL = "drive_changes"
     private const val ID = 4711
+    private const val DEBTS_ID = 4712
 
     fun notify(context: Context, changes: List<DriveWatch.Change>) {
         if (changes.isEmpty() || !allowed(context)) return
@@ -72,6 +75,48 @@ object DriveNotifier {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
 
         runCatching { NotificationManagerCompat.from(context).notify(ID, builder.build()) }
+    }
+
+    /**
+     * Οφειλές που καταχώρησε άλλος στην κοινόχρηστη βάση.
+     *
+     * Χωριστή ειδοποίηση από εκείνη των αρχείων: εδώ δεν υπάρχει παραστατικό,
+     * μόνο γραμμές που εμφανίστηκαν στη βάση από άλλη συσκευή.
+     */
+    fun notifyDebts(context: Context, debts: List<DebtEntity>) {
+        if (debts.isEmpty() || !allowed(context)) return
+        ensureChannel(context)
+
+        val total = debts.sumOf { it.amount }
+        val lines = debts.map { debt ->
+            "${debt.title} — ${debt.amount.asMoney()} · ${debt.createdBy}"
+        }
+
+        val open = PendingIntent.getActivity(
+            context,
+            1,
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(
+                if (debts.size == 1) {
+                    "Νέα οφειλή στην κοινόχρηστη βάση"
+                } else {
+                    "${debts.size} νέες οφειλές · ${total.asMoney()}"
+                },
+            )
+            .setContentText(lines.first())
+            .setStyle(NotificationCompat.InboxStyle().also { style ->
+                lines.take(6).forEach(style::addLine)
+            })
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+
+        runCatching { NotificationManagerCompat.from(context).notify(DEBTS_ID, builder.build()) }
     }
 
     /** Χωρίς άδεια (Android 13+) η ειδοποίηση απλώς δεν βγαίνει — δεν σκάει. */

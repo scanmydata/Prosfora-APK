@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
  * Δύο δρόμοι, ίδιο τέλος:
  *
  *  * ο χρήστης διαλέγει PDF ή στιγμιότυπο οθόνης από τη συσκευή → ανεβαίνει
- *    **αντίγραφο** στον υποφάκελο του φορέα και μετά διαβάζεται
+ *    **αντίγραφο**, διαβάζεται, και μπαίνει στον φάκελο του φορέα που βρέθηκε
  *  * ο χρήστης έχει ήδη ρίξει αρχεία στους φακέλους → η σάρωση τα βρίσκει μόνη της
  *
  * Το κείμενο βγαίνει με σειρά προτεραιότητας — εξαγωγή από το αρχείο, μετά
@@ -75,24 +75,26 @@ class DebtImporter(
     }
 
     /**
-     * Ανεβάζει αντίγραφο του αρχείου και το διαβάζει.
+     * Ανεβάζει αντίγραφο του αρχείου, το διαβάζει, και το αρχειοθετεί μόνο του.
      *
-     * Ο φορέας δίνεται από τον χρήστη γιατί καθορίζει τον φάκελο· το *είδος*
-     * μέσα στον φορέα (ΙΚΑ ή ΤΕΚΑ, μισθοδοσία ή δώρο) το βρίσκει μόνο του το
-     * κείμενο.
+     * Δεν ρωτάει τι είναι: το ίδιο το κείμενο λέει και τον φορέα και το είδος.
+     * Το αρχείο ανεβαίνει πρώτα στη ρίζα των «Οφειλών» και μετακινείται στον
+     * υποφάκελο που προκύπτει· αν δεν αναγνωριστεί τίποτα, μένει στη ρίζα, όπου
+     * ο χρήστης θα το βρει για να το χειριστεί με το χέρι.
      */
-    suspend fun importFile(
-        agency: DebtAgency,
-        fileName: String,
-        bytes: ByteArray,
-    ): Found = withContext(Dispatchers.IO) {
+    suspend fun importFile(fileName: String, bytes: ByteArray): Found = withContext(Dispatchers.IO) {
         val kind = DocumentBytes.kindOf(bytes)
             ?: error("Δέχεται PDF ή εικόνα (PNG / JPG)")
-        val folder = workspace.debtsFolder(agency)
-        val id = drive.upload(fileName, bytes, kind.mime, parentId = folder)
+        val inbox = workspace.debtsFolder()
+        val id = drive.upload(fileName, bytes, kind.mime, parentId = inbox)
         // Καταγράφεται αμέσως ως δικό μας, ώστε να μη θεωρηθεί «ξένο» στη σάρωση
         settings.rememberDriveFiles(listOf(id))
-        read(fileName, id, bytes)
+
+        val found = read(fileName, id, bytes)
+        found.debts.firstOrNull()?.agency?.let { agency ->
+            runCatching { drive.moveToFolder(id, workspace.debtsFolder(agency)) }
+        }
+        found
     }
 
     /**
@@ -109,9 +111,16 @@ class DebtImporter(
         var skipped = 0
         val found = mutableListOf<Found>()
 
-        DebtAgency.entries.forEach { agency ->
-            val folder = runCatching { workspace.debtsFolder(agency) }.getOrNull()
-                ?: return@forEach
+        // Και η ρίζα: εκεί μένουν όσα δεν αναγνωρίστηκαν, κι εκεί ρίχνει
+        // συνήθως ο χρήστης ό,τι κατεβάζει από τον υπολογιστή
+        val folders = buildList {
+            runCatching { workspace.debtsFolder() }.getOrNull()?.let { add(it) }
+            DebtAgency.entries.forEach { agency ->
+                runCatching { workspace.debtsFolder(agency) }.getOrNull()?.let { add(it) }
+            }
+        }
+
+        folders.forEach { folder ->
             val files = runCatching { workspace.documentsIn(folder) }.getOrDefault(emptyList())
             files.forEach { file ->
                 if (file.id in alreadyImported) {

@@ -11,6 +11,7 @@ import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.data.db.SpaceEntity
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
+import gr.prosfora.app.notify.DriveNotifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -101,6 +102,7 @@ class SheetSync(
                 pulledDebts++
             }
         }
+        announceForeignDebts(localDebts, mergedDebts)
 
         sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))
         sheets.replaceRows(spreadsheetId, TAB_SPACES, spaceRows(mergedSpaces))
@@ -123,6 +125,25 @@ class SheetSync(
             pushedRows = mergedOffers.size + mergedSpaces.size +
                 mergedNotes.size + mergedDebts.size + mergedEmployees.size,
         )
+    }
+
+    /**
+     * Ειδοποιεί για οφειλές που καταχώρησε **άλλος** στην κοινόχρηστη βάση.
+     *
+     * Δεν χρειάζεται παραστατικό: μια οφειλή γραμμένη με το χέρι από συνεργάτη
+     * φτάνει εδώ μόνο μέσω του Sheet, οπότε αυτό είναι το σημείο που μαθαίνεται.
+     * Ό,τι έγραψε ο ίδιος λογαριασμός δεν ειδοποιεί τη δική του συσκευή.
+     */
+    private fun announceForeignDebts(local: List<DebtEntity>, merged: List<DebtEntity>) {
+        val mine = settings.ownerEmail.trim().lowercase()
+        val known = local.map { it.id }.toSet()
+        val fresh = merged.filter { debt ->
+            !debt.deleted &&
+                debt.id !in known &&
+                debt.createdBy.isNotBlank() &&
+                debt.createdBy.trim().lowercase() != mine
+        }
+        if (fresh.isNotEmpty()) DriveNotifier.notifyDebts(context, fresh)
     }
 
     /**
@@ -226,6 +247,7 @@ class SheetSync(
                 paid = row[10] == "1",
                 paidAt = row[11].toLongOrNull(),
                 paidDay = row[17].toLongOrNull(),
+                createdBy = row[18],
                 source = row[12],
                 driveFileId = row[13],
                 createdAt = row[14].toLongOrNull() ?: 0L,
@@ -339,6 +361,7 @@ class SheetSync(
             it.updatedAt.toString(),
             if (it.deleted) "1" else "0",
             it.paidDay?.toString().orEmpty(),
+            it.createdBy,
         )
     }
 
@@ -400,6 +423,7 @@ class SheetSync(
             "Ταυτότητα / RF", "Περιγραφή", "Εργαζόμενος", "Κωδικός",
             "Πληρώθηκε", "Ημ. πληρωμής", "Πηγή", "Αρχείο Drive",
             "Δημιουργήθηκε", "Ενημερώθηκε", "Διαγραμμένο", "Ημ. εξόφλησης",
+            "Καταχωρήθηκε από",
         )
         private val PEOPLE_HEADER = listOf(
             "ID_Εργαζόμενου", "Όνομα", "Ψευδώνυμο", "Κωδικός",
