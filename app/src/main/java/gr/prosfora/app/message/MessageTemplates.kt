@@ -14,6 +14,8 @@ import gr.prosfora.app.util.strippedKind
 enum class MessageField(val token: String, val label: String) {
     GREETING("{χαιρετισμός}", "Χαιρετισμός"),
     NAME("{ονοματεπώνυμο}", "Ονοματεπώνυμο"),
+    FIRST_NAME("{όνομα}", "Όνομα"),
+    LAST_NAME("{επώνυμο}", "Επώνυμο"),
     ADDRESS("{διεύθυνση}", "Οδός / Περιοχή"),
     KIND("{είδος}", "Είδος"),
     DATE("{ημερομηνία}", "Ημερομηνία"),
@@ -23,18 +25,17 @@ enum class MessageField(val token: String, val label: String) {
     REVIEW_LINK("{αξιολόγηση}", "Σύνδεσμος αξιολόγησης"),
     ;
 
-    fun valueFor(details: OfferWithDetails, reviewLink: String = ""): String {
+    fun valueFor(
+        details: OfferWithDetails,
+        reviewLink: String = "",
+        greeting: GreetingOptions = GreetingOptions(),
+    ): String {
         val offer = details.offer
         return when (this) {
-            GREETING -> {
-                val word = timeOfDayGreeting()
-                if (offer.customerName.isNotBlank()) {
-                    "$word ${offer.customerName.trim()},"
-                } else {
-                    "$word,"
-                }
-            }
-            NAME -> offer.customerName
+            GREETING -> Greeting.forOffer(details, greeting)
+            NAME -> details.fullName
+            FIRST_NAME -> offer.customerName
+            LAST_NAME -> offer.customerLastName
             ADDRESS -> offer.address
             KIND -> offer.kind.strippedKind().ifBlank { "κατοικία" }
             DATE -> offer.dateEpochDay.asOfferDate()
@@ -47,13 +48,6 @@ enum class MessageField(val token: String, val label: String) {
     }
 }
 
-/**
- * «Καλημέρα» ως τις 12:00, «Καλησπέρα» μετά — με βάση την ώρα που πατιέται η
- * αποστολή, όχι την ώρα που γράφτηκε η προσφορά.
- */
-internal fun timeOfDayGreeting(now: java.time.LocalTime = java.time.LocalTime.now()): String =
-    if (now.hour < 12) "Καλημέρα" else "Καλησπέρα"
-
 object MessageTemplates {
 
     /** Αντικαθιστά όλα τα `{πεδία}` με τις τιμές της συγκεκριμένης προσφοράς. */
@@ -61,10 +55,11 @@ object MessageTemplates {
         template: String,
         details: OfferWithDetails,
         reviewLink: String = "",
+        greeting: GreetingOptions = GreetingOptions(),
     ): String {
         var text = template
         MessageField.entries.forEach { field ->
-            text = text.replace(field.token, field.valueFor(details, reviewLink))
+            text = text.replace(field.token, field.valueFor(details, reviewLink, greeting))
         }
         return text.trim()
     }

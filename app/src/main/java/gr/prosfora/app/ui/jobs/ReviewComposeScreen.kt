@@ -89,7 +89,12 @@ fun ReviewComposeScreen(
     }
     var text by remember(offerId) {
         mutableStateOf(
-            MessageTemplates.render(settings.reviewTemplate, details, settings.reviewLink),
+            MessageTemplates.render(
+                settings.reviewTemplate,
+                details,
+                settings.reviewLink,
+                settings.greetingOptions,
+            ),
         )
     }
     var recipient by remember(offerId, channel) {

@@ -65,6 +65,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import gr.prosfora.app.data.db.Gender
 import gr.prosfora.app.data.db.OfferWithDetails
 import gr.prosfora.app.data.db.SpaceEntity
 import gr.prosfora.app.notify.Channel
@@ -190,6 +191,7 @@ private fun SendMenu(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HeaderCard(details: OfferWithDetails, viewModel: OffersViewModel) {
     val offer = details.offer
@@ -226,9 +228,27 @@ private fun HeaderCard(details: OfferWithDetails, viewModel: OffersViewModel) {
             StableTextField(
                 value = offer.customerName,
                 onValueChange = { viewModel.updateOffer(offer.copy(customerName = it)) },
-                label = "Ονοματεπώνυμο",
+                label = "Όνομα",
                 modifier = Modifier.fillMaxWidth(),
             )
+            StableTextField(
+                value = offer.customerLastName,
+                onValueChange = { viewModel.updateOffer(offer.copy(customerLastName = it)) },
+                label = "Επώνυμο",
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            // Χρειάζεται μόνο για το «κύριε»/«κυρία» όταν ο χαιρετισμός γίνεται
+            // με επώνυμο· γι' αυτό και επιτρέπεται να μείνει άγνωστο
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Gender.entries.forEach { option ->
+                    FilterChip(
+                        selected = offer.customerGender == option,
+                        onClick = { viewModel.updateOffer(offer.copy(customerGender = option)) },
+                        label = { Text(option.label) },
+                    )
+                }
+            }
             StableTextField(
                 value = offer.email,
                 onValueChange = { viewModel.updateOffer(offer.copy(email = it)) },

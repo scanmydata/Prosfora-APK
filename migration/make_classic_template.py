@@ -19,6 +19,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
@@ -105,6 +106,45 @@ def add_terms(doc):
     insert_before(anchor, doc, lambda d: para(d, after=6))
 
 
+def centre_everything(table):
+    """Κεντράρει κάθε παράγραφο του πίνακα — εικόνες και λεζάντες μαζί."""
+    for row in table.rows:
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
+def fix_alignment(doc):
+    """Δύο στοιχίσεις που έβγαιναν στραβές στο τυπωμένο PDF.
+
+    Η ημερομηνία ήταν δεξιά σε όλο το πλάτος της σελίδας, ενώ ο τίτλος από πάνω
+    της είναι κεντραρισμένος — έμοιαζε ξεκρέμαστη. Και στα δείγματα εργασιών οι
+    εικόνες κάθονταν αριστερά μέσα στα κελιά τους, με μία λεζάντα να μη
+    συμφωνεί με τις άλλες δύο.
+    """
+    for p in doc.paragraphs:
+        if "<<[Ημερομηνία]>>" in p.text:
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            break
+
+    samples = find_paragraph(doc, "ΔΕΙΓΜΑΤΑ ΕΡΓΑΣΙΩΝ")
+    if samples is None:
+        return
+    samples.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Ο πίνακας των δειγμάτων είναι ο πρώτος μετά την επικεφαλίδα τους
+    node = samples._p.getnext()
+    while node is not None and node.tag != qn("w:tbl"):
+        node = node.getnext()
+    if node is None:
+        return
+    from docx.table import Table
+
+    table = Table(node, doc)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    centre_everything(table)
+
+
 def build(source):
     doc = Document(source)
 
@@ -120,6 +160,7 @@ def build(source):
 
     furnish(section)
     add_terms(doc)
+    fix_alignment(doc)
 
     doc.save(OUT)
     return OUT

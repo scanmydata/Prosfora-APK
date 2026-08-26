@@ -169,6 +169,9 @@ class SheetSync(
                 validUntilDay = row[17].toLongOrNull(),
                 paymentTerms = row[18],
                 source = row[19],
+                customerLastName = row[20],
+                customerGender = runCatching { gr.prosfora.app.data.db.Gender.valueOf(row[21]) }
+                    .getOrDefault(gr.prosfora.app.data.db.Gender.UNKNOWN),
             )
         }
 
@@ -235,6 +238,8 @@ class SheetSync(
             it.validUntilDay?.toString().orEmpty(),
             it.paymentTerms,
             it.source,
+            it.customerLastName,
+            it.customerGender.name,
         )
     }
 
@@ -273,7 +278,7 @@ class SheetSync(
             "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο",
             "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης",
             "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση",
-            "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή",
+            "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή", "Επώνυμο", "Φύλο",
         )
         private val SPACE_HEADER = listOf(
             "ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)",

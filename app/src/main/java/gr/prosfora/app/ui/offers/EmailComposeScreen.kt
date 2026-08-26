@@ -85,10 +85,10 @@ fun EmailComposeScreen(
 
     var to by remember(current.offer.id) { mutableStateOf(current.offer.email) }
     var subject by remember(current.offer.id) {
-        mutableStateOf(OfferMail.subject(googleSettings.emailSubjectTemplate, current))
+        mutableStateOf(OfferMail.subject(googleSettings.emailSubjectTemplate, current, googleSettings.greetingOptions))
     }
     var body by remember(current.offer.id) {
-        mutableStateOf(OfferMail.body(googleSettings.emailBodyTemplate, current, smtp))
+        mutableStateOf(OfferMail.body(googleSettings.emailBodyTemplate, current, smtp, googleSettings.greetingOptions))
     }
 
     var pdf by remember(current.offer.id) {

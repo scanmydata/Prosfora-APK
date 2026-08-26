@@ -24,8 +24,12 @@ data class OfferEntity(
     /** Είδος (π.χ. "Χρωματισμός διαμερίσματος") */
     val kind: String = "",
     val email: String = "",
-    /** Ονοματεπώνυμο της επαφής — μπαίνει στην προσοφώνηση της ειδοποίησης. */
+    /** Το μικρό όνομα της επαφής — μπαίνει στην προσφώνηση της ειδοποίησης. */
     val customerName: String = "",
+    /** Το επώνυμο, ξεχωριστά: ο χαιρετισμός μπορεί να θέλει μόνο αυτό. */
+    val customerLastName: String = "",
+    /** Για το «κύριε»/«κυρία» μπροστά από το επώνυμο. */
+    val customerGender: Gender = Gender.UNKNOWN,
     /** Κινητό για ειδοποίηση με SMS ή Viber μετά την αποστολή του email. */
     val customerPhone: String = "",
     val status: OfferStatus = OfferStatus.CREATED,
@@ -66,6 +70,13 @@ data class OfferEntity(
      */
     val deleted: Boolean = false,
 )
+
+/** Το φύλο της επαφής — χρειάζεται μόνο για την προσφώνηση με επώνυμο. */
+enum class Gender(val label: String, val title: String) {
+    UNKNOWN("Δεν ξέρω", ""),
+    MALE("Άνδρας", "κύριε"),
+    FEMALE("Γυναίκα", "κυρία"),
+}
 
 enum class JobStage(val label: String) {
     NOT_A_JOB("—"),
@@ -197,6 +208,12 @@ data class OfferWithDetails(
     /** Οι δόσεις του τρόπου πληρωμής, μία ανά γραμμή, χωρίς κενές. */
     val paymentLines: List<String>
         get() = offer.paymentTerms.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+    /** Ονοματεπώνυμο, όπως γράφεται σε λίστα ή σε επικεφαλίδα. */
+    val fullName: String
+        get() = listOf(offer.customerName, offer.customerLastName)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
 
     /** Ήρθε από εισαγωγή αρχείου και όχι από την εφαρμογή. */
     val imported: Boolean get() = offer.source.isNotBlank()

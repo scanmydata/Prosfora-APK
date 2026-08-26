@@ -1,6 +1,8 @@
 package gr.prosfora.app.google
 
 import android.content.Context
+import gr.prosfora.app.message.GreetingOptions
+import gr.prosfora.app.message.GreetingStyle
 import gr.prosfora.app.message.MessageTemplates
 import org.json.JSONObject
 
@@ -139,6 +141,22 @@ class GoogleSettings(context: Context) {
         get() = prefs.getBoolean(KEY_CONNECTED, false)
         set(value) = prefs.edit().putBoolean(KEY_CONNECTED, value).apply()
 
+    /**
+     * Πώς προσφωνείται ο πελάτης. Με επώνυμο μπαίνει και «κύριε»/«κυρία», εφόσον
+     * έχει δηλωθεί φύλο και το θέλει ο χρήστης.
+     */
+    var greetingOptions: GreetingOptions
+        get() = GreetingOptions(
+            style = runCatching {
+                GreetingStyle.valueOf(prefs.getString(KEY_GREETING_STYLE, null) ?: "")
+            }.getOrDefault(GreetingStyle.FIRST_NAME),
+            useTitle = prefs.getBoolean(KEY_GREETING_TITLE, true),
+        )
+        set(value) = prefs.edit()
+            .putString(KEY_GREETING_STYLE, value.style.name)
+            .putBoolean(KEY_GREETING_TITLE, value.useTitle)
+            .apply()
+
     /** Ξεχνάει τους φακέλους PDF ανά έτος — τους ξαναβρίσκει στον νέο χώρο εργασίας. */
     fun clearPdfFolders() = prefs.edit().remove(KEY_PDF_FOLDER).remove(KEY_PDF_YEARS).apply()
 
@@ -194,6 +212,8 @@ class GoogleSettings(context: Context) {
         private const val KEY_BUILTIN = "builtin_template"
         private const val KEY_OWNER_EMAIL = "owner_email"
         private const val KEY_CONNECTED = "google_connected"
+        private const val KEY_GREETING_STYLE = "greeting_style"
+        private const val KEY_GREETING_TITLE = "greeting_title"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
 

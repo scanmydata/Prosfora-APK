@@ -84,6 +84,7 @@ fun MessageComposeScreen(
                     Channel.VIBER -> settings.viberTemplate
                 },
                 current,
+                greeting = settings.greetingOptions,
             ),
         )
     }

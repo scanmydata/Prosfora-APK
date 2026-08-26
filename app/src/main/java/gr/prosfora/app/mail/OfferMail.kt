@@ -1,6 +1,7 @@
 package gr.prosfora.app.mail
 
 import gr.prosfora.app.data.db.OfferWithDetails
+import gr.prosfora.app.message.GreetingOptions
 import gr.prosfora.app.message.MessageTemplates
 import gr.prosfora.app.settings.SmtpSettings
 import java.io.File
@@ -15,12 +16,20 @@ import java.io.File
  */
 object OfferMail {
 
-    fun subject(template: String, details: OfferWithDetails): String =
-        MessageTemplates.render(template, details)
+    fun subject(
+        template: String,
+        details: OfferWithDetails,
+        greeting: GreetingOptions = GreetingOptions(),
+    ): String = MessageTemplates.render(template, details, greeting = greeting)
 
-    fun body(template: String, details: OfferWithDetails, settings: SmtpSettings): String =
+    fun body(
+        template: String,
+        details: OfferWithDetails,
+        settings: SmtpSettings,
+        greeting: GreetingOptions = GreetingOptions(),
+    ): String =
         buildString {
-            append(MessageTemplates.render(template, details).trimEnd())
+            append(MessageTemplates.render(template, details, greeting = greeting).trimEnd())
             append("\n\n\n")
             append(settings.signature)
         }

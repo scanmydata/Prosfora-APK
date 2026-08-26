@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.delay
@@ -28,6 +29,11 @@ import kotlinx.coroutines.delay
  * είναι η πηγή αλήθειας όσο πληκτρολογεί ο χρήστης. Η εγγραφή στη βάση γίνεται
  * με καθυστέρηση, και η εξωτερική τιμή ξαναδιαβάζεται μόνο όταν αλλάξει από
  * αλλού (π.χ. συγχρονισμός) και διαφέρει από αυτό που βλέπει ο χρήστης.
+ *
+ * Όσο είναι επιλεγμένο, το πεδίο **ανοίγει σε πολλές γραμμές** ώστε να φαίνεται
+ * όλο το περιεχόμενο. Σε μία γραμμή, ένα μακρύ κείμενο κρύβεται δεξιά και η
+ * επιλογή με το δάχτυλο δεν το κυλάει αξιόπιστα· έτσι δεν υπάρχει τίποτα
+ * κρυμμένο τη στιγμή που το διορθώνεις.
  */
 @Composable
 fun StableTextField(
@@ -40,9 +46,14 @@ fun StableTextField(
     minLines: Int = 1,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     debounceMillis: Long = 350L,
+    /** Πόσες γραμμές ανοίγει όσο γράφεις. 1 = μένει όπως ήταν. */
+    expandedLines: Int = 4,
 ) {
     var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    var focused by remember { mutableStateOf(false) }
     val latestOnChange by rememberUpdatedState(onValueChange)
+
+    val open = focused && singleLine && expandedLines > 1
 
     // Εξωτερική αλλαγή (συγχρονισμός, επαναφορά): υιοθετείται μόνο αν είναι
     // πράγματι διαφορετική, αλλιώς θα πατούσε πάνω σε ό,τι πληκτρολογείται.
@@ -64,9 +75,15 @@ fun StableTextField(
         onValueChange = { field = it },
         label = { Text(label) },
         placeholder = placeholder?.let { { Text(it) } },
-        singleLine = singleLine,
+        singleLine = singleLine && !open,
         minLines = minLines,
+        // Το Compose απαιτεί maxLines == 1 όσο το πεδίο είναι σε μία γραμμή
+        maxLines = when {
+            open -> expandedLines
+            singleLine -> 1
+            else -> Int.MAX_VALUE
+        },
         keyboardOptions = keyboardOptions,
-        modifier = modifier,
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
     )
 }

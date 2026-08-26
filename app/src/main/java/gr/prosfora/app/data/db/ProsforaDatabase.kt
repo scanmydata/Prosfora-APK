@@ -20,11 +20,18 @@ class Converters {
     @TypeConverter
     fun stringToStatus(value: String): OfferStatus =
         runCatching { OfferStatus.valueOf(value) }.getOrDefault(OfferStatus.CREATED)
+
+    @TypeConverter
+    fun genderToString(gender: Gender): String = gender.name
+
+    @TypeConverter
+    fun stringToGender(value: String): Gender =
+        runCatching { Gender.valueOf(value) }.getOrDefault(Gender.UNKNOWN)
 }
 
 @Database(
     entities = [OfferEntity::class, SpaceEntity::class, NoteEntity::class, NotePresetEntity::class],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -85,6 +92,39 @@ abstract class ProsforaDatabase : RoomDatabase() {
         }
 
         /**
+         * v7: όνομα και επώνυμο χωριστά, με φύλο για την προσφώνηση.
+         *
+         * Ό,τι υπήρχε ήταν ένα ενιαίο «Ονοματεπώνυμο». Σπάει στο πρώτο κενό:
+         * στα ελληνικά γράφεται σχεδόν πάντα «Μαρία Παπαδοπούλου», οπότε το
+         * πρώτο κομμάτι είναι το μικρό όνομα και τα υπόλοιπα το επώνυμο.
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                connection.execSQL(
+                    "ALTER TABLE offers ADD COLUMN customerLastName TEXT NOT NULL DEFAULT ''",
+                )
+                connection.execSQL(
+                    "ALTER TABLE offers ADD COLUMN customerGender TEXT NOT NULL DEFAULT 'UNKNOWN'",
+                )
+                connection.execSQL(
+                    """
+                    UPDATE offers SET
+                        customerLastName = CASE
+                            WHEN instr(customerName, ' ') > 0
+                            THEN substr(customerName, instr(customerName, ' ') + 1)
+                            ELSE ''
+                        END,
+                        customerName = CASE
+                            WHEN instr(customerName, ' ') > 0
+                            THEN substr(customerName, 1, instr(customerName, ' ') - 1)
+                            ELSE customerName
+                        END
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        /**
          * Οι σημειώσεις που επαναλαμβάνονται σε κάθε προσφορά — από το δείγμα PDF
          * και το EnumList "Παρατηρήσεις Έργου" του AppSheet.
          */
@@ -110,7 +150,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
             )
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-                    MIGRATION_4_5, MIGRATION_5_6,
+                    MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                 )
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {
