@@ -27,11 +27,21 @@ class Converters {
     @TypeConverter
     fun stringToGender(value: String): Gender =
         runCatching { Gender.valueOf(value) }.getOrDefault(Gender.UNKNOWN)
+
+    @TypeConverter
+    fun debtKindToString(kind: DebtKind): String = kind.name
+
+    @TypeConverter
+    fun stringToDebtKind(value: String): DebtKind =
+        runCatching { DebtKind.valueOf(value) }.getOrDefault(DebtKind.AADE)
 }
 
 @Database(
-    entities = [OfferEntity::class, SpaceEntity::class, NoteEntity::class, NotePresetEntity::class],
-    version = 7,
+    entities = [
+        OfferEntity::class, SpaceEntity::class, NoteEntity::class,
+        NotePresetEntity::class, DebtEntity::class,
+    ],
+    version = 8,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -41,6 +51,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
     abstract fun spaceDao(): SpaceDao
     abstract fun noteDao(): NoteDao
     abstract fun notePresetDao(): NotePresetDao
+    abstract fun debtDao(): DebtDao
 
     companion object {
 
@@ -125,6 +136,48 @@ abstract class ProsforaDatabase : RoomDatabase() {
         }
 
         /**
+         * v8: ΦΠΑ στην προσφορά, και ο πίνακας των οφειλών.
+         *
+         * Ο πίνακας γράφεται με το χέρι και όχι με `fallbackToDestructiveMigration`:
+         * μια αποτυχία εδώ πρέπει να ουρλιάξει, όχι να σβήσει τη βάση.
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                connection.execSQL(
+                    "ALTER TABLE offers ADD COLUMN vatIncluded INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS debts (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        kind TEXT NOT NULL,
+                        periodMonth INTEGER NOT NULL,
+                        periodYear INTEGER NOT NULL,
+                        dueDay INTEGER,
+                        amount REAL NOT NULL,
+                        reference TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        personName TEXT NOT NULL,
+                        personCode TEXT NOT NULL,
+                        paid INTEGER NOT NULL,
+                        paidAt INTEGER,
+                        source TEXT NOT NULL,
+                        driveFileId TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        deleted INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                connection.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_debts_periodYear_periodMonth " +
+                        "ON debts (periodYear, periodMonth)",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS index_debts_kind ON debts (kind)")
+            }
+        }
+
+        /**
          * Οι σημειώσεις που επαναλαμβάνονται σε κάθε προσφορά — από το δείγμα PDF
          * και το EnumList "Παρατηρήσεις Έργου" του AppSheet.
          */
@@ -150,7 +203,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
             )
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-                    MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                    MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
                 )
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {

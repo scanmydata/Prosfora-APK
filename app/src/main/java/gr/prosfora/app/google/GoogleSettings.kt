@@ -113,6 +113,24 @@ class GoogleSettings(context: Context) {
         prefs.edit().putString(KEY_PDF_YEARS, json.toString()).apply()
     }
 
+    /** Ο φάκελος «Οφειλές» και οι υποφάκελοί του ανά φορέα. */
+    var debtsFolderId: String?
+        get() = prefs.getString(KEY_DEBTS_FOLDER, null)
+        set(value) = prefs.edit().putString(KEY_DEBTS_FOLDER, value).apply()
+
+    fun debtsFolderFor(agency: String): String? =
+        runCatching { JSONObject(prefs.getString(KEY_DEBTS_SUBFOLDERS, "{}").orEmpty()) }
+            .getOrNull()
+            ?.optString(agency)
+            ?.takeIf { it.isNotBlank() }
+
+    fun rememberDebtsFolder(agency: String, folderId: String) {
+        val json = runCatching { JSONObject(prefs.getString(KEY_DEBTS_SUBFOLDERS, "{}").orEmpty()) }
+            .getOrDefault(JSONObject())
+        json.put(agency, folderId)
+        prefs.edit().putString(KEY_DEBTS_SUBFOLDERS, json.toString()).apply()
+    }
+
     /**
      * Αν τα στατιστικά μετράνε και τις προσφορές που ήρθαν από εισαγωγή αρχείου.
      * Είναι παλιές επιμετρήσεις που δεν ξέρουμε σίγουρα αν έγιναν δουλειές.
@@ -158,7 +176,12 @@ class GoogleSettings(context: Context) {
             .apply()
 
     /** Ξεχνάει τους φακέλους PDF ανά έτος — τους ξαναβρίσκει στον νέο χώρο εργασίας. */
-    fun clearPdfFolders() = prefs.edit().remove(KEY_PDF_FOLDER).remove(KEY_PDF_YEARS).apply()
+    fun clearPdfFolders() = prefs.edit()
+        .remove(KEY_PDF_FOLDER)
+        .remove(KEY_PDF_YEARS)
+        .remove(KEY_DEBTS_FOLDER)
+        .remove(KEY_DEBTS_SUBFOLDERS)
+        .apply()
 
     /** Μέρες μετά την ολοκλήρωση για να ζητηθεί αξιολόγηση. */
     var reviewDelayDays: Int
@@ -214,6 +237,8 @@ class GoogleSettings(context: Context) {
         private const val KEY_CONNECTED = "google_connected"
         private const val KEY_GREETING_STYLE = "greeting_style"
         private const val KEY_GREETING_TITLE = "greeting_title"
+        private const val KEY_DEBTS_FOLDER = "debts_folder_id"
+        private const val KEY_DEBTS_SUBFOLDERS = "debts_subfolders"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
 

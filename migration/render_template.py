@@ -33,6 +33,8 @@ NOTES_START_RE = re.compile(r"&lt;&lt;Start:\s*SELECT\(.*?&gt;&gt;", re.S)
 LOOP_END = "&lt;&lt;End&gt;&gt;"
 NOTE_LINE = "&lt;&lt;[Παρατηρήσεις]&gt;&gt;"
 PAYMENT_LINE = "&lt;&lt;[Τρόπος Πληρωμής]&gt;&gt;"
+VAT_MARKER = "&lt;&lt;[Αν ΦΠΑ]&gt;&gt;"
+VAT_RATE = 0.24
 
 
 def money(value: float) -> str:
@@ -82,6 +84,26 @@ def repeat_paragraph(xml: str, marker: str, lines: list[str]) -> str:
     return xml[:open_] + expanded + xml[close:]
 
 
+def drop_block(xml: str, index: int) -> str:
+    """Σβήνει τη γραμμή πίνακα ή την παράγραφο που περιέχει τη θέση index."""
+    row_open = max(xml.rfind("<w:tr ", 0, index), xml.rfind("<w:tr>", 0, index))
+    row_closed = xml.rfind("</w:tr>", 0, index)
+    tag = "w:tr" if row_open >= 0 and row_open > row_closed else "w:p"
+    open_, close = find_enclosing(xml, index, tag)
+    return xml[:open_] + xml[close:]
+
+
+def apply_vat(xml: str, vat: bool) -> str:
+    """Με ΦΠΑ μένει μόνο ο δείκτης έξω· χωρίς ΦΠΑ φεύγει όλη η γραμμή."""
+    if vat:
+        return xml.replace(VAT_MARKER, "")
+    while True:
+        at = xml.find(VAT_MARKER)
+        if at < 0:
+            return xml
+        xml = drop_block(xml, at)
+
+
 def render(xml: str, offer: dict, spaces: list[dict], notes: list[dict]) -> str:
     # --- 1. Επανάληψη γραμμής πίνακα ανά χώρο -------------------------------
     match = SPACES_START_RE.search(xml)
@@ -122,13 +144,21 @@ def render(xml: str, offer: dict, spaces: list[dict], notes: list[dict]) -> str:
     xml = repeat_paragraph(xml, NOTE_LINE, [n["text"] for n in notes])
     xml = repeat_paragraph(xml, PAYMENT_LINE, offer.get("paymentLines", []))
 
-    # --- 4. Απλά πεδία ------------------------------------------------------
-    total = sum(round(s["area"] * s["unitPrice"], 2) for s in spaces)
+    # --- 4. ΦΠΑ -------------------------------------------------------------
+    vat_on = bool(offer.get("vat"))
+    xml = apply_vat(xml, vat_on)
+
+    # --- 5. Απλά πεδία ------------------------------------------------------
+    net = sum(round(s["area"] * s["unitPrice"], 2) for s in spaces)
+    vat = round(net * VAT_RATE, 2) if vat_on else 0.0
+    total = net + vat
     for placeholder, value in {
         "&lt;&lt;[Είδος]&gt;&gt;": offer["kind"],
         "&lt;&lt;[Οδός / Περιοχή]&gt;&gt;": offer["address"],
         "&lt;&lt;[Ημερομηνία]&gt;&gt;": offer["date"],
         "&lt;&lt;[Ισχύει έως]&gt;&gt;": offer.get("validUntil", "—"),
+        "&lt;&lt;[Καθαρή Αξία]&gt;&gt;": money(net),
+        "&lt;&lt;[ΦΠΑ]&gt;&gt;": money(vat),
         "&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;": money(total),
         "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;": money(total),
     }.items():
@@ -237,9 +267,11 @@ def main() -> int:
     parser.add_argument("--template", help="άλλο πρότυπο αντί του προεπιλεγμένου")
     parser.add_argument("--out")
     parser.add_argument("--dump", action="store_true")
+    parser.add_argument("--vat", action="store_true", help="με ΦΠΑ 24 τοις εκατό")
     args = parser.parse_args()
 
     offer, spaces, notes = (from_seed(args.offer) if args.offer else from_xls(args.xls))
+    offer["vat"] = args.vat
     template = Path(args.template) if args.template else TEMPLATE
 
     with zipfile.ZipFile(template) as src:
@@ -248,7 +280,7 @@ def main() -> int:
 
     if args.out:
         out = Path(args.out)
-        with zipfile.ZipFile(TEMPLATE) as src, \
+        with zipfile.ZipFile(template) as src, \
                 zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
             for item in src.infolist():
                 payload = (rendered.encode("utf-8")

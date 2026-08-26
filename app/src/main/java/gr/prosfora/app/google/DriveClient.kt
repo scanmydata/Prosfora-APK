@@ -106,6 +106,42 @@ class DriveClient(private val accessToken: String) {
         execute(request) { JSONObject(it).getString("id") }
     }
 
+    /**
+     * Αντιγράφει ένα αρχείο του Drive **ως Google Doc**.
+     *
+     * Έτσι διαβάζεται το κείμενο ενός PDF χωρίς να μπει βιβλιοθήκη PDF στο apk:
+     * το Drive κάνει τη μετατροπή, και όταν το PDF δεν έχει επίπεδο κειμένου —
+     * όπως το σημείωμα πληρωμής της ΑΑΔΕ, που είναι σχεδιασμένο σε καμπύλες —
+     * περνάει από OCR. Το [ocrLanguage] είναι απλώς υπόδειξη γλώσσας.
+     *
+     * Το αντίγραφο είναι προσωρινό: διαβάζεται και σβήνεται.
+     */
+    suspend fun copyAsGoogleDoc(fileId: String, ocrLanguage: String = "el"): String =
+        withContext(Dispatchers.IO) {
+            val payload = JSONObject()
+                .put("name", "prosfora-ocr-$fileId")
+                .put("mimeType", DOC_MIME)
+            val url = "$API/files/$fileId/copy?ocrLanguage=$ocrLanguage&fields=id"
+            execute(
+                builder(url).post(payload.toString().toRequestBody(JSON)).build(),
+            ) { JSONObject(it).getString("id") }
+        }
+
+    /**
+     * Το κείμενο ενός PDF που βρίσκεται ήδη στο Drive.
+     *
+     * Το προσωρινό Google Doc σβήνεται ό,τι κι αν γίνει — αλλιώς θα γέμιζε το
+     * Drive του χρήστη με σκουπίδια σε κάθε σάρωση.
+     */
+    suspend fun readTextOf(fileId: String, ocrLanguage: String = "el"): String {
+        val copyId = copyAsGoogleDoc(fileId, ocrLanguage)
+        return try {
+            export(copyId, TEXT_MIME).toString(Charsets.UTF_8)
+        } finally {
+            runCatching { delete(copyId) }
+        }
+    }
+
     /** Export ενός Google Doc στη μορφή [mimeType] (PDF ή .docx). */
     suspend fun export(fileId: String, mimeType: String): ByteArray = withContext(Dispatchers.IO) {
         val request = builder("$API/files/$fileId/export?mimeType=${mimeType.urlEncode()}")
@@ -227,6 +263,7 @@ class DriveClient(private val accessToken: String) {
         const val DOCX_MIME =
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         const val PDF_MIME = "application/pdf"
+        const val TEXT_MIME = "text/plain"
 
         const val ROLE_WRITER = "writer"
         const val ROLE_READER = "reader"

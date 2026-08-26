@@ -115,7 +115,7 @@ fun PdfArchiveScreen(viewModel: OffersViewModel, onMenu: () -> Unit) {
                                     style = MaterialTheme.typography.bodyLarge,
                                 )
                                 Text(
-                                    "${details.offer.dateEpochDay.asOfferDate()} · ${details.total.asMoney()}",
+                                    "${details.offer.dateEpochDay.asOfferDate()} · ${details.grandTotal.asMoney()}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

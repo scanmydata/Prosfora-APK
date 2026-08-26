@@ -57,6 +57,11 @@ data class OfferEntity(
      */
     val paymentTerms: String = "",
     /**
+     * Αν η προσφορά τυπώνεται με ΦΠΑ. Ο συντελεστής είναι πάντα 24% — δεν
+     * υπάρχει μειωμένος για ελαιοχρωματισμούς, οπότε δεν αξίζει ρύθμιση.
+     */
+    val vatIncluded: Boolean = false,
+    /**
      * Από ποιο αρχείο ήρθε, αν ήρθε από εισαγωγή ιστορικού. Κενό σημαίνει ότι
      * γράφτηκε μέσα στην εφαρμογή. Τα εισαγόμενα είναι παλιές επιμετρήσεις που
      * δεν ξέρουμε σίγουρα αν έγιναν δουλειές, οπότε τα στατιστικά μπορούν να
@@ -77,6 +82,9 @@ enum class Gender(val label: String, val title: String) {
     MALE("Άνδρας", "κύριε"),
     FEMALE("Γυναίκα", "κυρία"),
 }
+
+/** Ο μοναδικός συντελεστής που αφορά τη δουλειά — δεν υπάρχει μειωμένος. */
+const val VAT_RATE = 0.24
 
 enum class JobStage(val label: String) {
     NOT_A_JOB("—"),
@@ -179,8 +187,20 @@ data class OfferWithDetails(
     val spaces: List<SpaceEntity> get() = spacesRaw.filter { !it.deleted }.sortedBy { it.position }
     val notes: List<NoteEntity> get() = notesRaw.filter { !it.deleted }.sortedBy { it.position }
 
-    /** Γενικό Σύνολο — ήταν virtual column + action snapshot στο AppSheet */
+    /**
+     * Καθαρή αξία — ήταν virtual column + action snapshot στο AppSheet.
+     *
+     * Μένει καθαρή αξία και όταν η προσφορά έχει ΦΠΑ: τα στατιστικά μετράνε
+     * τζίρο, και ο ΦΠΑ δεν είναι έσοδο.
+     */
     val total: Double get() = spaces.sumOf { it.lineTotal }
+
+    /** Ο ΦΠΑ σε ευρώ — μηδέν όταν η προσφορά δεν τον περιλαμβάνει. */
+    val vatAmount: Double
+        get() = if (offer.vatIncluded) Math.round(total * VAT_RATE * 100.0) / 100.0 else 0.0
+
+    /** Ό,τι πληρώνει τελικά ο πελάτης: το ποσό που τυπώνεται ως γενικό σύνολο. */
+    val grandTotal: Double get() = total + vatAmount
 
     /** Έτος έκδοσης — με βάση αυτό οργανώνονται τα PDF σε φακέλους. */
     val year: Int get() = java.time.LocalDate.ofEpochDay(offer.dateEpochDay).year

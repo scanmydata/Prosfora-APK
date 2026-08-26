@@ -1,6 +1,8 @@
 package gr.prosfora.app.sync
 
 import android.content.Context
+import gr.prosfora.app.data.db.DebtEntity
+import gr.prosfora.app.data.db.DebtKind
 import gr.prosfora.app.data.db.NoteEntity
 import gr.prosfora.app.data.db.OfferEntity
 import gr.prosfora.app.data.db.OfferStatus
@@ -33,11 +35,13 @@ class SheetSync(
         val pulledOffers: Int,
         val pulledSpaces: Int,
         val pulledNotes: Int,
+        val pulledDebts: Int,
         val pushedRows: Int,
     ) {
         val summary: String
             get() = "Λήφθηκαν $pulledOffers προσφορές / $pulledSpaces χώροι / " +
-                "$pulledNotes σημειώσεις · στάλθηκαν $pushedRows γραμμές"
+                "$pulledNotes σημειώσεις / $pulledDebts οφειλές · " +
+                "στάλθηκαν $pushedRows γραμμές"
     }
 
     private val db = ProsforaDatabase.get(context)
@@ -51,14 +55,17 @@ class SheetSync(
         val remoteOffers = readOffers(spreadsheetId)
         val remoteSpaces = readSpaces(spreadsheetId)
         val remoteNotes = readNotes(spreadsheetId)
+        val remoteDebts = readDebts(spreadsheetId)
 
         val localOffers = db.offerDao().allForSync()
         val localSpaces = db.spaceDao().allForSync()
         val localNotes = db.noteDao().allForSync()
+        val localDebts = db.debtDao().allForSync()
 
         val mergedOffers = merge(localOffers, remoteOffers, { it.id }, { it.updatedAt })
         val mergedSpaces = merge(localSpaces, remoteSpaces, { it.id }, { it.updatedAt })
         val mergedNotes = merge(localNotes, remoteNotes, { it.id }, { it.updatedAt })
+        val mergedDebts = merge(localDebts, remoteDebts, { it.id }, { it.updatedAt })
 
         var pulledOffers = 0
         mergedOffers.forEach { merged ->
@@ -82,16 +89,27 @@ class SheetSync(
             }
         }
 
+        var pulledDebts = 0
+        mergedDebts.forEach { merged ->
+            if (localDebts.none { it.id == merged.id && it == merged }) {
+                db.debtDao().upsert(merged)
+                pulledDebts++
+            }
+        }
+
         sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))
         sheets.replaceRows(spreadsheetId, TAB_SPACES, spaceRows(mergedSpaces))
         sheets.replaceRows(spreadsheetId, TAB_NOTES, noteRows(mergedNotes))
+        sheets.replaceRows(spreadsheetId, TAB_DEBTS, debtRows(mergedDebts))
 
         settings.lastSyncAt = System.currentTimeMillis()
         Report(
             pulledOffers = pulledOffers,
             pulledSpaces = pulledSpaces,
             pulledNotes = pulledNotes,
-            pushedRows = mergedOffers.size + mergedSpaces.size + mergedNotes.size,
+            pulledDebts = pulledDebts,
+            pushedRows = mergedOffers.size + mergedSpaces.size +
+                mergedNotes.size + mergedDebts.size,
         )
     }
 
@@ -104,7 +122,7 @@ class SheetSync(
         title: String,
         drive: gr.prosfora.app.google.DriveClient? = null,
     ): String = withContext(Dispatchers.IO) {
-        val id = sheets.createSpreadsheet(title, listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES))
+        val id = sheets.createSpreadsheet(title, ALL_TABS)
         settings.spreadsheetId = id
         if (drive != null) {
             val folder = gr.prosfora.app.google.DriveWorkspace(drive, settings).rootFolder()
@@ -116,7 +134,7 @@ class SheetSync(
 
     private suspend fun ensureTabs(spreadsheetId: String) {
         val existing = sheets.sheetTitles(spreadsheetId)
-        listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES)
+        ALL_TABS
             .filterNot { it in existing }
             .forEach { sheets.addSheet(spreadsheetId, it) }
     }
@@ -170,8 +188,32 @@ class SheetSync(
                 paymentTerms = row[18],
                 source = row[19],
                 customerLastName = row[20],
+                vatIncluded = row[22] == "1",
                 customerGender = runCatching { gr.prosfora.app.data.db.Gender.valueOf(row[21]) }
                     .getOrDefault(gr.prosfora.app.data.db.Gender.UNKNOWN),
+            )
+        }
+
+    private suspend fun readDebts(spreadsheetId: String): List<DebtEntity> =
+        dataRows(spreadsheetId, TAB_DEBTS, DEBT_HEADER.size).map { row ->
+            DebtEntity(
+                id = row[0],
+                kind = runCatching { DebtKind.valueOf(row[1]) }.getOrDefault(DebtKind.AADE),
+                periodMonth = row[2].toIntOrNull() ?: 0,
+                periodYear = row[3].toIntOrNull() ?: 0,
+                dueDay = row[4].toLongOrNull(),
+                amount = row[5].toDoubleOrNull() ?: 0.0,
+                reference = row[6],
+                description = row[7],
+                personName = row[8],
+                personCode = row[9],
+                paid = row[10] == "1",
+                paidAt = row[11].toLongOrNull(),
+                source = row[12],
+                driveFileId = row[13],
+                createdAt = row[14].toLongOrNull() ?: 0L,
+                updatedAt = row[15].toLongOrNull() ?: 0L,
+                deleted = row[16] == "1",
             )
         }
 
@@ -240,6 +282,29 @@ class SheetSync(
             it.source,
             it.customerLastName,
             it.customerGender.name,
+            if (it.vatIncluded) "1" else "0",
+        )
+    }
+
+    private fun debtRows(debts: List<DebtEntity>) = listOf(DEBT_HEADER) + debts.map {
+        listOf(
+            it.id,
+            it.kind.name,
+            it.periodMonth.toString(),
+            it.periodYear.toString(),
+            it.dueDay?.toString().orEmpty(),
+            it.amount.toString(),
+            it.reference,
+            it.description,
+            it.personName,
+            it.personCode,
+            if (it.paid) "1" else "0",
+            it.paidAt?.toString().orEmpty(),
+            it.source,
+            it.driveFileId,
+            it.createdAt.toString(),
+            it.updatedAt.toString(),
+            if (it.deleted) "1" else "0",
         )
     }
 
@@ -272,13 +337,22 @@ class SheetSync(
         const val TAB_OFFERS = "Προσφορές"
         const val TAB_SPACES = "Χώροι_έργου"
         const val TAB_NOTES = "Λίστα_Παρατηρήσεων"
+        const val TAB_DEBTS = "Οφειλές"
+
+        val ALL_TABS = listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES, TAB_DEBTS)
 
         private val OFFER_HEADER = listOf(
             "ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email",
             "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο",
             "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης",
             "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση",
-            "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή", "Επώνυμο", "Φύλο",
+            "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή", "Επώνυμο", "Φύλο", "ΦΠΑ",
+        )
+        private val DEBT_HEADER = listOf(
+            "ID_Οφειλής", "Φορέας", "Μήνας", "Έτος", "Λήξη", "Ποσό",
+            "Ταυτότητα / RF", "Περιγραφή", "Εργαζόμενος", "Κωδικός",
+            "Πληρώθηκε", "Ημ. πληρωμής", "Πηγή", "Αρχείο Drive",
+            "Δημιουργήθηκε", "Ενημερώθηκε", "Διαγραμμένο",
         )
         private val SPACE_HEADER = listOf(
             "ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)",

@@ -190,7 +190,7 @@ private fun JobCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "${offer.kind} · ${details.total.asMoney()}",
+                "${offer.kind} · ${details.grandTotal.asMoney()}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

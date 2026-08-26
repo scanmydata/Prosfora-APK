@@ -43,6 +43,12 @@ object DocxTemplate {
     private const val NOTE_LINE = "&lt;&lt;[Παρατηρήσεις]&gt;&gt;"
     private const val PAYMENT_LINE = "&lt;&lt;[Τρόπος Πληρωμής]&gt;&gt;"
 
+    /**
+     * Δείκτης «μόνο με ΦΠΑ». Όπου εμφανίζεται, η γραμμή του πίνακα (ή η
+     * παράγραφος, αν δεν είναι σε πίνακα) υπάρχει μόνο όταν η προσφορά έχει ΦΠΑ.
+     */
+    private const val VAT_ONLY = "&lt;&lt;[Αν ΦΠΑ]&gt;&gt;"
+
     fun render(templateDocx: ByteArray, details: OfferWithDetails): ByteArray {
         val entries = readZip(templateDocx)
         val document = entries[DOCUMENT_ENTRY]?.toString(Charsets.UTF_8)
@@ -56,7 +62,34 @@ object DocxTemplate {
         result = expandNoteBullets(result, details)
         result = repeatParagraph(result, NOTE_LINE, details.notes.map { it.text })
         result = repeatParagraph(result, PAYMENT_LINE, details.paymentLines)
+        result = applyVat(result, details.offer.vatIncluded)
         return fillSimpleFields(result, details)
+    }
+
+    /**
+     * Με ΦΠΑ φεύγει μόνο ο δείκτης· χωρίς ΦΠΑ φεύγει ολόκληρη η γραμμή.
+     *
+     * Δεν αρκεί να μείνουν κενά τα ποσά: μια άδεια γραμμή «ΦΠΑ 24%» μέσα στον
+     * πίνακα διαβάζεται σαν λάθος. Η αφαίρεση γίνεται στο επίπεδο του `<w:tr>`
+     * ώστε να δουλεύει και σε πρότυπο που έγραψε ο χρήστης.
+     */
+    private fun applyVat(xml: String, vatIncluded: Boolean): String {
+        if (vatIncluded) return xml.replace(VAT_ONLY, "")
+        var result = xml
+        while (true) {
+            val at = result.indexOf(VAT_ONLY)
+            if (at < 0) return result
+            result = dropBlock(result, at)
+        }
+    }
+
+    /** Σβήνει τη γραμμή πίνακα που περιέχει τη θέση, ή την παράγραφο εκτός πίνακα. */
+    private fun dropBlock(xml: String, index: Int): String {
+        val rowOpen = maxOf(xml.lastIndexOf("<w:tr ", index), xml.lastIndexOf("<w:tr>", index))
+        val rowClosed = xml.lastIndexOf("</w:tr>", index)
+        val tag = if (rowOpen >= 0 && rowOpen > rowClosed) "w:tr" else "w:p"
+        val (open, close) = enclosingTag(xml, index, tag)
+        return xml.substring(0, open) + xml.substring(close)
     }
 
     /** Η γραμμή του πίνακα ανάμεσα σε `<<Start:…>>` και `<<End>>` επαναλαμβάνεται ανά χώρο. */
@@ -117,7 +150,8 @@ object DocxTemplate {
 
     private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {
         val offer = details.offer
-        val total = details.total.asMoney()
+        // Το «γενικό σύνολο» είναι ό,τι πληρώνει ο πελάτης: με ΦΠΑ όταν υπάρχει
+        val total = details.grandTotal.asMoney()
         return xml
             // Το «Χρωματισμός» φεύγει: ο τίτλος του εγγράφου λέει ήδη
             // «ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ ΓΙΑ …»
@@ -130,6 +164,8 @@ object DocxTemplate {
                 "&lt;&lt;[Ισχύει έως]&gt;&gt;",
                 escape(offer.validUntilDay?.asOfferDate() ?: "—"),
             )
+            .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", escape(details.total.asMoney()))
+            .replace("&lt;&lt;[ΦΠΑ]&gt;&gt;", escape(details.vatAmount.asMoney()))
             .replace("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", escape(total))
             .replace("&lt;&lt;[Γενικό Σύνολο]&gt;&gt;", escape(total))
     }

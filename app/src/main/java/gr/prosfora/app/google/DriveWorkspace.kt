@@ -7,7 +7,12 @@ package gr.prosfora.app.google
  * Προσφορές/
  * ├── Προσφορές — βάση δεδομένων   (Google Sheet)
  * ├── ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — πρότυπο   (Google Doc)
- * └── PDF/                          (τα παραγόμενα αρχεία)
+ * ├── PDF/                          (τα παραγόμενα αρχεία)
+ * └── Οφειλές/
+ *     ├── ΙΚΑ-ΤΕΚΑ/
+ *     ├── ΑΑΔΕ/
+ *     ├── Διαφημιστικά τέλη/
+ *     └── Μισθοδοσία/
  * ```
  *
  * Όλα ζουν κάτω από έναν φάκελο ώστε να μοιράζεται με μία κίνηση και να μην
@@ -50,6 +55,25 @@ class DriveWorkspace(
     suspend fun pdfsInYear(yearFolderId: String): List<DriveClient.DriveFile> =
         drive.list("mimeType='${DriveClient.PDF_MIME}' and '$yearFolderId' in parents and trashed=false")
 
+    /**
+     * Ο φάκελος των παραστατικών, με έναν υποφάκελο ανά φορέα.
+     *
+     * Ο χρήστης ρίχνει εκεί τα PDF από το ίδιο του το κινητό ή τον υπολογιστή
+     * και η εφαρμογή τα διαβάζει· δεν χρειάζεται να περάσουν από μέσα της.
+     */
+    suspend fun debtsFolder(): String =
+        settings.debtsFolderId?.takeIf { it.isNotBlank() }
+            ?: drive.findOrCreateFolder(DEBTS_FOLDER_NAME, rootFolder())
+                .also { settings.debtsFolderId = it }
+
+    suspend fun debtsFolder(agency: gr.prosfora.app.data.db.DebtAgency): String =
+        settings.debtsFolderFor(agency.name)
+            ?: drive.findOrCreateFolder(agency.folder, debtsFolder())
+                .also { settings.rememberDebtsFolder(agency.name, it) }
+
+    suspend fun pdfsIn(folderId: String): List<DriveClient.DriveFile> =
+        drive.list("mimeType='${DriveClient.PDF_MIME}' and '$folderId' in parents and trashed=false")
+
     /** Τα spreadsheets μέσα στον φάκελο — υποψήφια για κοινόχρηστη βάση. */
     suspend fun spreadsheetsInFolder(): List<DriveClient.DriveFile> {
         val root = rootFolder()
@@ -66,6 +90,7 @@ class DriveWorkspace(
 
     companion object {
         const val PDF_FOLDER_NAME = "PDF"
+        const val DEBTS_FOLDER_NAME = "Οφειλές"
         const val SHEET_MIME = "application/vnd.google-apps.spreadsheet"
     }
 }

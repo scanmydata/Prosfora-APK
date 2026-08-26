@@ -223,7 +223,7 @@ private fun OfferRow(
                         Text(offer.kind, style = MaterialTheme.typography.bodyMedium)
                     }
                     Text(
-                        "${offer.dateEpochDay.asOfferDate()} · ${details.total.asMoney()}",
+                        "${offer.dateEpochDay.asOfferDate()} · ${details.grandTotal.asMoney()}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

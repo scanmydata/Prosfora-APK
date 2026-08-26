@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Handyman
@@ -27,6 +28,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.BuildConfig
+import gr.prosfora.app.ui.offers.DeleteRed
 import gr.prosfora.app.ui.offers.EditBlue
 import gr.prosfora.app.ui.offers.EmailAmber
 import gr.prosfora.app.ui.offers.SentGreen
@@ -47,6 +49,7 @@ enum class TopDestination(
     OFFERS(ROUTE_LIST, "Προσφορές", Icons.Default.Description, EmailAmber),
     JOBS(ROUTE_JOBS, "Εργασίες", Icons.Default.Handyman, SentGreen),
     ARCHIVE(ROUTE_ARCHIVE, "Αρχείο PDF", Icons.Default.PictureAsPdf, null),
+    DEBTS(ROUTE_DEBTS, "Οφειλές", Icons.Default.AccountBalance, DeleteRed),
     SETTINGS(ROUTE_SETTINGS, "Ρυθμίσεις", Icons.Default.Settings, null),
 }
 

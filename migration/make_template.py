@@ -8,35 +8,64 @@
 Σχεδιαστικοί στόχοι:
   * μία σελίδα A4 όσο το επιτρέπουν οι γραμμές της προσφοράς
   * παρατηρήσεις και τρόπος πληρωμής δίπλα-δίπλα, όχι σε στοίβα
-  * το tovapsimo.gr παρόν χωρίς να φωνάζει
+  * το λογότυπο και τα χρώματά του δίνουν την ταυτότητα του εγγράφου
 
 Τρέξιμο:  python migration/make_template.py
 """
+import copy
+
 from docx import Document
-from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
-NAVY = RGBColor(0x1F, 0x38, 0x64)
-ACCENT = RGBColor(0xC5, 0x5A, 0x11)
+# --- η παλέτα βγαίνει από το ίδιο το λογότυπο -------------------------------
+# Το πράσινο και το μαύρο είναι αυτούσια από το tovapsimo-logo.png· το βαθύ
+# πράσινο είναι η σκούρα εκδοχή του ίδιου τόνου, ώστε το κείμενο πάνω σε λευκό
+# να διαβάζεται (το #00E2A2 είναι πολύ ανοιχτό για γράμματα).
+GREEN = RGBColor(0x00, 0xE2, 0xA2)
+DEEP = RGBColor(0x00, 0x6B, 0x4F)
+INK = RGBColor(0x22, 0x22, 0x22)
 GREY = RGBColor(0x59, 0x59, 0x59)
+
+GREEN_HEX = "00E2A2"
+DEEP_HEX = "006B4F"
+TINT_HEX = "E9FCF5"       # πράσινο αραιωμένο, για γεμίσματα κελιών
+LINE_HEX = "C9EFE2"       # διακριτικές γραμμές ανάμεσα στους χώρους
+
+# Κρατιούνται τα παλιά ονόματα: το make_classic_template τα εισάγει από εδώ
+NAVY = DEEP
+ACCENT = GREEN
+
 FONT = "Arial"          # ασφαλές για ελληνικά και στο Word και στο Google Docs
 
+LOGO = "assets/branding/tovapsimo-logo.png"
 OUT = "assets/pdf-template/ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ.docx"
 
 # Πόσος αέρας μπαίνει στην κορυφή των σελίδων μετά την πρώτη, σε στιγμές
 TOP_AIR_PT = 34
 
+# Τα τρία στοιχεία επικοινωνίας που κλείνουν και το κλασικό πρότυπο
+LINKS = (
+    ("📘", "www.facebook.com/tovapsimo"),
+    ("🌐", "www.tovapsimo.gr"),
+    ("📞", "6945773605"),
+)
+
 
 # --------------------------------------------------------------- helpers ---
 
 def shade(cell, hex_color):
+    tcPr = cell._tc.get_or_add_tcPr()
+    previous = tcPr.find(qn("w:shd"))
+    if previous is not None:                      # οι κλωνοποιημένες γραμμές φέρνουν ήδη γέμισμα
+        tcPr.remove(previous)
     el = OxmlElement("w:shd")
     el.set(qn("w:val"), "clear")
     el.set(qn("w:fill"), hex_color)
-    cell._tc.get_or_add_tcPr().append(el)
+    tcPr.append(el)
 
 
 def borders(cell, **edges):
@@ -84,6 +113,9 @@ def cell_margins(table, top=40, bottom=40, left=80, right=80):
 def rule(paragraph, hex_color, size=12):
     """Οριζόντια γραμμή ως κάτω περίγραμμα της παραγράφου."""
     pPr = paragraph._p.get_or_add_pPr()
+    existing = pPr.find(qn("w:pBdr"))
+    if existing is not None:
+        pPr.remove(existing)
     node = OxmlElement("w:pBdr")
     bottom = OxmlElement("w:bottom")
     bottom.set(qn("w:val"), "single")
@@ -197,6 +229,44 @@ def hanging(paragraph, indent_cm=0.45):
     pf.first_line_indent = Cm(-indent_cm)
 
 
+def vertical_center(cell):
+    tcPr = cell._tc.get_or_add_tcPr()
+    el = OxmlElement("w:vAlign")
+    el.set(qn("w:val"), "center")
+    tcPr.append(el)
+
+
+def clone_row(table, row, before):
+    """Αντίγραφο γραμμής πίνακα, τοποθετημένο πριν από τη [before].
+
+    Το deepcopy κρατάει πλάτη, περιγράμματα και γεμίσματα — ξαναχτίζοντάς τα με
+    το χέρι θα ξέφευγε κάποιο και η γραμμή θα έμοιαζε ξένη μέσα στον πίνακα.
+    """
+    new = copy.deepcopy(row._tr)
+    before._tr.addprevious(new)
+    from docx.table import _Row
+
+    return _Row(new, table)
+
+
+def set_cell_text(cell, text, bold=None, color=None, size=None):
+    """Αλλάζει το κείμενο κρατώντας τη μορφοποίηση του πρώτου run."""
+    p = cell.paragraphs[0]
+    runs = p.runs
+    if not runs:
+        write(p, text, size=size or 9, bold=bool(bold), color=color)
+        return
+    runs[0].text = text
+    for extra in runs[1:]:
+        extra.text = ""
+    if bold is not None:
+        runs[0].bold = bold
+    if color is not None:
+        runs[0].font.color.rgb = color
+    if size is not None:
+        runs[0].font.size = Pt(size)
+
+
 # ------------------------------------------------------------- το έγγραφο ---
 
 def build():
@@ -223,38 +293,40 @@ def build():
 
     page_furniture(section)
 
-    # --- επικεφαλίδα: ταυτότητα αριστερά, επικοινωνία δεξιά ---------------
+    # --- επικεφαλίδα: λογότυπο αριστερά, επικοινωνία δεξιά ----------------
     head = doc.add_table(rows=1, cols=2)
     head.alignment = WD_TABLE_ALIGNMENT.CENTER
     head.autofit = False
     no_borders(head)
     cell_margins(head, left=0, right=0)
-    for index, w in ((0, Cm(10.5)), (1, Cm(7.3))):
+    for index, w in ((0, Cm(6.4)), (1, Cm(11.4))):
         head.columns[index].width = w
         head.rows[0].cells[index].width = w
 
     left = head.rows[0].cells[0]
     left.paragraphs[0].text = ""
-    write(left.paragraphs[0], "ΓΙΩΡΓΟΣ ΔΟΥΡΑΜΑΝΗΣ", size=13, bold=True, color=NAVY, spacing=20)
-    p = para(left)
-    write(p, "ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΟΙ · ΑΝΑΚΑΙΝΙΣΕΙΣ · ΜΟΝΩΣΕΙΣ", size=7.5, color=GREY, spacing=24)
+    vertical_center(left)
+    left.paragraphs[0].add_run().add_picture(LOGO, width=Cm(4.4))
 
     right = head.rows[0].cells[1]
     right.paragraphs[0].text = ""
+    vertical_center(right)
     right.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    write(right.paragraphs[0], "tovapsimo.gr", size=12, bold=True, color=ACCENT)
+    write(right.paragraphs[0], "ΓΙΩΡΓΟΣ ΔΟΥΡΑΜΑΝΗΣ", size=13, bold=True, color=INK, spacing=20)
     p = para(right, align=WD_ALIGN_PARAGRAPH.RIGHT)
-    write(p, "6945 773605 · facebook.com/tovapsimo", size=7.5, color=GREY)
+    write(p, "ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΟΙ · ΑΝΑΚΑΙΝΙΣΕΙΣ · ΜΟΝΩΣΕΙΣ", size=7.5, color=GREY, spacing=24)
+    p = para(right, align=WD_ALIGN_PARAGRAPH.RIGHT, before=4)
+    write(p, "6945 773605 · tovapsimo.gr", size=8.5, bold=True, color=DEEP)
 
     p = para(doc, before=2, after=8)
-    rule(p, "C55A11", size=8)
+    rule(p, GREEN_HEX, size=8)
 
     # --- τίτλος -----------------------------------------------------------
     p = para(doc, align=WD_ALIGN_PARAGRAPH.CENTER, after=1)
-    write(p, "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ", size=15, bold=True, color=NAVY, spacing=40)
+    write(p, "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ", size=15, bold=True, color=DEEP, spacing=40)
 
     p = para(doc, align=WD_ALIGN_PARAGRAPH.CENTER, after=1)
-    write(p, "<<[Είδος]>> ΕΠΙ ΤΗΣ ΟΔΟΥ <<[Οδός / Περιοχή]>>", size=11, bold=True)
+    write(p, "<<[Είδος]>> ΕΠΙ ΤΗΣ ΟΔΟΥ <<[Οδός / Περιοχή]>>", size=11, bold=True, color=INK)
 
     p = para(doc, align=WD_ALIGN_PARAGRAPH.CENTER, after=9)
     write(p, "ΑΘΗΝΑ, <<[Ημερομηνία]>>", size=8.5, color=GREY)
@@ -273,13 +345,13 @@ def build():
     headers = ("ΠΕΡΙΓΡΑΦΗ ΧΩΡΟΥ", "ΕΠΙΦΑΝΕΙΑ (Τ.Μ.)", "ΤΙΜΗ ΜΟΝΑΔΟΣ", "ΣΥΝΟΛΟ")
     for i, text in enumerate(headers):
         cell = table.rows[0].cells[i]
-        shade(cell, "1F3864")
+        shade(cell, DEEP_HEX)
         cell.paragraphs[0].text = ""
         cell.paragraphs[0].alignment = (
             WD_ALIGN_PARAGRAPH.LEFT if i == 0 else WD_ALIGN_PARAGRAPH.RIGHT
         )
         write(cell.paragraphs[0], text, size=8, bold=True, color=RGBColor(0xFF, 0xFF, 0xFF))
-        borders(cell, top=(6, "1F3864"), bottom=(6, "1F3864"), left=None, right=None)
+        borders(cell, top=(6, DEEP_HEX), bottom=(6, DEEP_HEX), left=None, right=None)
 
     # η γραμμή-πρότυπο: επαναλαμβάνεται μία φορά ανά χώρο
     body = (
@@ -294,20 +366,22 @@ def build():
         cell.paragraphs[0].alignment = (
             WD_ALIGN_PARAGRAPH.LEFT if i == 0 else WD_ALIGN_PARAGRAPH.RIGHT
         )
-        write(cell.paragraphs[0], text, size=9)
-        borders(cell, top=None, bottom=(4, "D5DCE6"), left=None, right=None)
+        write(cell.paragraphs[0], text, size=9, color=INK)
+        borders(cell, top=None, bottom=(4, LINE_HEX), left=None, right=None)
 
     total_row = table.rows[2]
     for i in range(4):
         cell = total_row.cells[i]
-        shade(cell, "EDF1F7")
-        borders(cell, top=(10, "1F3864"), bottom=(10, "1F3864"), left=None, right=None)
+        shade(cell, TINT_HEX)
+        borders(cell, top=(10, DEEP_HEX), bottom=(10, DEEP_HEX), left=None, right=None)
         cell.paragraphs[0].text = ""
     total_row.cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
-    write(total_row.cells[0].paragraphs[0], "ΓΕΝΙΚΟ ΣΥΝΟΛΟ", size=10, bold=True, color=NAVY)
+    write(total_row.cells[0].paragraphs[0], "ΓΕΝΙΚΟ ΣΥΝΟΛΟ", size=10, bold=True, color=DEEP)
     total_row.cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
     write(total_row.cells[3].paragraphs[0], "<<[Γενικό Σύνολο Live]>>", size=10,
-          bold=True, color=NAVY)
+          bold=True, color=DEEP)
+
+    add_vat_rows(table, total_row)
 
     para(doc, after=8)
 
@@ -323,25 +397,25 @@ def build():
 
     notes = split.rows[0].cells[0]
     notes.paragraphs[0].text = ""
-    write(notes.paragraphs[0], "ΠΑΡΑΤΗΡΗΣΕΙΣ", size=9, bold=True, color=NAVY, spacing=20)
-    rule(notes.paragraphs[0], "C55A11", size=4)
+    write(notes.paragraphs[0], "ΠΑΡΑΤΗΡΗΣΕΙΣ", size=9, bold=True, color=DEEP, spacing=20)
+    rule(notes.paragraphs[0], GREEN_HEX, size=6)
     p = para(notes, before=3)
     hanging(p)
-    write(p, "•  <<[Παρατηρήσεις]>>", size=8.5)
+    write(p, "•  <<[Παρατηρήσεις]>>", size=8.5, color=INK)
 
     pay = split.rows[0].cells[1]
     pay.paragraphs[0].text = ""
-    write(pay.paragraphs[0], "ΤΡΟΠΟΣ ΠΛΗΡΩΜΗΣ", size=9, bold=True, color=NAVY, spacing=20)
-    rule(pay.paragraphs[0], "C55A11", size=4)
+    write(pay.paragraphs[0], "ΤΡΟΠΟΣ ΠΛΗΡΩΜΗΣ", size=9, bold=True, color=DEEP, spacing=20)
+    rule(pay.paragraphs[0], GREEN_HEX, size=6)
     p = para(pay, before=3)
     hanging(p)
-    write(p, "•  <<[Τρόπος Πληρωμής]>>", size=8.5)
+    write(p, "•  <<[Τρόπος Πληρωμής]>>", size=8.5, color=INK)
 
     p = para(pay, before=7)
-    write(p, "ΙΣΧΥΣ ΠΡΟΣΦΟΡΑΣ", size=9, bold=True, color=NAVY, spacing=20)
-    rule(p, "C55A11", size=4)
+    write(p, "ΙΣΧΥΣ ΠΡΟΣΦΟΡΑΣ", size=9, bold=True, color=DEEP, spacing=20)
+    rule(p, GREEN_HEX, size=6)
     p = para(pay, before=3)
-    write(p, "Η προσφορά ισχύει έως <<[Ισχύει έως]>>", size=8.5)
+    write(p, "Η προσφορά ισχύει έως <<[Ισχύει έως]>>", size=8.5, color=INK)
 
     para(doc, after=6)
 
@@ -352,25 +426,54 @@ def build():
     strip.columns[0].width = width
     cell = strip.rows[0].cells[0]
     cell.width = width
-    shade(cell, "EDF1F7")
-    borders(cell, top=None, bottom=None, left=(30, "C55A11"), right=None)
+    shade(cell, TINT_HEX)
+    borders(cell, top=None, bottom=None, left=(30, GREEN_HEX), right=None)
     cell_margins(strip, top=70, bottom=70, left=160, right=120)
     cell.paragraphs[0].text = ""
     write(cell.paragraphs[0],
-          "Φωτογραφίες από ολοκληρωμένα έργα, χρώματα και αξιολογήσεις πελατών: ",
+          "Φωτογραφίες από ολοκληρωμένα έργα, χρώματα και αξιολογήσεις πελατών:",
           size=8.5, color=GREY)
-    write(cell.paragraphs[0], "tovapsimo.gr", size=9, bold=True, color=ACCENT)
+    # Τα ίδια τρία στοιχεία που κλείνουν και το κλασικό πρότυπο. Μπαίνουν μέσα
+    # στη λωρίδα ώστε να διαβάζονται ως συνέχεια της πρότασης από πάνω.
+    for icon, text in LINKS:
+        p = para(cell, before=2)
+        write(p, icon + "  ", size=8.5, color=INK)
+        write(p, text, size=8.5, bold=True, color=DEEP)
 
     # --- υπογραφή ---------------------------------------------------------
     p = para(doc, align=WD_ALIGN_PARAGRAPH.RIGHT, before=14)
     write(p, "Ο ΕΡΓΟΛΗΠΤΗΣ", size=8.5, color=GREY, spacing=20)
     p = para(doc, align=WD_ALIGN_PARAGRAPH.RIGHT, before=2)
-    write(p, "ΓΙΩΡΓΟΣ ΔΟΥΡΑΜΑΝΗΣ", size=10, bold=True, color=NAVY)
+    write(p, "ΓΙΩΡΓΟΣ ΔΟΥΡΑΜΑΝΗΣ", size=10, bold=True, color=INK)
     p = para(doc, align=WD_ALIGN_PARAGRAPH.RIGHT)
     write(p, "6945 773605", size=8.5, color=GREY)
 
     doc.save(OUT)
     return OUT
+
+
+def add_vat_rows(table, total_row):
+    """Καθαρή αξία και ΦΠΑ, ακριβώς πάνω από το γενικό σύνολο.
+
+    Οι δύο γραμμές υπάρχουν πάντα μέσα στο πρότυπο· η εφαρμογή τις σβήνει όταν
+    η προσφορά δεν έχει ΦΠΑ. Ο δείκτης `<<[Αν ΦΠΑ]>>` είναι που το λέει —
+    δουλεύει και σε πρότυπο που έφερε ο χρήστης, αρκεί να τον γράψει κι εκεί.
+    """
+    lines = (
+        ("<<[Αν ΦΠΑ]>>ΚΑΘΑΡΗ ΑΞΙΑ", "<<[Καθαρή Αξία]>>"),
+        ("<<[Αν ΦΠΑ]>>ΦΠΑ 24%", "<<[ΦΠΑ]>>"),
+    )
+    for label, value in lines:
+        row = clone_row(table, total_row, total_row)
+        for i in range(4):
+            cell = row.cells[i]
+            shade(cell, "FFFFFF")
+            borders(cell, top=None, bottom=(4, LINE_HEX), left=None, right=None)
+            cell.paragraphs[0].text = ""
+        row.cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
+        write(row.cells[0].paragraphs[0], label, size=8.5, color=GREY)
+        row.cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        write(row.cells[3].paragraphs[0], value, size=8.5, color=GREY)
 
 
 if __name__ == "__main__":

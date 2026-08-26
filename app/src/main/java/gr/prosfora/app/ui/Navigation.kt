@@ -14,6 +14,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import gr.prosfora.app.notify.Channel
+import gr.prosfora.app.ui.debts.DebtsScreen
 import gr.prosfora.app.ui.jobs.JobsScreen
 import gr.prosfora.app.ui.jobs.ReviewComposeScreen
 import gr.prosfora.app.ui.offers.EmailComposeScreen
@@ -33,6 +34,7 @@ internal const val ROUTE_SETTINGS = "settings"
 internal const val ROUTE_ARCHIVE = "archive"
 internal const val ROUTE_JOBS = "jobs"
 internal const val ROUTE_STATS = "stats"
+internal const val ROUTE_DEBTS = "debts"
 
 private const val ROUTE_DETAIL = "offer"
 private const val ROUTE_EMAIL = "offer/email"
@@ -140,6 +142,9 @@ fun ProsforaNavHost() {
                     offerId = entry.arguments?.getString("offerId").orEmpty(),
                     onBack = { navController.popBackStack() },
                 )
+            }
+            composable(ROUTE_DEBTS) {
+                DebtsScreen(onMenu = openDrawer)
             }
             composable(ROUTE_SETTINGS) {
                 SettingsScreen(

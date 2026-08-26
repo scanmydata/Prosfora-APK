@@ -131,3 +131,34 @@ interface NotePresetDao {
     @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM note_presets")
     suspend fun nextPosition(): Int
 }
+
+@Dao
+interface DebtDao {
+
+    @Query("SELECT * FROM debts WHERE deleted = 0 ORDER BY periodYear DESC, periodMonth DESC, kind")
+    fun observeAll(): Flow<List<DebtEntity>>
+
+    @Query("SELECT * FROM debts WHERE id = :id")
+    suspend fun getById(id: String): DebtEntity?
+
+    @Upsert
+    suspend fun upsert(debt: DebtEntity)
+
+    /** Η σάρωση του Drive φέρνει δεκάδες γραμμές μαζί — μία-μία θα κρατούσε. */
+    @Upsert
+    suspend fun upsertAll(items: List<DebtEntity>)
+
+    @Query("UPDATE debts SET deleted = 1, updatedAt = :at WHERE id = :id")
+    suspend fun softDelete(id: String, at: Long)
+
+    @Query("UPDATE debts SET paid = :paid, paidAt = :paidAt, updatedAt = :at WHERE id = :id")
+    suspend fun markPaid(id: String, paid: Boolean, paidAt: Long?, at: Long)
+
+    /** Όλα, μαζί με τα διαγραμμένα — μόνο ο συγχρονισμός το χρειάζεται. */
+    @Query("SELECT * FROM debts")
+    suspend fun allForSync(): List<DebtEntity>
+
+    /** Ποια παραστατικά έχουν ήδη διαβαστεί, ώστε η σάρωση να μην τα ξανακάνει. */
+    @Query("SELECT DISTINCT driveFileId FROM debts WHERE driveFileId != ''")
+    suspend fun importedFileIds(): List<String>
+}

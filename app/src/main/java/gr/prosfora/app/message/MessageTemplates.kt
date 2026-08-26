@@ -39,7 +39,7 @@ enum class MessageField(val token: String, val label: String) {
             ADDRESS -> offer.address
             KIND -> offer.kind.strippedKind().ifBlank { "κατοικία" }
             DATE -> offer.dateEpochDay.asOfferDate()
-            TOTAL -> details.total.asMoney()
+            TOTAL -> details.grandTotal.asMoney()
             EMAIL -> offer.email
             PHONE -> offer.customerPhone
             // Ο σύνδεσμος έρχεται από τις ρυθμίσεις, όχι από την προσφορά

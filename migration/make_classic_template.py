@@ -8,6 +8,8 @@
   * αρίθμηση σελίδων κάτω δεξιά, σε κάθε σελίδα
   * αέρας στην κορυφή από τη 2η σελίδα και μετά
   * ισχύς προσφοράς και τρόπος πληρωμής
+  * καθαρή αξία και ΦΠΑ 24% μέσα στον πίνακα
+  * στοιχίσεις που έβγαιναν στραβές στο τυπωμένο PDF
 
 Τρέξιμο:
     python migration/make_classic_template.py --source "…/ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ.docx"
@@ -22,14 +24,21 @@ from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt, RGBColor
+from docx.shared import Cm, Pt, RGBColor, Twips
+from docx.table import Table
 
-from make_template import FONT, GREY, NAVY, field, para, rule, write
+from make_template import (
+    FONT, GREEN_HEX, GREY, clone_row, field, para, rule, set_cell_text, write,
+)
 
 OUT = "assets/pdf-template/ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — κλασικό.docx"
 
 # Πόσος αέρας στην κορυφή των σελίδων μετά την πρώτη, σε στιγμές
 TOP_AIR_PT = 34
+
+# Το μπλε των επικεφαλίδων του κλασικού. Ορίζεται εδώ και δεν κληρονομείται από
+# το άλλο πρότυπο, που κινείται πια στα χρώματα του λογοτύπου.
+HEADING = RGBColor(0x1F, 0x38, 0x64)
 
 
 def furnish(section):
@@ -84,8 +93,9 @@ def add_terms(doc):
     def heading(text):
         def build(d):
             p = para(d, before=8, after=2)
-            write(p, text, size=10, bold=True, color=NAVY, spacing=20)
-            rule(p, "C55A11", size=4)
+            write(p, text, size=10, bold=True, color=HEADING, spacing=20)
+            # Πράσινο του λογοτύπου, όχι το πορτοκαλί που ήταν πριν
+            rule(p, GREEN_HEX, size=6)
             return p
         return build
 
@@ -114,33 +124,102 @@ def centre_everything(table):
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
-def fix_alignment(doc):
-    """Δύο στοιχίσεις που έβγαιναν στραβές στο τυπωμένο PDF.
+def table_after(paragraph, doc):
+    """Ο πρώτος πίνακας που ακολουθεί την [paragraph]."""
+    node = paragraph._p.getnext()
+    while node is not None and node.tag != qn("w:tbl"):
+        node = node.getnext()
+    return None if node is None else Table(node, doc)
 
-    Η ημερομηνία ήταν δεξιά σε όλο το πλάτος της σελίδας, ενώ ο τίτλος από πάνω
-    της είναι κεντραρισμένος — έμοιαζε ξεκρέμαστη. Και στα δείγματα εργασιών οι
-    εικόνες κάθονταν αριστερά μέσα στα κελιά τους, με μία λεζάντα να μη
-    συμφωνεί με τις άλλες δύο.
+
+def prices_table(doc):
+    """Ο πίνακας της ανάλυσης χώρων — τον βρίσκουμε από τις επικεφαλίδες του."""
+    for table in doc.tables:
+        head = " ".join(cell.text.strip() for cell in table.rows[0].cells)
+        if "ΠΕΡΙΓΡΑΦΗ ΧΩΡΟΥ" in head and "ΣΥΝΟΛΟ" in head:
+            return table
+    return None
+
+
+def table_width(table):
+    """Πλάτος του πίνακα σε twips, από το `w:tblW` ή από το άθροισμα του grid."""
+    tblPr = table._tbl.tblPr
+    node = tblPr.find(qn("w:tblW")) if tblPr is not None else None
+    if node is not None and node.get(qn("w:type")) == "dxa":
+        return int(float(node.get(qn("w:w"))))
+    grid = table._tbl.find(qn("w:tblGrid"))
+    if grid is None:
+        return None
+    return int(sum(float(c.get(qn("w:w"))) for c in grid.findall(qn("w:gridCol"))))
+
+
+def align_date_with_table(doc, section):
+    """Η ημερομηνία δεξιά, αλλά στο ίδιο δεξί χείλος με τον πίνακα.
+
+    Σκέτο «δεξιά» θα την πήγαινε ως το περιθώριο της σελίδας, ενώ ο πίνακας
+    σταματάει λίγο πριν — και η ημερομηνία θα κρεμόταν πιο έξω από τη στήλη
+    «ΣΥΝΟΛΟ». Το κενό ανάμεσά τους μπαίνει ως δεξιά εσοχή της παραγράφου.
     """
+    date = None
     for p in doc.paragraphs:
         if "<<[Ημερομηνία]>>" in p.text:
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            date = p
             break
+    if date is None:
+        return
 
+    date.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    table = prices_table(doc)
+    width = table_width(table) if table is not None else None
+    if width is None:
+        return
+    # Η αφαίρεση δύο Length δίνει σκέτο int σε EMU — 1 twip = 635 EMU
+    content = int(section.page_width) - int(section.left_margin) - int(section.right_margin)
+    gap = content // 635 - width
+    if gap > 0:
+        date.paragraph_format.right_indent = Twips(gap)
+
+
+def add_vat_rows(doc):
+    """Καθαρή αξία και ΦΠΑ 24%, ακριβώς πάνω από το γενικό σύνολο.
+
+    Οι γραμμές γράφονται πάντα στο πρότυπο· η εφαρμογή τις αφαιρεί όταν η
+    προσφορά δεν έχει ΦΠΑ — αυτό δηλώνει ο δείκτης `<<[Αν ΦΠΑ]>>`.
+    """
+    table = prices_table(doc)
+    if table is None:
+        raise SystemExit("δεν βρέθηκε ο πίνακας της ανάλυσης χώρων")
+
+    total_row = table.rows[-1]
+    if "<<[Αν ΦΠΑ]>>" in total_row.cells[0].text:
+        return                                     # έχει ξανατρέξει
+
+    for label, value in (
+        ("<<[Αν ΦΠΑ]>>ΚΑΘΑΡΗ ΑΞΙΑ", "<<[Καθαρή Αξία]>>"),
+        ("<<[Αν ΦΠΑ]>>ΦΠΑ 24%", "<<[ΦΠΑ]>>"),
+    ):
+        row = clone_row(table, total_row, total_row)
+        # Οι δύο ενδιάμεσες γραμμές είναι πληροφορία, όχι το συμπέρασμα:
+        # πιο ελαφριές από το γενικό σύνολο ώστε να ξεχωρίζει εκείνο
+        set_cell_text(row.cells[0], label, bold=False, color=GREY, size=9)
+        set_cell_text(row.cells[-1], value, bold=False, color=GREY, size=9)
+
+
+def fix_alignment(doc):
+    """Οι στοιχίσεις των δειγμάτων εργασιών.
+
+    Οι εικόνες κάθονταν αριστερά μέσα στα κελιά τους, με μία λεζάντα να μη
+    συμφωνεί με τις άλλες δύο.
+    """
     samples = find_paragraph(doc, "ΔΕΙΓΜΑΤΑ ΕΡΓΑΣΙΩΝ")
     if samples is None:
         return
     samples.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # Ο πίνακας των δειγμάτων είναι ο πρώτος μετά την επικεφαλίδα τους
-    node = samples._p.getnext()
-    while node is not None and node.tag != qn("w:tbl"):
-        node = node.getnext()
-    if node is None:
+    table = table_after(samples, doc)
+    if table is None:
         return
-    from docx.table import Table
-
-    table = Table(node, doc)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     centre_everything(table)
 
@@ -160,6 +239,8 @@ def build(source):
 
     furnish(section)
     add_terms(doc)
+    add_vat_rows(doc)
+    align_date_with_table(doc, section)
     fix_alignment(doc)
 
     doc.save(OUT)

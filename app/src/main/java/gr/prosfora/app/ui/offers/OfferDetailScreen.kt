@@ -127,6 +127,7 @@ fun OfferDetailScreen(
         ) {
             item { HeaderCard(current, viewModel) }
             item { SpacesCard(current, viewModel) }
+            item { VatCard(current, viewModel) }
             item { NotesCard(current, presets.map { it.text }, selectedNotes, viewModel) }
             item { TermsCard(current, viewModel) }
             if (current.offer.lastSentAt != null || current.offer.notifiedAt != null) {
@@ -527,6 +528,86 @@ private fun AddSpaceRow(onAdd: (String, Double, Double) -> Unit) {
 }
 
 // ------------------------------------------------------------ σημειώσεις -----
+
+@Composable
+/**
+ * ΦΠΑ 24%, με έναν διακόπτη.
+ *
+ * Ο συντελεστής δεν ρυθμίζεται: για ελαιοχρωματισμούς δεν υπάρχει μειωμένος,
+ * οπότε ένα πεδίο «ποσοστό» θα ήταν μόνο ευκαιρία για λάθος. Όταν ανάβει, οι
+ * γραμμές ΚΑΘΑΡΗ ΑΞΙΑ και ΦΠΑ εμφανίζονται μέσα στον πίνακα του PDF και το
+ * γενικό σύνολο γίνεται το ποσό με ΦΠΑ.
+ */
+@Composable
+private fun VatCard(details: OfferWithDetails, viewModel: OffersViewModel) {
+    val offer = details.offer
+    // Η έτοιμη παρατήρηση λέει το αντίθετο· με αναμμένο ΦΠΑ πρέπει να φύγει
+    val contradicting = details.notes.firstOrNull {
+        it.text.contains("δεν περιλαμβάνεται ο ΦΠΑ", ignoreCase = true)
+    }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("ΦΠΑ", style = MaterialTheme.typography.titleMedium)
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = offer.vatIncluded,
+                    onCheckedChange = { viewModel.updateOffer(offer.copy(vatIncluded = it)) },
+                )
+                Text(
+                    "Υπολογισμός ΦΠΑ 24%",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            if (offer.vatIncluded) {
+                HorizontalDivider()
+                AmountLine("Καθαρή αξία", details.total.asMoney())
+                AmountLine("ΦΠΑ 24%", details.vatAmount.asMoney())
+                HorizontalDivider()
+                AmountLine("Γενικό σύνολο", details.grandTotal.asMoney(), bold = true)
+
+                if (contradicting != null) {
+                    Text(
+                        "Η παρατήρηση «${contradicting.text}» λέει το αντίθετο.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = DeleteRed,
+                    )
+                    TextButton(onClick = { viewModel.deleteNote(contradicting) }) {
+                        Text("Αφαίρεση παρατήρησης")
+                    }
+                }
+            } else {
+                Text(
+                    "Το PDF τυπώνεται με καθαρές αξίες, χωρίς γραμμή ΦΠΑ.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AmountLine(label: String, value: String, bold: Boolean = false) {
+    val weight = if (bold) FontWeight.Bold else FontWeight.Normal
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = weight,
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = weight,
+            textAlign = TextAlign.End,
+        )
+    }
+}
 
 @Composable
 private fun NotesCard(
