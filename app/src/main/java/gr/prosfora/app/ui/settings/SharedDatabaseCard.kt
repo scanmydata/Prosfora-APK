@@ -127,7 +127,7 @@ fun SharedDatabaseSettings(
                 }
             },
             modifier = Modifier.weight(1f),
-        ) { Text("Νέο Sheet", maxLines = 1) }
+        ) { Text("Νέο Sheet") }
     }
 
     if (connectedId != null) {
@@ -189,7 +189,7 @@ fun SharedDatabaseSettings(
                     )
                 },
                 modifier = Modifier.weight(1f),
-            ) { Text("Άνοιγμα Sheet", maxLines = 1) }
+            ) { Text("Άνοιγμα Sheet") }
 
             TextButton(
                 onClick = {
@@ -210,7 +210,7 @@ fun SharedDatabaseSettings(
                     }
                 },
                 modifier = Modifier.weight(1f),
-            ) { Text("Άνοιγμα φακέλου", maxLines = 1) }
+            ) { Text("Άνοιγμα φακέλου") }
         }
 
         Text(

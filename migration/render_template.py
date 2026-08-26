@@ -234,13 +234,15 @@ def main() -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--offer", help="ID προσφοράς από το seed.json")
     source.add_argument("--xls", help="Υπάρχον φύλλο προσφοράς .xls")
+    parser.add_argument("--template", help="άλλο πρότυπο αντί του προεπιλεγμένου")
     parser.add_argument("--out")
     parser.add_argument("--dump", action="store_true")
     args = parser.parse_args()
 
     offer, spaces, notes = (from_seed(args.offer) if args.offer else from_xls(args.xls))
+    template = Path(args.template) if args.template else TEMPLATE
 
-    with zipfile.ZipFile(TEMPLATE) as src:
+    with zipfile.ZipFile(template) as src:
         xml = src.read("word/document.xml").decode("utf-8")
     rendered = render(xml, offer, spaces, notes)
 

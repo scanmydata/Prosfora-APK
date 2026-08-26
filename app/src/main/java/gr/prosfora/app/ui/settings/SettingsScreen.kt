@@ -236,7 +236,7 @@ fun SettingsScreen(onMenu: () -> Unit, onOpenTemplate: () -> Unit) {
                         Toast.makeText(context, "Αποθηκεύτηκε", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Αποθήκευση", maxLines = 1) }
+                ) { Text("Αποθήκευση") }
 
                 Text(
                     "Ο κωδικός αποθηκεύεται κρυπτογραφημένος στη συσκευή και δεν φεύγει " +
@@ -382,7 +382,7 @@ private fun OfferDefaultsSettings(googleSettings: GoogleSettings) {
             Toast.makeText(context, "Αποθηκεύτηκε", Toast.LENGTH_SHORT).show()
         },
         modifier = Modifier.fillMaxWidth(),
-    ) { Text("Αποθήκευση", maxLines = 1) }
+    ) { Text("Αποθήκευση") }
 
     TextButton(
         onClick = { terms = GoogleSettings.DEFAULT_PAYMENT_TERMS },

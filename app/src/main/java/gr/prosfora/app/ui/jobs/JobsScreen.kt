@@ -246,7 +246,7 @@ private fun JobCard(
                     OutlinedButton(
                         onClick = { onRequestReview(offer.id) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Αποστολή τώρα", maxLines = 1) }
+                    ) { Text("Αποστολή τώρα") }
                 }
             }
         }

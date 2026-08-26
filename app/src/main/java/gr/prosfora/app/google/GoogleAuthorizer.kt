@@ -9,7 +9,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
+import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
+import com.google.android.gms.common.Scopes
 import com.google.android.gms.common.api.Scope
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -47,6 +49,7 @@ class GoogleAuthorizer internal constructor(
                     pending = continuation
                     launchConsent(IntentSenderRequest.Builder(resolution.intentSender).build())
                 } else {
+                    rememberAccount(result)
                     val token = result.accessToken
                     if (token.isNullOrBlank()) {
                         continuation.resumeWithException(
@@ -62,12 +65,27 @@ class GoogleAuthorizer internal constructor(
         continuation.invokeOnCancellation { pending = null }
     }
 
+    /**
+     * Κρατάει τη διεύθυνση του λογαριασμού από το αποτέλεσμα της έγκρισης.
+     * Το `gmail.send` δεν επιτρέπει να τη διαβάσουμε από το Gmail API, οπότε
+     * αυτή είναι η μόνη ευκαιρία να τη μάθουμε.
+     */
+    private fun rememberAccount(result: AuthorizationResult) {
+        val settings = GoogleSettings(context)
+        settings.googleConnected = true
+        runCatching { result.toGoogleSignInAccount()?.email }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { settings.ownerEmail = it }
+    }
+
     internal fun onConsentResult(result: ActivityResult) {
         val continuation = pending ?: return
         pending = null
         runCatching {
             Identity.getAuthorizationClient(context)
                 .getAuthorizationResultFromIntent(result.data)
+                .also(::rememberAccount)
                 .accessToken
         }.onSuccess { token ->
             if (token.isNullOrBlank()) {
@@ -88,8 +106,14 @@ class GoogleAuthorizer internal constructor(
         /** Αποστολή email χωρίς app password. Sensitive — μόνο αποστολή, καμία ανάγνωση. */
         const val GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 
+        /**
+         * Η διεύθυνση του λογαριασμού. Μη ευαίσθητο scope· χωρίς αυτό η εφαρμογή
+         * δεν ξέρει πού να στείλει όταν ο χρήστης ζητά κάτι «στο email μου».
+         */
+        val EMAIL = Scopes.EMAIL
+
         /** Όλα σε ένα consent window — ο χρήστης εγκρίνει μία φορά. */
-        val SCOPES = listOf(DRIVE_FILE, SPREADSHEETS, GMAIL_SEND)
+        val SCOPES = listOf(DRIVE_FILE, SPREADSHEETS, GMAIL_SEND, EMAIL)
     }
 }
 

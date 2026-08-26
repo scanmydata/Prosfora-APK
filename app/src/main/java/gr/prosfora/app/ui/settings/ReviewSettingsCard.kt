@@ -132,7 +132,7 @@ fun ReviewSettings(googleSettings: GoogleSettings) {
             Toast.makeText(context, "Αποθηκεύτηκε", Toast.LENGTH_SHORT).show()
         },
         modifier = Modifier.fillMaxWidth(),
-    ) { Text("Αποθήκευση", maxLines = 1) }
+    ) { Text("Αποθήκευση") }
 
     editingLink?.let { draft ->
         var value by remember(draft) { mutableStateOf(draft) }

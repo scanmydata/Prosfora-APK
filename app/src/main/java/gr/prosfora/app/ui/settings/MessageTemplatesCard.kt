@@ -153,7 +153,7 @@ fun MessageTemplatesSettings(googleSettings: GoogleSettings) {
             Toast.makeText(context, "Τα πρότυπα αποθηκεύτηκαν", Toast.LENGTH_SHORT).show()
         },
         modifier = Modifier.fillMaxWidth(),
-    ) { Text("Αποθήκευση προτύπων", maxLines = 1) }
+    ) { Text("Αποθήκευση προτύπων") }
 
     TextButton(
         onClick = {

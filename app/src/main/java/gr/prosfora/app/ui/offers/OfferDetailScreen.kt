@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EventAvailable
@@ -435,7 +436,7 @@ private fun SpaceEditor(
                         )
                     },
                     modifier = Modifier.weight(1f),
-                ) { Text("Αποθήκευση", maxLines = 1) }
+                ) { Text("Αποθήκευση") }
 
                 OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
                     Text("Άκυρο", maxLines = 1)
@@ -629,7 +630,7 @@ private fun FreeNoteInput(onAdd: (String, Boolean) -> Unit) {
  * Και τα δύο τυπώνονται στο PDF, όπως ακριβώς στα φύλλα προσφοράς που έφτιαχνε
  * ο χρήστης με το χέρι.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun TermsCard(details: OfferWithDetails, viewModel: OffersViewModel) {
     val context = LocalContext.current
@@ -640,9 +641,11 @@ private fun TermsCard(details: OfferWithDetails, viewModel: OffersViewModel) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Ισχύς & τρόπος πληρωμής", style = MaterialTheme.typography.titleMedium)
 
-            Row(
+            // FlowRow και όχι Row: με μεγάλη γραμματοσειρά ή στενή οθόνη το
+            // κουμπί δίπλα στο chip στριμωχνόταν και το κείμενο κοβόταν
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 AssistChip(
                     onClick = { picking = true },
@@ -650,7 +653,6 @@ private fun TermsCard(details: OfferWithDetails, viewModel: OffersViewModel) {
                         Text(
                             offer.validUntilDay?.let { "Ισχύει έως ${it.asOfferDate()}" }
                                 ?: "Χωρίς ημερομηνία λήξης",
-                            maxLines = 1,
                         )
                     },
                     leadingIcon = {
@@ -663,9 +665,16 @@ private fun TermsCard(details: OfferWithDetails, viewModel: OffersViewModel) {
                     },
                 )
                 if (offer.validUntilDay != null) {
-                    TextButton(onClick = {
+                    // Εικονίδιο αντί για κείμενο: δεν έχει τι να κοπεί
+                    IconButton(onClick = {
                         viewModel.updateOffer(offer.copy(validUntilDay = null))
-                    }) { Text("Καθαρισμός", maxLines = 1) }
+                    }) {
+                        Icon(
+                            Icons.Default.Clear,
+                            contentDescription = "Καθαρισμός ημερομηνίας",
+                            tint = DeleteRed,
+                        )
+                    }
                 }
             }
             if (details.expired()) {
@@ -697,7 +706,7 @@ private fun TermsCard(details: OfferWithDetails, viewModel: OffersViewModel) {
                             offer.copy(paymentTerms = GoogleSettings(context).defaultPaymentTerms),
                         )
                     },
-                ) { Text("Συμπλήρωση από τις προεπιλογές", maxLines = 1) }
+                ) { Text("Συμπλήρωση από τις προεπιλογές") }
             }
         }
     }

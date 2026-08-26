@@ -54,6 +54,8 @@ fun ProsforaNavHost() {
 
     val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
 
+    EnsureGoogleAccess()
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         // Στις εσωτερικές οθόνες το σύρσιμο ανήκει στο περιεχόμενο, όχι στο μενού

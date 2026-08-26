@@ -20,6 +20,20 @@ enum class SendMethod(val label: String, val hint: String) {
     ),
 }
 
+/** Τα έτοιμα πρότυπα που έρχονται μαζί με την εφαρμογή. */
+enum class BuiltInTemplate(val asset: String, val label: String, val hint: String) {
+    CLASSIC(
+        "template-classic.docx",
+        "Κλασικό",
+        "Με λογότυπα, φωτογραφίες έργων και δείγματα εργασιών",
+    ),
+    COMPACT(
+        "template-compact.docx",
+        "Συμπτυγμένο",
+        "Λιτό, χωρίς εικόνες — χωράει σε μία σελίδα όπου γίνεται",
+    ),
+}
+
 class GoogleSettings(context: Context) {
 
     private val prefs = context.applicationContext
@@ -105,6 +119,26 @@ class GoogleSettings(context: Context) {
         get() = prefs.getBoolean(KEY_STATS_IMPORTED, true)
         set(value) = prefs.edit().putBoolean(KEY_STATS_IMPORTED, value).apply()
 
+    /** Ποιο έτοιμο πρότυπο εγκαθίσταται όταν δεν υπάρχει άλλο στο Drive. */
+    var builtInTemplate: BuiltInTemplate
+        get() = runCatching {
+            BuiltInTemplate.valueOf(prefs.getString(KEY_BUILTIN, null) ?: "")
+        }.getOrDefault(BuiltInTemplate.CLASSIC)
+        set(value) = prefs.edit().putString(KEY_BUILTIN, value.name).apply()
+
+    /**
+     * Η διεύθυνση του συνδεδεμένου λογαριασμού Google. Τη μαθαίνουμε από το
+     * consent window· χρησιμεύει για να στέλνει ο χρήστης πράγματα στον εαυτό του.
+     */
+    var ownerEmail: String
+        get() = prefs.getString(KEY_OWNER_EMAIL, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_OWNER_EMAIL, value.trim()).apply()
+
+    /** Έχει δοθεί έστω μία φορά έγκριση στη Google. */
+    var googleConnected: Boolean
+        get() = prefs.getBoolean(KEY_CONNECTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_CONNECTED, value).apply()
+
     /** Ξεχνάει τους φακέλους PDF ανά έτος — τους ξαναβρίσκει στον νέο χώρο εργασίας. */
     fun clearPdfFolders() = prefs.edit().remove(KEY_PDF_FOLDER).remove(KEY_PDF_YEARS).apply()
 
@@ -157,6 +191,9 @@ class GoogleSettings(context: Context) {
         private const val KEY_VALID_DAYS = "offer_valid_days"
         private const val KEY_PAYMENT_TERMS = "default_payment_terms"
         private const val KEY_STATS_IMPORTED = "stats_include_imported"
+        private const val KEY_BUILTIN = "builtin_template"
+        private const val KEY_OWNER_EMAIL = "owner_email"
+        private const val KEY_CONNECTED = "google_connected"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
 

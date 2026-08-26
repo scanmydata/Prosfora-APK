@@ -4,6 +4,7 @@ import android.content.Context
 import gr.prosfora.app.data.db.OfferWithDetails
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.DriveWorkspace
+import gr.prosfora.app.google.BuiltInTemplate
 import gr.prosfora.app.google.GoogleSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -36,18 +37,66 @@ object OfferPdf {
         val folderId = DriveWorkspace(drive, settings).rootFolder()
 
         val existing = drive.findInFolder(GoogleSettings.TEMPLATE_NAME, folderId)
-        val fileId = existing?.id ?: run {
-            val bundled = context.assets.open(BUNDLED_TEMPLATE).use { it.readBytes() }
-            drive.upload(
-                name = GoogleSettings.TEMPLATE_NAME,
-                bytes = bundled,
-                mimeType = DriveClient.DOCX_MIME,
-                parentId = folderId,
-                convertToGoogleDoc = true,
-            )
-        }
+        val fileId = existing?.id ?: installBuiltIn(context, drive, settings)
         settings.templateFileId = fileId
         fileId
+    }
+
+    /**
+     * Ανεβάζει στο Drive ένα από τα έτοιμα πρότυπα, αντικαθιστώντας ό,τι υπάρχει.
+     *
+     * Το προηγούμενο διαγράφεται ώστε να μη μείνουν δύο αρχεία με το ίδιο όνομα
+     * στον φάκελο — και να μη διαλέξει το Drive λάθος την επόμενη φορά.
+     */
+    suspend fun installBuiltIn(
+        context: Context,
+        drive: DriveClient,
+        settings: GoogleSettings,
+        choice: BuiltInTemplate = settings.builtInTemplate,
+    ): String = withContext(Dispatchers.IO) {
+        val bundled = context.assets.open(choice.asset).use { it.readBytes() }
+        val folderId = DriveWorkspace(drive, settings).rootFolder()
+
+        settings.templateFileId?.let { old -> runCatching { drive.delete(old) } }
+        settings.templateFileId = null
+
+        drive.upload(
+            name = GoogleSettings.TEMPLATE_NAME,
+            bytes = bundled,
+            mimeType = DriveClient.DOCX_MIME,
+            parentId = folderId,
+            convertToGoogleDoc = true,
+        ).also {
+            settings.templateFileId = it
+            settings.builtInTemplate = choice
+        }
+    }
+
+    /**
+     * Ανεβάζει πρότυπο που έφερε ο χρήστης. Το αρχείο του **δεν αγγίζεται**:
+     * διαβάζονται τα bytes, προσαρμόζονται για A4 και ανεβαίνει αντίγραφο.
+     */
+    suspend fun installFromBytes(
+        drive: DriveClient,
+        settings: GoogleSettings,
+        docx: ByteArray,
+    ): String = withContext(Dispatchers.IO) {
+        require(DocxPrintLayout.looksLikeDocx(docx)) {
+            "Το αρχείο δεν είναι έγγραφο Word (.docx)"
+        }
+        val prepared = DocxPrintLayout.normalize(docx)
+        val folderId = DriveWorkspace(drive, settings).rootFolder()
+
+        settings.templateFileId?.let { old -> runCatching { drive.delete(old) } }
+        settings.templateFileId = null
+
+        drive.upload(
+            name = GoogleSettings.TEMPLATE_NAME,
+            bytes = prepared,
+            mimeType = DriveClient.DOCX_MIME,
+            parentId = folderId,
+            convertToGoogleDoc = true,
+        ).also { settings.templateFileId = it }
     }
 
     /** Κατεβάζει το τρέχον πρότυπο ως .docx bytes. */
@@ -129,6 +178,4 @@ object OfferPdf {
     /** Ο σύνδεσμος για να ανοίξει ο χρήστης το πρότυπο στο Google Docs. */
     fun templateEditUrl(templateFileId: String): String =
         "https://docs.google.com/document/d/$templateFileId/edit"
-
-    private const val BUNDLED_TEMPLATE = "template.docx"
 }
