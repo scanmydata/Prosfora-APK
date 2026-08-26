@@ -19,11 +19,15 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -51,6 +55,8 @@ import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
 import gr.prosfora.app.util.parseDecimal
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.ZoneOffset
 
 /**
  * Χειροκίνητη καταχώρηση ή διόρθωση μιας οφειλής.
@@ -384,7 +390,9 @@ fun EmployeeIndexDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                people.forEach { employee ->
+                // Όσοι αποχώρησαν πέφτουν στο τέλος: δεν σβήνονται, αλλά ούτε
+                // στέκονται ανάμεσα σε αυτούς που πληρώνονται κάθε μήνα
+                people.sortedBy { it.gone() }.forEach { employee ->
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -393,10 +401,25 @@ fun EmployeeIndexDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(employee.display, style = MaterialTheme.typography.bodyLarge)
-                            if (employee.alias.isNotBlank()) {
+                            Text(
+                                employee.display,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (employee.gone()) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            val note = buildString {
+                                if (employee.alias.isNotBlank()) append(employee.name)
+                                employee.leftDay?.let {
+                                    if (isNotEmpty()) append(" · ")
+                                    append("αποχώρησε ${it.asOfferDate()}")
+                                }
+                            }
+                            if (note.isNotBlank()) {
                                 Text(
-                                    employee.name,
+                                    note,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -419,11 +442,45 @@ fun EmployeeIndexDialog(
     )
 
     editing?.let { employee ->
-        var alias by remember(employee.id) { mutableStateOf(employee.alias) }
-        AlertDialog(
-            onDismissRequest = { editing = null },
-            title = { Text(employee.name) },
-            text = {
+        EmployeeEditor(
+            employee = employee,
+            onDismiss = { editing = null },
+            onSave = {
+                editing = null
+                scope.launch { repository.saveEmployee(it) }
+            },
+            onDelete = {
+                editing = null
+                scope.launch { repository.deleteEmployee(employee.id) }
+            },
+        )
+    }
+}
+
+/**
+ * Ψευδώνυμο, ημερομηνία αποχώρησης, και διαγραφή.
+ *
+ * Η αποχώρηση είναι προαιρετική και δεν κρύβει τον εργαζόμενο: τον στέλνει στο
+ * τέλος της λίστας. Οι περσινές του μισθοδοσίες μένουν και χρειάζονται όνομα.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EmployeeEditor(
+    employee: EmployeeEntity,
+    onDismiss: () -> Unit,
+    onSave: (EmployeeEntity) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var alias by remember(employee.id) { mutableStateOf(employee.alias) }
+    var left by remember(employee.id) { mutableStateOf(employee.leftDay) }
+    var picking by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(employee.name) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 StableTextField(
                     value = alias,
                     onValueChange = { alias = it },
@@ -431,16 +488,73 @@ fun EmployeeIndexDialog(
                     placeholder = "όπως τον λες εσύ",
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        left?.let { "Αποχώρησε ${it.asOfferDate()}" } ?: "Χωρίς αποχώρηση",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { picking = true }) { Text("Ορισμός") }
+                    if (left != null) {
+                        TextButton(onClick = { left = null }) { Text("Καθαρισμός") }
+                    }
+                }
+                TextButton(onClick = { confirmDelete = true }) {
+                    Text("Διαγραφή από το ευρετήριο", color = DeleteRed)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(employee.copy(alias = alias.trim(), leftDay = left))
+            }) { Text("Αποθήκευση") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Άκυρο") } },
+    )
+
+    if (picking) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = (left ?: LocalDate.now().toEpochDay()) * 86_400_000L,
+        )
+        DatePickerDialog(
+            onDismissRequest = { picking = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    // Ο DatePicker δουλεύει σε UTC· η μετατροπή γίνεται εκεί,
+                    // αλλιώς η τοπική ζώνη μετακινεί τη μέρα κατά μία
+                    state.selectedDateMillis?.let { millis ->
+                        left = java.time.Instant.ofEpochMilli(millis)
+                            .atZone(ZoneOffset.UTC).toLocalDate().toEpochDay()
+                    }
+                    picking = false
+                }) { Text("Επιλογή") }
+            },
+            dismissButton = {
+                TextButton(onClick = { picking = false }) { Text("Άκυρο") }
+            },
+        ) {
+            DatePicker(state = state)
+        }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Διαγραφή εργαζόμενου") },
+            text = {
+                Text(
+                    "Φεύγει από το ευρετήριο μαζί με το ψευδώνυμό του. " +
+                        "Οι μισθοδοσίες του μένουν όπως είναι.",
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val updated = employee.copy(alias = alias.trim())
-                    editing = null
-                    scope.launch { repository.saveEmployee(updated) }
-                }) { Text("Αποθήκευση") }
+                    confirmDelete = false
+                    onDelete()
+                }) { Text("Διαγραφή", color = DeleteRed) }
             },
             dismissButton = {
-                TextButton(onClick = { editing = null }) { Text("Άκυρο") }
+                TextButton(onClick = { confirmDelete = false }) { Text("Άκυρο") }
             },
         )
     }

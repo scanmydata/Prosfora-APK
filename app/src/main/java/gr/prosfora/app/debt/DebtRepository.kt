@@ -21,6 +21,16 @@ class DebtRepository(context: Context) {
     suspend fun saveEmployee(employee: EmployeeEntity) =
         employees.upsert(employee.copy(updatedAt = System.currentTimeMillis()))
 
+    /**
+     * Σβήνει έναν εργαζόμενο από το ευρετήριο.
+     *
+     * Οι οφειλές του **μένουν**: είναι πληρωμές που έγιναν, και το ιστορικό δεν
+     * ξαναγράφεται επειδή κάποιος έφυγε. Χάνεται μόνο το ψευδώνυμό του, οπότε
+     * οι παλιές γραμμές ξαναδείχνουν το τυπωμένο όνομα.
+     */
+    suspend fun deleteEmployee(id: String) =
+        employees.softDelete(id, System.currentTimeMillis())
+
     suspend fun save(debt: DebtEntity) = debts.upsert(
         debt.copy(
             updatedAt = System.currentTimeMillis(),

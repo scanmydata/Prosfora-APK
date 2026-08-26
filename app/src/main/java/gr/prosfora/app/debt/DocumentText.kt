@@ -3,16 +3,19 @@ package gr.prosfora.app.debt
 import gr.prosfora.app.google.DriveClient
 
 /**
- * Βγάζει το κείμενο ενός παραστατικού, με σειρά προτεραιότητας.
+ * Βγάζει το κείμενο ενός παραστατικού, δοκιμάζοντας δρόμους με σειρά.
  *
  * 1. **Εξαγωγή από μέσα** — αν το PDF έχει επίπεδο κειμένου, το Drive το
  *    διαβάζει αυτούσιο. Κανένα OCR, κανένα λάθος ψηφίο.
- * 2. **ocr.space** — για σαρωμένα έντυπα και στιγμιότυπα οθόνης.
- * 3. **OCR του Drive** — δίχτυ ασφαλείας όταν το ocr.space αρνηθεί ή λείπει κλειδί.
+ * 2. **OCR του Drive** — με *ανέβασμα* του αρχείου ως έγγραφο Google και
+ *    `ocrLanguage=el`. Δωρεάν, ελληνικά, με τον λογαριασμό του χρήστη.
+ * 3. **ocr.space** — μόνο αν υπάρχει κλειδί. Το δωρεάν επίπεδό του μπλοκάρει
+ *    κατά διαστήματα (E571), οπότε δεν μπορεί να είναι ο κύριος δρόμος.
  *
- * Η σειρά έχει σημασία γιατί τα δύο πρώτα δίνουν διαφορετικής ποιότητας
- * αποτέλεσμα: η εξαγωγή είναι ακριβής, το OCR είναι εικασία. Ο δρόμος που
- * ακολουθήθηκε επιστρέφεται μαζί, για να τον δει ο χρήστης πριν αποθηκεύσει.
+ * Η σειρά έχει σημασία: η εξαγωγή είναι ακριβής, το OCR είναι εικασία. Και ο
+ * ένας δρόμος δεν αρκεί — αν το κείμενο βγήκε αλλά **δεν βγάζει οφειλή**,
+ * δοκιμάζεται ο επόμενος. Ένα PDF με χαλασμένο επίπεδο κειμένου αλλιώς θα
+ * κατέληγε σε αδιέξοδο με ένα «καμία οφειλή δεν αναγνωρίστηκε».
  */
 class DocumentText(
     private val drive: DriveClient,
@@ -21,8 +24,8 @@ class DocumentText(
 
     enum class Route(val label: String) {
         TEXT_LAYER("κείμενο από το αρχείο"),
-        OCR_SPACE("OCR (ocr.space)"),
         DRIVE_OCR("OCR (Google Drive)"),
+        OCR_SPACE("OCR (ocr.space)"),
         NONE("δεν διαβάστηκε"),
     }
 
@@ -30,35 +33,63 @@ class DocumentText(
         val isEmpty: Boolean get() = text.isBlank()
     }
 
-    suspend fun read(bytes: ByteArray?, driveFileId: String): Result {
+    /**
+     * Το κείμενο του αρχείου. Το [accept] κρίνει αν ένας δρόμος «έπιασε» —
+     * συνήθως «βγήκε τουλάχιστον μία οφειλή». Αν κανένας δεν το ικανοποιήσει,
+     * επιστρέφεται ό,τι διαβάστηκε πρώτο, για να το δει ο χρήστης.
+     */
+    suspend fun read(
+        bytes: ByteArray?,
+        driveFileId: String,
+        fileName: String = "παραστατικό",
+        accept: (String) -> Boolean = { it.isNotBlank() },
+    ): Result {
         val problems = mutableListOf<String>()
+        var firstText: Result? = null
 
-        if (bytes != null && DocumentBytes.hasTextLayer(bytes)) {
-            val text = driveText(driveFileId)
-            if (text.isNotBlank()) return Result(text, Route.TEXT_LAYER)
-            problems += "η εξαγωγή κειμένου δεν απέδωσε"
+        routes(bytes, driveFileId, fileName).forEach { (route, read) ->
+            val text = runCatching { read() }
+                .onFailure { problems += "${route.label}: ${it.message}" }
+                .getOrDefault("")
+                .trim()
+
+            if (text.isBlank()) return@forEach
+            if (firstText == null) firstText = Result(text, route)
+            if (accept(text)) return Result(text, route, problems.joinToString(" · "))
+            problems += "${route.label}: δεν αναγνωρίστηκε οφειλή"
         }
 
-        // Τοπικό αντίγραφο: το smart cast δεν περνάει μέσα σε lambda όταν η
-        // ιδιότητα ανήκει στην κλάση
-        val engine = ocr
-        if (bytes != null && engine != null) {
-            runCatching { engine.read(bytes, "παραστατικό") }
-                .onSuccess { return Result(it, Route.OCR_SPACE) }
-                .onFailure { problems += it.message.orEmpty() }
-        }
-
-        val fallback = driveText(driveFileId)
-        if (fallback.isNotBlank()) {
-            return Result(fallback, Route.DRIVE_OCR, problems.joinToString(" · "))
-        }
-        return Result("", Route.NONE, problems.joinToString(" · "))
+        return firstText?.copy(note = problems.joinToString(" · "))
+            ?: Result("", Route.NONE, problems.joinToString(" · "))
     }
 
-    /**
-     * Το Drive μετατρέπει το αρχείο σε έγγραφο Google και μας δίνει το κείμενο.
-     * Όταν υπάρχει επίπεδο κειμένου το διαβάζει αυτούσιο· αλλιώς κάνει OCR.
-     */
-    private suspend fun driveText(fileId: String): String =
-        runCatching { drive.readTextOf(fileId) }.getOrDefault("").trim()
+    /** Οι διαθέσιμοι δρόμοι, με τη σειρά που αξίζει να δοκιμαστούν. */
+    private fun routes(
+        bytes: ByteArray?,
+        driveFileId: String,
+        fileName: String,
+    ): List<Pair<Route, suspend () -> String>> = buildList {
+        val hasText = bytes != null && DocumentBytes.hasTextLayer(bytes)
+
+        // Με επίπεδο κειμένου, η απλή μετατροπή αρκεί και είναι ακριβής
+        if (hasText && driveFileId.isNotBlank()) {
+            add(Route.TEXT_LAYER to { drive.readTextOf(driveFileId) })
+        }
+
+        if (bytes != null) {
+            val kind = DocumentBytes.kindOf(bytes)
+            if (kind != null) {
+                add(Route.DRIVE_OCR to { drive.readTextOf(bytes, fileName, kind.mime) })
+            }
+            val engine = ocr
+            if (engine != null) {
+                add(Route.OCR_SPACE to { engine.read(bytes, fileName) })
+            }
+        }
+
+        // Χωρίς bytes —δεν κατέβηκε το αρχείο— μένει μόνο ο δρόμος του Drive
+        if (bytes == null && driveFileId.isNotBlank()) {
+            add(Route.DRIVE_OCR to { drive.readTextOf(driveFileId) })
+        }
+    }
 }

@@ -31,6 +31,16 @@ class OcrSpaceClient(private val apiKey: String) {
 
     class Failure(message: String) : IllegalStateException(message)
 
+    /**
+     * Το δωρεάν επίπεδο μπλοκαρισμένο (E571). Δεν είναι σφάλμα δικό μας ούτε
+     * περνάει με επανάληψη — απλώς αυτή τη στιγμή η υπηρεσία δεν εξυπηρετεί
+     * δωρεάν κλειδιά.
+     */
+    class Throttled : IllegalStateException(
+        "Το δωρεάν ocr.space είναι υπερφορτωμένο και μπλοκάρει το κλειδί " +
+            "(E571). Δοκίμασε αργότερα ή άφησε το OCR στο Google Drive.",
+    )
+
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(180, TimeUnit.SECONDS)
@@ -63,9 +73,15 @@ class OcrSpaceClient(private val apiKey: String) {
 
         val problems = mutableListOf<String>()
         attempts.forEach { attempt ->
-            runCatching { withRetry(bytes, fileName, kind, attempt) }
-                .onSuccess { return@withContext it }
-                .onFailure { problems += "μηχανή ${attempt.engine}: ${it.message}" }
+            try {
+                return@withContext withRetry(bytes, fileName, kind, attempt)
+            } catch (throttled: Throttled) {
+                // Δεν έχει νόημα να δοκιμαστούν οι υπόλοιπες μηχανές: το φρένο
+                // μπαίνει στο κλειδί, όχι στη μηχανή
+                throw throttled
+            } catch (failure: Exception) {
+                problems += "μηχανή ${attempt.engine}: ${failure.message}"
+            }
         }
         throw Failure(problems.joinToString(" · "))
     }
@@ -90,6 +106,8 @@ class OcrSpaceClient(private val apiKey: String) {
                 last = transient
                 // Γεωμετρική αναμονή: 1s, 3s. Το 503 του ocr.space περνάει μόνο του
                 delay(1000L * (1 + round * 2))
+            } catch (throttled: Throttled) {
+                throw throttled
             } catch (fatal: Failure) {
                 throw fatal
             }
@@ -129,6 +147,7 @@ class OcrSpaceClient(private val apiKey: String) {
             val payload = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 val detail = messageIn(payload).ifBlank { payload.take(160) }
+                if (detail.contains("E571") || detail.contains("throttled")) throw Throttled()
                 val text = "ocr.space ${response.code}${if (detail.isBlank()) "" else ": $detail"}"
                 // 429 = ξεπεράστηκε ο ρυθμός, 5xx = δικό τους πρόβλημα
                 if (response.code == 429 || response.code >= 500) throw Transient(text)
@@ -145,6 +164,7 @@ class OcrSpaceClient(private val apiKey: String) {
         val exit = json.optInt("OCRExitCode", 0)
         if (json.optBoolean("IsErroredOnProcessing") || exit >= 3) {
             val message = messageIn(payload)
+            if (message.contains("E571") || message.contains("throttled")) throw Throttled()
             // E101 λήξη χρόνου, E208 εσωτερικό σφάλμα — και τα δύο περνάνε με επανάληψη
             if (message.contains("E101") || message.contains("E208")) throw Transient(message)
             throw Failure(message.ifBlank { "Το ocr.space δεν διάβασε κείμενο" })

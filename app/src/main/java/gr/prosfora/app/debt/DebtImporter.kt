@@ -142,7 +142,11 @@ class DebtImporter(
     }
 
     private suspend fun read(fileName: String, driveFileId: String, bytes: ByteArray?): Found {
-        val result = reader.read(bytes, driveFileId)
+        // Ένας δρόμος «έπιασε» μόνο αν βγάζει οφειλή. Σκέτο κείμενο δεν αρκεί:
+        // ένα χαλασμένο επίπεδο κειμένου διαβάζεται μια χαρά και δεν λέει τίποτα
+        val result = reader.read(bytes, driveFileId, fileName) { text ->
+            DebtParser.parse(text, fileName, driveFileId).isNotEmpty()
+        }
         return Found(
             fileName = fileName,
             driveFileId = driveFileId,

@@ -159,10 +159,20 @@ data class EmployeeEntity(
     /** Πώς θέλει να το βλέπει ο χρήστης· κενό σημαίνει «όπως τυπώνεται». */
     val alias: String = "",
     val code: String = "",
+    /**
+     * Πότε αποχώρησε, ως epoch day. Προαιρετικό: μπαίνει μόνο αν το θέλει ο
+     * χρήστης. Ο εργαζόμενος δεν σβήνεται όταν φύγει — οι περσινές μισθοδοσίες
+     * του παραμένουν και πρέπει να έχουν όνομα.
+     */
+    val leftDay: Long? = null,
     val updatedAt: Long = System.currentTimeMillis(),
     val deleted: Boolean = false,
 ) {
     val display: String get() = alias.ifBlank { name }
+
+    /** Έχει αποχωρήσει ως σήμερα; */
+    fun gone(today: LocalDate = LocalDate.now()): Boolean =
+        leftDay != null && leftDay <= today.toEpochDay()
 
     companion object {
         fun idFor(name: String): String =

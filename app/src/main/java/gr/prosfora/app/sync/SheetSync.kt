@@ -265,6 +265,7 @@ class SheetSync(
                 code = row[3],
                 updatedAt = row[4].toLongOrNull() ?: 0L,
                 deleted = row[5] == "1",
+                leftDay = row[6].toLongOrNull(),
             )
         }
 
@@ -373,6 +374,7 @@ class SheetSync(
             it.code,
             it.updatedAt.toString(),
             if (it.deleted) "1" else "0",
+            it.leftDay?.toString().orEmpty(),
         )
     }
 
@@ -427,7 +429,7 @@ class SheetSync(
         )
         private val PEOPLE_HEADER = listOf(
             "ID_Εργαζόμενου", "Όνομα", "Ψευδώνυμο", "Κωδικός",
-            "Ενημερώθηκε", "Διαγραμμένο",
+            "Ενημερώθηκε", "Διαγραμμένο", "Αποχώρηση",
         )
         private val SPACE_HEADER = listOf(
             "ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)",

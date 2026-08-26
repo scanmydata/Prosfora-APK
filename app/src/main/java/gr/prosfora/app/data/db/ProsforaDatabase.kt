@@ -41,7 +41,7 @@ class Converters {
         OfferEntity::class, SpaceEntity::class, NoteEntity::class,
         NotePresetEntity::class, DebtEntity::class, EmployeeEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -221,6 +221,13 @@ abstract class ProsforaDatabase : RoomDatabase() {
             }
         }
 
+        /** v11: ημερομηνία αποχώρησης εργαζόμενου, προαιρετική. */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                connection.execSQL("ALTER TABLE employees ADD COLUMN leftDay INTEGER")
+            }
+        }
+
         /**
          * Οι σημειώσεις που επαναλαμβάνονται σε κάθε προσφορά — από το δείγμα PDF
          * και το EnumList "Παρατηρήσεις Έργου" του AppSheet.
@@ -248,7 +255,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
                     MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
-                    MIGRATION_8_9, MIGRATION_9_10,
+                    MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                 )
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {

@@ -97,6 +97,7 @@ class DriveClient(private val accessToken: String) {
         mimeType: String,
         parentId: String? = null,
         convertToGoogleDoc: Boolean = false,
+        ocrLanguage: String? = null,
     ): String = withContext(Dispatchers.IO) {
         val metadata = JSONObject()
             .put("name", name)
@@ -111,10 +112,42 @@ class DriveClient(private val accessToken: String) {
             .addPart(bytes.toRequestBody(mimeType.toMediaType()))
             .build()
 
-        val request = builder("$UPLOAD/files?uploadType=multipart&fields=id")
-            .post(body)
-            .build()
-        execute(request) { JSONObject(it).getString("id") }
+        val url = buildString {
+            append("$UPLOAD/files?uploadType=multipart&fields=id")
+            if (ocrLanguage != null) append("&ocrLanguage=$ocrLanguage")
+        }
+        execute(builder(url).post(body).build()) { JSONObject(it).getString("id") }
+    }
+
+    /**
+     * OCR από το ίδιο το Drive, με **ανέβασμα** και όχι με αντιγραφή.
+     *
+     * Αυτή είναι η τεκμηριωμένη διαδρομή: το `ocrLanguage` δουλεύει κατά την
+     * *εισαγωγή* ενός αρχείου που μετατρέπεται σε έγγραφο Google. Το ίδιο
+     * όρισμα πάνω σε `files.copy` δεν εγγυάται τίποτα — γι' αυτό ένα σαρωμένο
+     * PDF γύριζε άδειο.
+     *
+     * Το προσωρινό έγγραφο σβήνεται ό,τι κι αν γίνει: αλλιώς κάθε ανάγνωση θα
+     * άφηνε σκουπίδια στο Drive του χρήστη.
+     */
+    suspend fun readTextOf(
+        bytes: ByteArray,
+        name: String,
+        mimeType: String,
+        ocrLanguage: String = "el",
+    ): String {
+        val docId = upload(
+            name = "prosfora-ocr-$name",
+            bytes = bytes,
+            mimeType = mimeType,
+            convertToGoogleDoc = true,
+            ocrLanguage = ocrLanguage,
+        )
+        return try {
+            export(docId, TEXT_MIME).toString(Charsets.UTF_8)
+        } finally {
+            runCatching { delete(docId) }
+        }
     }
 
     /**
