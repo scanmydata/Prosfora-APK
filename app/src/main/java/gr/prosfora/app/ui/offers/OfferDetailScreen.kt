@@ -527,9 +527,8 @@ private fun AddSpaceRow(onAdd: (String, Double, Double) -> Unit) {
     }
 }
 
-// ------------------------------------------------------------ σημειώσεις -----
+// ------------------------------------------------------------------- ΦΠΑ -----
 
-@Composable
 /**
  * ΦΠΑ 24%, με έναν διακόπτη.
  *
@@ -608,6 +607,8 @@ private fun AmountLine(label: String, value: String, bold: Boolean = false) {
         )
     }
 }
+
+// ------------------------------------------------------------ σημειώσεις -----
 
 @Composable
 private fun NotesCard(
