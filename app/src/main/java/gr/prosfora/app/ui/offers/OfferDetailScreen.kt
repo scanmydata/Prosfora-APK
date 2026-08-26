@@ -127,6 +127,7 @@ fun OfferDetailScreen(
         ) {
             item { HeaderCard(current, viewModel) }
             item { SpacesCard(current, viewModel) }
+            item { ExtrasCard(current, viewModel) }
             item { VatCard(current, viewModel) }
             item { NotesCard(current, presets.map { it.text }, selectedNotes, viewModel) }
             item { TermsCard(current, viewModel) }
@@ -314,7 +315,7 @@ private fun SpacesCard(details: OfferWithDetails, viewModel: OffersViewModel) {
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    details.total.asMoney(),
+                    details.linesTotal.asMoney(),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.End,
@@ -527,15 +528,88 @@ private fun AddSpaceRow(onAdd: (String, Double, Double) -> Unit) {
     }
 }
 
+// --------------------------------------------------- πρόσθετα κόστη -----
+
+/**
+ * Σκαλωσιά και άδεια μικρής κλίμακας εργασιών.
+ *
+ * Χρεώνονται μόνο σε κάποιες δουλειές και το ποσό αλλάζει κάθε φορά, γι' αυτό
+ * διακόπτης και πεδίο μαζί. Το ποσό δεν σβήνεται όταν ο διακόπτης κλείσει: αν
+ * ξανανοίξει, είναι εκεί.
+ */
+@Composable
+private fun ExtrasCard(details: OfferWithDetails, viewModel: OffersViewModel) {
+    val offer = details.offer
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Πρόσθετα κόστη", style = MaterialTheme.typography.titleMedium)
+
+            ExtraCost(
+                label = "Σκαλωσιά",
+                enabled = offer.scaffolding,
+                amount = offer.scaffoldingCost,
+                onEnabled = { viewModel.updateOffer(offer.copy(scaffolding = it)) },
+                onAmount = { viewModel.updateOffer(offer.copy(scaffoldingCost = it)) },
+            )
+            ExtraCost(
+                label = "Άδεια μικρής κλίμακας εργασιών",
+                enabled = offer.permit,
+                amount = offer.permitCost,
+                onEnabled = { viewModel.updateOffer(offer.copy(permit = it)) },
+                onAmount = { viewModel.updateOffer(offer.copy(permitCost = it)) },
+            )
+
+            if (!offer.scaffolding && !offer.permit) {
+                Text(
+                    "Όσα δεν είναι επιλεγμένα δεν εμφανίζονται καθόλου στο PDF.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExtraCost(
+    label: String,
+    enabled: Boolean,
+    amount: Double,
+    onEnabled: (Boolean) -> Unit,
+    onAmount: (Double) -> Unit,
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = enabled, onCheckedChange = onEnabled)
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // Το πεδίο μπαίνει από κάτω και όχι δίπλα: με μεγάλη γραμματοσειρά ή
+        // μακρύ τίτλο, δίπλα στο checkbox δεν του μένει πλάτος
+        if (enabled) {
+            StableTextField(
+                value = if (amount > 0.0) amount.asNumber() else "",
+                onValueChange = { onAmount(it.parseDecimal() ?: 0.0) },
+                label = "Ποσό (€)",
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth().padding(start = 48.dp, bottom = 4.dp),
+            )
+        }
+    }
+}
+
 // ------------------------------------------------------------------- ΦΠΑ -----
 
 /**
- * ΦΠΑ 24%, με έναν διακόπτη.
+ * Τα σύνολα που κλείνουν την προσφορά, και ο διακόπτης του ΦΠΑ.
  *
  * Ο συντελεστής δεν ρυθμίζεται: για ελαιοχρωματισμούς δεν υπάρχει μειωμένος,
- * οπότε ένα πεδίο «ποσοστό» θα ήταν μόνο ευκαιρία για λάθος. Όταν ανάβει, οι
- * γραμμές ΚΑΘΑΡΗ ΑΞΙΑ και ΦΠΑ εμφανίζονται μέσα στον πίνακα του PDF και το
- * γενικό σύνολο γίνεται το ποσό με ΦΠΑ.
+ * οπότε ένα πεδίο «ποσοστό» θα ήταν μόνο ευκαιρία για λάθος. Η κάρτα δείχνει
+ * ακριβώς τις γραμμές που θα τυπωθούν στο κάτω μέρος του πίνακα.
  */
 @Composable
 private fun VatCard(details: OfferWithDetails, viewModel: OffersViewModel) {
@@ -547,7 +621,7 @@ private fun VatCard(details: OfferWithDetails, viewModel: OffersViewModel) {
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("ΦΠΑ", style = MaterialTheme.typography.titleMedium)
+            Text("Σύνολα & ΦΠΑ", style = MaterialTheme.typography.titleMedium)
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
@@ -561,29 +635,32 @@ private fun VatCard(details: OfferWithDetails, viewModel: OffersViewModel) {
                 )
             }
 
-            if (offer.vatIncluded) {
-                HorizontalDivider()
-                AmountLine("Καθαρή αξία", details.total.asMoney())
-                AmountLine("ΦΠΑ 24%", details.vatAmount.asMoney())
-                HorizontalDivider()
-                AmountLine("Γενικό σύνολο", details.grandTotal.asMoney(), bold = true)
-
-                if (contradicting != null) {
-                    Text(
-                        "Η παρατήρηση «${contradicting.text}» λέει το αντίθετο.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = DeleteRed,
-                    )
-                    TextButton(onClick = { viewModel.deleteNote(contradicting) }) {
-                        Text("Αφαίρεση παρατήρησης")
-                    }
+            HorizontalDivider()
+            if (details.scaffoldingCost > 0.0 || details.permitCost > 0.0) {
+                AmountLine("Χώροι", details.linesTotal.asMoney())
+                if (details.scaffoldingCost > 0.0) {
+                    AmountLine("Σκαλωσιά", details.scaffoldingCost.asMoney())
                 }
-            } else {
+                if (details.permitCost > 0.0) {
+                    AmountLine("Άδεια μικρής κλίμακας", details.permitCost.asMoney())
+                }
+            }
+            if (offer.vatIncluded) {
+                AmountLine("Σύνολο", details.total.asMoney(), bold = true)
+                AmountLine("ΦΠΑ 24%", details.vatAmount.asMoney())
+            }
+            HorizontalDivider()
+            AmountLine("Γενικό σύνολο", details.grandTotal.asMoney(), bold = true)
+
+            if (offer.vatIncluded && contradicting != null) {
                 Text(
-                    "Το PDF τυπώνεται με καθαρές αξίες, χωρίς γραμμή ΦΠΑ.",
+                    "Η παρατήρηση «${contradicting.text}» λέει το αντίθετο.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = DeleteRed,
                 )
+                TextButton(onClick = { viewModel.deleteNote(contradicting) }) {
+                    Text("Αφαίρεση παρατήρησης")
+                }
             }
         }
     }

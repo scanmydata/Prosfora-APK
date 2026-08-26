@@ -28,10 +28,11 @@ enum class DebtKind(val label: String, val agency: DebtAgency) {
     AADE("Βεβαιωμένη οφειλή", DebtAgency.AADE),
     ADVERTISING("Εισφορές διαφήμισης", DebtAgency.ADVERTISING),
     PAYROLL("Μισθοδοσία", DebtAgency.PAYROLL),
+    PAYROLL_BONUS("Δώρο", DebtAgency.PAYROLL),
     ;
 
     /** Στη μισθοδοσία ο τίτλος της γραμμής είναι ο εργαζόμενος, όχι το είδος. */
-    val perPerson: Boolean get() = this == PAYROLL
+    val perPerson: Boolean get() = agency == DebtAgency.PAYROLL
 }
 
 /**
@@ -62,6 +63,13 @@ data class DebtEntity(
     val personCode: String = "",
     val paid: Boolean = false,
     val paidAt: Long? = null,
+    /**
+     * Πότε πληρώθηκε στην πραγματικότητα, ως epoch day.
+     *
+     * Χωριστό από το [paidAt], που είναι απλώς η στιγμή που τσεκαρίστηκε το
+     * κουτάκι: μια οφειλή σημειώνεται συχνά μέρες μετά την πληρωμή της.
+     */
+    val paidDay: Long? = null,
     /** Το όνομα του αρχείου από το οποίο διαβάστηκε· κενό αν γράφτηκε με το χέρι. */
     val source: String = "",
     /** Το αντίγραφο του παραστατικού στο Drive, για να ανοίγει με ένα άγγιγμα. */
@@ -119,8 +127,38 @@ data class DebtEntity(
         fun defaultDue(kind: DebtKind, year: Int, month: Int): Long? {
             if (month !in 1..12 || year <= 0) return null
             val period = YearMonth.of(year, month)
-            val target = if (kind == DebtKind.PAYROLL) period else period.plusMonths(1)
+            // Η μισθοδοσία —και τα δώρα— πληρώνονται μέσα στον ίδιο μήνα
+            val target =
+                if (kind.agency == DebtAgency.PAYROLL) period else period.plusMonths(1)
             return target.atEndOfMonth().toEpochDay()
         }
+    }
+}
+
+/**
+ * Ένας εργαζόμενος, όπως εμφανίζεται στις μισθοδοτικές καταστάσεις.
+ *
+ * Υπάρχει για δύο λόγους: για το ευρετήριο, ώστε να φαίνονται όλοι μαζί με τα
+ * ποσά τους, και για τα **ψευδώνυμα** — στις καταστάσεις τα ονόματα γράφονται
+ * με λατινικά κεφαλαία και συχνά ανάποδα, οπότε ο χρήστης θέλει να τα βλέπει
+ * όπως τους ξέρει ο ίδιος.
+ */
+@Entity(tableName = "employees")
+data class EmployeeEntity(
+    /** Το όνομα κανονικοποιημένο — δεν αλλάζει ποτέ, είναι ο σύνδεσμος. */
+    @PrimaryKey val id: String,
+    /** Όπως τυπώνεται στην κατάσταση. */
+    val name: String,
+    /** Πώς θέλει να το βλέπει ο χρήστης· κενό σημαίνει «όπως τυπώνεται». */
+    val alias: String = "",
+    val code: String = "",
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deleted: Boolean = false,
+) {
+    val display: String get() = alias.ifBlank { name }
+
+    companion object {
+        fun idFor(name: String): String =
+            name.trim().uppercase().replace(Regex("""\s+"""), " ")
     }
 }

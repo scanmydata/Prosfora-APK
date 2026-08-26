@@ -23,7 +23,14 @@ import java.util.concurrent.TimeUnit
  */
 class DriveClient(private val accessToken: String) {
 
-    data class DriveFile(val id: String, val name: String, val modifiedTime: String?)
+    data class DriveFile(
+        val id: String,
+        val name: String,
+        val modifiedTime: String?,
+        /** Ποιος το άγγιξε τελευταίος — έχει νόημα σε κοινόχρηστο φάκελο. */
+        val modifiedBy: String = "",
+        val modifiedByEmail: String = "",
+    )
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -58,15 +65,19 @@ class DriveClient(private val accessToken: String) {
 
     suspend fun list(query: String): List<DriveFile> = withContext(Dispatchers.IO) {
         val url = "$API/files?q=${query.urlEncode()}" +
-            "&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&pageSize=100"
+            "&fields=files(id,name,modifiedTime,lastModifyingUser(displayName,emailAddress))" +
+            "&orderBy=modifiedTime desc&pageSize=100"
         execute(builder(url).get().build()) { body ->
             val files = JSONObject(body).optJSONArray("files") ?: JSONArray()
             (0 until files.length()).map { i ->
                 val item = files.getJSONObject(i)
+                val author = item.optJSONObject("lastModifyingUser")
                 DriveFile(
                     id = item.getString("id"),
                     name = item.optString("name"),
                     modifiedTime = item.optString("modifiedTime").ifBlank { null },
+                    modifiedBy = author?.optString("displayName").orEmpty(),
+                    modifiedByEmail = author?.optString("emailAddress").orEmpty(),
                 )
             }
         }

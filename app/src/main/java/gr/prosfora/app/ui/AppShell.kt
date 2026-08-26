@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Handyman
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -22,12 +23,15 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.BuildConfig
+import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.ui.offers.DeleteRed
 import gr.prosfora.app.ui.offers.EditBlue
 import gr.prosfora.app.ui.offers.EmailAmber
@@ -44,17 +48,22 @@ enum class TopDestination(
     val label: String,
     val icon: ImageVector,
     val tint: Color?,
+    /** Ποιον φάκελο του Drive αφορά — από εκεί βγαίνει το σηματάκι. */
+    val watches: DriveWatch.Area? = null,
 ) {
     STATS(ROUTE_STATS, "Στατιστικά", Icons.Default.BarChart, EditBlue),
     OFFERS(ROUTE_LIST, "Προσφορές", Icons.Default.Description, EmailAmber),
     JOBS(ROUTE_JOBS, "Εργασίες", Icons.Default.Handyman, SentGreen),
-    ARCHIVE(ROUTE_ARCHIVE, "Αρχείο PDF", Icons.Default.PictureAsPdf, null),
-    DEBTS(ROUTE_DEBTS, "Οφειλές", Icons.Default.AccountBalance, DeleteRed),
+    DEBTS(ROUTE_DEBTS, "Οφειλές", Icons.Default.AccountBalance, DeleteRed, DriveWatch.Area.DEBTS),
+    ARCHIVE(ROUTE_ARCHIVE, "Αρχείο PDF", Icons.Default.PictureAsPdf, null, DriveWatch.Area.PDF),
     SETTINGS(ROUTE_SETTINGS, "Ρυθμίσεις", Icons.Default.Settings, null),
 }
 
 @Composable
 fun AppDrawer(current: String?, onSelect: (TopDestination) -> Unit) {
+    // Τι βρήκε η τελευταία ματιά στον κοινόχρηστο φάκελο του Drive
+    val changes by DriveWatch.changes.collectAsState()
+
     ModalDrawerSheet {
         Column(
             Modifier.padding(start = 24.dp, top = 28.dp, end = 24.dp, bottom = 16.dp),
@@ -87,6 +96,12 @@ fun AppDrawer(current: String?, onSelect: (TopDestination) -> Unit) {
                     )
                 },
                 label = { Text(destination.label, maxLines = 1) },
+                badge = {
+                    val pending = destination.watches?.let { area ->
+                        changes.count { it.area == area }
+                    } ?: 0
+                    if (pending > 0) Badge { Text("+$pending") }
+                },
                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
             )
         }

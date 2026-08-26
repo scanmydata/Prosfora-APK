@@ -381,7 +381,7 @@ def build():
     write(total_row.cells[3].paragraphs[0], "<<[Γενικό Σύνολο Live]>>", size=10,
           bold=True, color=DEEP)
 
-    add_vat_rows(table, total_row)
+    add_closing_rows(table, total_row)
 
     para(doc, after=8)
 
@@ -452,28 +452,36 @@ def build():
     return OUT
 
 
-def add_vat_rows(table, total_row):
-    """Καθαρή αξία και ΦΠΑ, ακριβώς πάνω από το γενικό σύνολο.
+# Οι γραμμές που κλείνουν τον πίνακα, με τη σειρά που μπαίνουν πάνω από το
+# γενικό σύνολο. Ο δείκτης «Αν …» λέει στην εφαρμογή πότε η γραμμή υπάρχει:
+# ό,τι δεν ισχύει για τη συγκεκριμένη προσφορά σβήνεται ολόκληρο.
+CLOSING_ROWS = (
+    ("<<[Αν Σκαλωσιά]>>ΣΚΑΛΩΣΙΑ", "<<[Σκαλωσιά]>>", False),
+    ("<<[Αν Άδεια]>>ΑΔΕΙΑ ΜΙΚΡΗΣ ΚΛΙΜΑΚΑΣ ΕΡΓΑΣΙΩΝ", "<<[Άδεια]>>", False),
+    ("<<[Αν ΦΠΑ]>>ΣΥΝΟΛΟ", "<<[Καθαρή Αξία]>>", True),
+    ("<<[Αν ΦΠΑ]>>ΦΠΑ 24%", "<<[ΦΠΑ]>>", False),
+)
 
-    Οι δύο γραμμές υπάρχουν πάντα μέσα στο πρότυπο· η εφαρμογή τις σβήνει όταν
-    η προσφορά δεν έχει ΦΠΑ. Ο δείκτης `<<[Αν ΦΠΑ]>>` είναι που το λέει —
-    δουλεύει και σε πρότυπο που έφερε ο χρήστης, αρκεί να τον γράψει κι εκεί.
+
+def add_closing_rows(table, total_row):
+    """Πρόσθετα κόστη, σύνολο και ΦΠΑ, ακριβώς πάνω από το γενικό σύνολο.
+
+    Το «ΣΥΝΟΛΟ» είναι έντονο όπως και το «ΓΕΝΙΚΟ ΣΥΝΟΛΟ»: είναι τα δύο ποσά που
+    διαβάζει κανείς πρώτα — το ένα χωρίς ΦΠΑ και το άλλο με.
     """
-    lines = (
-        ("<<[Αν ΦΠΑ]>>ΚΑΘΑΡΗ ΑΞΙΑ", "<<[Καθαρή Αξία]>>"),
-        ("<<[Αν ΦΠΑ]>>ΦΠΑ 24%", "<<[ΦΠΑ]>>"),
-    )
-    for label, value in lines:
+    for label, value, bold in CLOSING_ROWS:
         row = clone_row(table, total_row, total_row)
         for i in range(4):
             cell = row.cells[i]
             shade(cell, "FFFFFF")
             borders(cell, top=None, bottom=(4, LINE_HEX), left=None, right=None)
             cell.paragraphs[0].text = ""
+        colour = DEEP if bold else GREY
+        size = 9.5 if bold else 8.5
         row.cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
-        write(row.cells[0].paragraphs[0], label, size=8.5, color=GREY)
+        write(row.cells[0].paragraphs[0], label, size=size, bold=bold, color=colour)
         row.cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        write(row.cells[3].paragraphs[0], value, size=8.5, color=GREY)
+        write(row.cells[3].paragraphs[0], value, size=size, bold=bold, color=colour)
 
 
 if __name__ == "__main__":

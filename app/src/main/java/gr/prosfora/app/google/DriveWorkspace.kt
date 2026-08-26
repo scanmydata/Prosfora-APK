@@ -74,6 +74,19 @@ class DriveWorkspace(
     suspend fun pdfsIn(folderId: String): List<DriveClient.DriveFile> =
         drive.list("mimeType='${DriveClient.PDF_MIME}' and '$folderId' in parents and trashed=false")
 
+    /**
+     * Ό,τι μπορεί να διαβαστεί ως παραστατικό: PDF και εικόνες.
+     *
+     * Τα στιγμιότυπα οθόνης είναι ισότιμος τρόπος να μπει μια οφειλή — συχνά ο
+     * πιο γρήγορος, όταν το έντυπο ανοίγει σε κάποια εφαρμογή που δεν κατεβάζει.
+     */
+    suspend fun documentsIn(folderId: String): List<DriveClient.DriveFile> =
+        drive.list(
+            "'$folderId' in parents and trashed=false and (" +
+                "mimeType='${DriveClient.PDF_MIME}' or mimeType='image/png' or " +
+                "mimeType='image/jpeg')",
+        )
+
     /** Τα spreadsheets μέσα στον φάκελο — υποψήφια για κοινόχρηστη βάση. */
     suspend fun spreadsheetsInFolder(): List<DriveClient.DriveFile> {
         val root = rootFolder()

@@ -15,6 +15,7 @@ val TekaBlue = Color(0xFF64B5F6)
 val AadeAmber = Color(0xFFEF6C00)
 val AdvertisingTeal = Color(0xFF00897B)
 val PayrollGreen = Color(0xFF2E7D32)
+val BonusLime = Color(0xFF9CCC65)
 
 val DebtKind.color: Color
     get() = when (this) {
@@ -23,6 +24,9 @@ val DebtKind.color: Color
         DebtKind.AADE -> AadeAmber
         DebtKind.ADVERTISING -> AdvertisingTeal
         DebtKind.PAYROLL -> PayrollGreen
+        // Το δώρο είναι μισθοδοσία, αλλά πληρώνεται χωριστά: ίδια οικογένεια,
+        // πιο ανοιχτός τόνος
+        DebtKind.PAYROLL_BONUS -> BonusLime
     }
 
 /** Τα ονόματα των μηνών, για τις επικεφαλίδες των ομάδων. */

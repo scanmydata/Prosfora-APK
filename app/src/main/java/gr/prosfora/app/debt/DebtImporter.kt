@@ -13,16 +13,15 @@ import kotlinx.coroutines.withContext
  *
  * Δύο δρόμοι, ίδιο τέλος:
  *
- *  * ο χρήστης διαλέγει ένα PDF από το κινητό → ανεβαίνει **αντίγραφο** στον
- *    υποφάκελο του φορέα και μετά διαβάζεται
- *  * ο χρήστης έχει ήδη ρίξει PDF στους φακέλους → η σάρωση τα βρίσκει μόνη της
+ *  * ο χρήστης διαλέγει PDF ή στιγμιότυπο οθόνης από τη συσκευή → ανεβαίνει
+ *    **αντίγραφο** στον υποφάκελο του φορέα και μετά διαβάζεται
+ *  * ο χρήστης έχει ήδη ρίξει αρχεία στους φακέλους → η σάρωση τα βρίσκει μόνη της
  *
- * Το κείμενο βγαίνει από το ίδιο το Drive (αντιγραφή ως Google Doc, εξαγωγή σε
- * text). Έτσι δεν μπαίνει βιβλιοθήκη PDF ούτε OCR μέσα στο apk, και τα σαρωμένα
- * έντυπα — όπως το σημείωμα της ΑΑΔΕ — διαβάζονται το ίδιο καλά με τα υπόλοιπα.
+ * Το κείμενο βγαίνει με σειρά προτεραιότητας — εξαγωγή από το αρχείο, μετά
+ * ocr.space, μετά OCR του Drive· βλ. [DocumentText].
  *
  * Τίποτα δεν αποθηκεύεται μόνο του: το [Found] πάει στην οθόνη, ο χρήστης
- * βλέπει τι διαβάστηκε και εγκρίνει.
+ * βλέπει τι διαβάστηκε και με ποιον τρόπο, και εγκρίνει.
  */
 class DebtImporter(
     private val drive: DriveClient,
@@ -31,11 +30,18 @@ class DebtImporter(
 
     private val workspace = DriveWorkspace(drive, settings)
 
+    private val reader = DocumentText(
+        drive = drive,
+        ocr = settings.ocrApiKey.takeIf { it.isNotBlank() }?.let { OcrSpaceClient(it) },
+    )
+
     /** Τι βρέθηκε σε ένα παραστατικό. */
     data class Found(
         val fileName: String,
         val driveFileId: String,
         val debts: List<DebtEntity>,
+        val route: DocumentText.Route = DocumentText.Route.NONE,
+        val note: String = "",
     ) {
         val recognised: Boolean get() = debts.isNotEmpty()
     }
@@ -46,7 +52,14 @@ class DebtImporter(
         val found: List<Found>,
     ) {
         val debts: List<DebtEntity> get() = found.flatMap { it.debts }
-        val unreadable: List<String> get() = found.filterNot { it.recognised }.map { it.fileName }
+        val unreadable: List<Found> get() = found.filterNot { it.recognised }
+
+        /** Πώς διαβάστηκε — ενδιαφέρει τον χρήστη πριν εμπιστευτεί τα ποσά. */
+        val routes: String
+            get() = found.filter { it.recognised }
+                .map { it.route.label }
+                .distinct()
+                .joinToString(", ")
 
         val summary: String
             get() = when {
@@ -57,7 +70,7 @@ class DebtImporter(
                 scanned == 0 -> "Δεν βρέθηκαν νέα αρχεία. Αν τα ανέβασες από " +
                     "αλλού, δοκίμασε την «Εισαγωγή αρχείου»."
                 debts.isEmpty() -> "Διαβάστηκαν $scanned αρχεία, καμία οφειλή δεν αναγνωρίστηκε"
-                else -> "Διαβάστηκαν $scanned αρχεία · ${debts.size} οφειλές"
+                else -> "Διαβάστηκαν $scanned αρχεία · ${debts.size} οφειλές · $routes"
             }
     }
 
@@ -65,23 +78,28 @@ class DebtImporter(
      * Ανεβάζει αντίγραφο του αρχείου και το διαβάζει.
      *
      * Ο φορέας δίνεται από τον χρήστη γιατί καθορίζει τον φάκελο· το *είδος*
-     * μέσα στον φορέα (ΙΚΑ ή ΤΕΚΑ) το βρίσκει μόνο του το κείμενο.
+     * μέσα στον φορέα (ΙΚΑ ή ΤΕΚΑ, μισθοδοσία ή δώρο) το βρίσκει μόνο του το
+     * κείμενο.
      */
     suspend fun importFile(
         agency: DebtAgency,
         fileName: String,
-        pdf: ByteArray,
+        bytes: ByteArray,
     ): Found = withContext(Dispatchers.IO) {
+        val kind = DocumentBytes.kindOf(bytes)
+            ?: error("Δέχεται PDF ή εικόνα (PNG / JPG)")
         val folder = workspace.debtsFolder(agency)
-        val id = drive.upload(fileName, pdf, DriveClient.PDF_MIME, parentId = folder)
-        read(fileName, id)
+        val id = drive.upload(fileName, bytes, kind.mime, parentId = folder)
+        // Καταγράφεται αμέσως ως δικό μας, ώστε να μη θεωρηθεί «ξένο» στη σάρωση
+        settings.rememberDriveFiles(listOf(id))
+        read(fileName, id, bytes)
     }
 
     /**
      * Σαρώνει τους φακέλους των οφειλών για παραστατικά που δεν έχουν διαβαστεί.
      *
      * Το [alreadyImported] έρχεται από τη βάση: ένα αρχείο διαβάζεται μία φορά,
-     * αλλιώς κάθε σάρωση θα ξαναπερνούσε δεκάδες PDF από το OCR χωρίς λόγο.
+     * αλλιώς κάθε σάρωση θα ξαναπερνούσε δεκάδες αρχεία από το OCR χωρίς λόγο.
      */
     suspend fun scan(
         alreadyImported: Set<String>,
@@ -94,7 +112,7 @@ class DebtImporter(
         DebtAgency.entries.forEach { agency ->
             val folder = runCatching { workspace.debtsFolder(agency) }.getOrNull()
                 ?: return@forEach
-            val files = runCatching { workspace.pdfsIn(folder) }.getOrDefault(emptyList())
+            val files = runCatching { workspace.documentsIn(folder) }.getOrDefault(emptyList())
             files.forEach { file ->
                 if (file.id in alreadyImported) {
                     skipped++
@@ -102,7 +120,10 @@ class DebtImporter(
                 }
                 onProgress(file.name)
                 scanned++
-                runCatching { read(file.name, file.id) }
+                // Τα bytes χρειάζονται για να κριθεί αν το αρχείο έχει κείμενο
+                // μέσα του, και για το ocr.space αν δεν έχει
+                val bytes = runCatching { drive.download(file.id) }.getOrNull()
+                runCatching { read(file.name, file.id, bytes) }
                     .getOrNull()
                     ?.let { found += it }
             }
@@ -111,12 +132,14 @@ class DebtImporter(
         Report(scanned = scanned, skipped = skipped, found = found)
     }
 
-    private suspend fun read(fileName: String, driveFileId: String): Found {
-        val text = runCatching { drive.readTextOf(driveFileId) }.getOrDefault("")
+    private suspend fun read(fileName: String, driveFileId: String, bytes: ByteArray?): Found {
+        val result = reader.read(bytes, driveFileId)
         return Found(
             fileName = fileName,
             driveFileId = driveFileId,
-            debts = DebtParser.parse(text, fileName, driveFileId),
+            debts = DebtParser.parse(result.text, fileName, driveFileId),
+            route = result.route,
+            note = result.note,
         )
     }
 

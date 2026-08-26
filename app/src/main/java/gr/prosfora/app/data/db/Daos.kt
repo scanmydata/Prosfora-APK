@@ -162,3 +162,26 @@ interface DebtDao {
     @Query("SELECT DISTINCT driveFileId FROM debts WHERE driveFileId != ''")
     suspend fun importedFileIds(): List<String>
 }
+
+@Dao
+interface EmployeeDao {
+
+    @Query("SELECT * FROM employees WHERE deleted = 0 ORDER BY name")
+    fun observeAll(): Flow<List<EmployeeEntity>>
+
+    @Upsert
+    suspend fun upsert(employee: EmployeeEntity)
+
+    /**
+     * Καταχωρεί όσους δεν υπάρχουν ήδη. Το IGNORE είναι το ζητούμενο: μια νέα
+     * μισθοδοσία δεν πρέπει να σβήσει το ψευδώνυμο που έβαλε ο χρήστης.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMissing(employees: List<EmployeeEntity>)
+
+    @Query("SELECT * FROM employees")
+    suspend fun allForSync(): List<EmployeeEntity>
+
+    @Query("UPDATE employees SET deleted = 1, updatedAt = :at WHERE id = :id")
+    suspend fun softDelete(id: String, at: Long)
+}

@@ -132,6 +132,51 @@ class GoogleSettings(context: Context) {
     }
 
     /**
+     * Το κλειδί του ocr.space, για τα παραστατικά που δεν έχουν κείμενο μέσα
+     * τους. Το αρχείο φεύγει στον πάροχο, οπότε αδειάζοντάς το ο χρήστης
+     * κλείνει εντελώς αυτόν τον δρόμο και μένει μόνο το OCR του Drive.
+     */
+    var ocrApiKey: String
+        get() = prefs.getString(KEY_OCR_KEY, DEFAULT_OCR_KEY) ?: DEFAULT_OCR_KEY
+        set(value) = prefs.edit().putString(KEY_OCR_KEY, value.trim()).apply()
+
+    /** Αν, τσεκάροντας μια οφειλή ως πληρωμένη, ζητείται και ημερομηνία. */
+    var askPaidDate: Boolean
+        get() = prefs.getBoolean(KEY_ASK_PAID_DATE, false)
+        set(value) = prefs.edit().putBoolean(KEY_ASK_PAID_DATE, value).apply()
+
+    /** Ειδοποιήσεις για αλλαγές στον κοινόχρηστο φάκελο του Drive. */
+    var notifyDriveChanges: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_DRIVE, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_DRIVE, value).apply()
+
+    /**
+     * Τα αρχεία του Drive που έχει ήδη δει η εφαρμογή.
+     *
+     * Ό,τι εμφανιστεί εκτός αυτού του συνόλου ήρθε από αλλού — συνεργάτη με
+     * πρόσβαση στον κοινόχρηστο φάκελο — και αξίζει ειδοποίηση. Ό,τι χαθεί από
+     * μέσα του σημαίνει ότι κάποιος έσβησε αρχείο.
+     */
+    var knownDriveIds: Set<String>
+        get() = prefs.getStringSet(KEY_KNOWN_FILES, emptySet()).orEmpty()
+        set(value) = prefs.edit().putStringSet(KEY_KNOWN_FILES, value.toSet()).apply()
+
+    fun rememberDriveFiles(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        knownDriveIds = knownDriveIds + ids
+    }
+
+    fun forgetDriveFiles(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        knownDriveIds = knownDriveIds - ids.toSet()
+    }
+
+    /** Έχει γίνει η πρώτη καταγραφή· πριν από αυτήν όλα μοιάζουν «νέα». */
+    var driveWatchReady: Boolean
+        get() = prefs.getBoolean(KEY_WATCH_READY, false)
+        set(value) = prefs.edit().putBoolean(KEY_WATCH_READY, value).apply()
+
+    /**
      * Αν τα στατιστικά μετράνε και τις προσφορές που ήρθαν από εισαγωγή αρχείου.
      * Είναι παλιές επιμετρήσεις που δεν ξέρουμε σίγουρα αν έγιναν δουλειές.
      */
@@ -239,6 +284,17 @@ class GoogleSettings(context: Context) {
         private const val KEY_GREETING_TITLE = "greeting_title"
         private const val KEY_DEBTS_FOLDER = "debts_folder_id"
         private const val KEY_DEBTS_SUBFOLDERS = "debts_subfolders"
+        private const val KEY_OCR_KEY = "ocr_api_key"
+        private const val KEY_ASK_PAID_DATE = "ask_paid_date"
+        private const val KEY_NOTIFY_DRIVE = "notify_drive_changes"
+        private const val KEY_KNOWN_FILES = "known_drive_files"
+        private const val KEY_WATCH_READY = "drive_watch_ready"
+
+        /**
+         * Το δωρεάν κλειδί που άνοιξε ο χρήστης στο ocr.space. Ζει στις
+         * ρυθμίσεις και όχι στον κώδικα ώστε να αλλάζει χωρίς νέα έκδοση.
+         */
+        const val DEFAULT_OCR_KEY = "K88425303488957"
 
         const val DRIVE_FOLDER_NAME = "Προσφορές"
 

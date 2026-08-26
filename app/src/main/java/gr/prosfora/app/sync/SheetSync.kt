@@ -3,6 +3,7 @@ package gr.prosfora.app.sync
 import android.content.Context
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.DebtKind
+import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.NoteEntity
 import gr.prosfora.app.data.db.OfferEntity
 import gr.prosfora.app.data.db.OfferStatus
@@ -56,16 +57,20 @@ class SheetSync(
         val remoteSpaces = readSpaces(spreadsheetId)
         val remoteNotes = readNotes(spreadsheetId)
         val remoteDebts = readDebts(spreadsheetId)
+        val remoteEmployees = readEmployees(spreadsheetId)
 
         val localOffers = db.offerDao().allForSync()
         val localSpaces = db.spaceDao().allForSync()
         val localNotes = db.noteDao().allForSync()
         val localDebts = db.debtDao().allForSync()
+        val localEmployees = db.employeeDao().allForSync()
 
         val mergedOffers = merge(localOffers, remoteOffers, { it.id }, { it.updatedAt })
         val mergedSpaces = merge(localSpaces, remoteSpaces, { it.id }, { it.updatedAt })
         val mergedNotes = merge(localNotes, remoteNotes, { it.id }, { it.updatedAt })
         val mergedDebts = merge(localDebts, remoteDebts, { it.id }, { it.updatedAt })
+        val mergedEmployees =
+            merge(localEmployees, remoteEmployees, { it.id }, { it.updatedAt })
 
         var pulledOffers = 0
         mergedOffers.forEach { merged ->
@@ -100,7 +105,14 @@ class SheetSync(
         sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))
         sheets.replaceRows(spreadsheetId, TAB_SPACES, spaceRows(mergedSpaces))
         sheets.replaceRows(spreadsheetId, TAB_NOTES, noteRows(mergedNotes))
+        mergedEmployees.forEach { merged ->
+            if (localEmployees.none { it.id == merged.id && it == merged }) {
+                db.employeeDao().upsert(merged)
+            }
+        }
+
         sheets.replaceRows(spreadsheetId, TAB_DEBTS, debtRows(mergedDebts))
+        sheets.replaceRows(spreadsheetId, TAB_PEOPLE, employeeRows(mergedEmployees))
 
         settings.lastSyncAt = System.currentTimeMillis()
         Report(
@@ -109,7 +121,7 @@ class SheetSync(
             pulledNotes = pulledNotes,
             pulledDebts = pulledDebts,
             pushedRows = mergedOffers.size + mergedSpaces.size +
-                mergedNotes.size + mergedDebts.size,
+                mergedNotes.size + mergedDebts.size + mergedEmployees.size,
         )
     }
 
@@ -189,6 +201,10 @@ class SheetSync(
                 source = row[19],
                 customerLastName = row[20],
                 vatIncluded = row[22] == "1",
+                scaffolding = row[23] == "1",
+                scaffoldingCost = row[24].toDoubleOrNull() ?: 0.0,
+                permit = row[25] == "1",
+                permitCost = row[26].toDoubleOrNull() ?: 0.0,
                 customerGender = runCatching { gr.prosfora.app.data.db.Gender.valueOf(row[21]) }
                     .getOrDefault(gr.prosfora.app.data.db.Gender.UNKNOWN),
             )
@@ -209,11 +225,24 @@ class SheetSync(
                 personCode = row[9],
                 paid = row[10] == "1",
                 paidAt = row[11].toLongOrNull(),
+                paidDay = row[17].toLongOrNull(),
                 source = row[12],
                 driveFileId = row[13],
                 createdAt = row[14].toLongOrNull() ?: 0L,
                 updatedAt = row[15].toLongOrNull() ?: 0L,
                 deleted = row[16] == "1",
+            )
+        }
+
+    private suspend fun readEmployees(spreadsheetId: String): List<EmployeeEntity> =
+        dataRows(spreadsheetId, TAB_PEOPLE, PEOPLE_HEADER.size).map { row ->
+            EmployeeEntity(
+                id = row[0],
+                name = row[1],
+                alias = row[2],
+                code = row[3],
+                updatedAt = row[4].toLongOrNull() ?: 0L,
+                deleted = row[5] == "1",
             )
         }
 
@@ -283,6 +312,10 @@ class SheetSync(
             it.customerLastName,
             it.customerGender.name,
             if (it.vatIncluded) "1" else "0",
+            if (it.scaffolding) "1" else "0",
+            it.scaffoldingCost.toString(),
+            if (it.permit) "1" else "0",
+            it.permitCost.toString(),
         )
     }
 
@@ -303,6 +336,18 @@ class SheetSync(
             it.source,
             it.driveFileId,
             it.createdAt.toString(),
+            it.updatedAt.toString(),
+            if (it.deleted) "1" else "0",
+            it.paidDay?.toString().orEmpty(),
+        )
+    }
+
+    private fun employeeRows(people: List<EmployeeEntity>) = listOf(PEOPLE_HEADER) + people.map {
+        listOf(
+            it.id,
+            it.name,
+            it.alias,
+            it.code,
             it.updatedAt.toString(),
             if (it.deleted) "1" else "0",
         )
@@ -338,8 +383,9 @@ class SheetSync(
         const val TAB_SPACES = "Χώροι_έργου"
         const val TAB_NOTES = "Λίστα_Παρατηρήσεων"
         const val TAB_DEBTS = "Οφειλές"
+        const val TAB_PEOPLE = "Εργαζόμενοι"
 
-        val ALL_TABS = listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES, TAB_DEBTS)
+        val ALL_TABS = listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES, TAB_DEBTS, TAB_PEOPLE)
 
         private val OFFER_HEADER = listOf(
             "ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email",
@@ -347,12 +393,17 @@ class SheetSync(
             "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης",
             "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση",
             "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή", "Επώνυμο", "Φύλο", "ΦΠΑ",
+            "Σκαλωσιά", "Κόστος σκαλωσιάς", "Άδεια", "Κόστος άδειας",
         )
         private val DEBT_HEADER = listOf(
             "ID_Οφειλής", "Φορέας", "Μήνας", "Έτος", "Λήξη", "Ποσό",
             "Ταυτότητα / RF", "Περιγραφή", "Εργαζόμενος", "Κωδικός",
             "Πληρώθηκε", "Ημ. πληρωμής", "Πηγή", "Αρχείο Drive",
-            "Δημιουργήθηκε", "Ενημερώθηκε", "Διαγραμμένο",
+            "Δημιουργήθηκε", "Ενημερώθηκε", "Διαγραμμένο", "Ημ. εξόφλησης",
+        )
+        private val PEOPLE_HEADER = listOf(
+            "ID_Εργαζόμενου", "Όνομα", "Ψευδώνυμο", "Κωδικός",
+            "Ενημερώθηκε", "Διαγραμμένο",
         )
         private val SPACE_HEADER = listOf(
             "ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)",

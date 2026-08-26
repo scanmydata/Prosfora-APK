@@ -36,7 +36,20 @@ AGENCY = {
     "AADE": "ΑΑΔΕ",
     "ADVERTISING": "Διαφημιστικά τέλη",
     "PAYROLL": "Μισθοδοσία",
+    "PAYROLL_BONUS": "Μισθοδοσία",
 }
+
+# Οι κωδικοί αποδοχών της μισθοδοτικής κατάστασης, όπως τυπώνονται
+PAY_TYPES = {
+    "ΤΑ": "Τακτικές αποδοχές",
+    "ΕΑ": "Επίδομα αδείας",
+    "ΑΛ": "Άδεια ληφθείσα",
+    "ΜΛ": "Άδεια μη ληφθείσα",
+    "ΔΠ": "Δώρο Πάσχα",
+    "ΔΧ": "Δώρο Χριστουγέννων",
+}
+BONUS_TYPES = {"ΔΠ", "ΔΧ"}
+ANY_AMOUNT = re.compile(r"[0-9][0-9.]*,[0-9]{2}")
 
 
 def money(raw: str) -> float | None:
@@ -82,7 +95,7 @@ def period_of(match, month_group=1, year_group=2) -> tuple[int, int] | None:
 def default_due(kind: str, month: int, year: int) -> str | None:
     if not (1 <= month <= 12) or year <= 0:
         return None
-    if kind != "PAYROLL":
+    if not kind.startswith("PAYROLL"):
         month += 1
         if month == 13:
             month, year = 1, year + 1
@@ -129,9 +142,32 @@ def parse_apd(text: str, name: str) -> list[dict]:
     return [row(kind, period, amount, rf_code(text), label)]
 
 
+def debt_identity(text: str) -> str:
+    """Η ταυτότητα οφειλής ως μία συνεχόμενη σειρά ψηφίων."""
+    m = re.search(r"Ταυτότητα\s*Οφειλής\s*:?\s*([0-9][0-9\s.\-]{18,50})", text)
+    if m:
+        digits = "".join(c for c in m.group(1) if c.isdigit())
+        if len(digits) >= 15:
+            return digits
+    for m in re.finditer(r"(?<![0-9])([0-9][0-9\s.\-]{22,45}[0-9])(?![0-9])", text):
+        digits = "".join(c for c in m.group(1) if c.isdigit())
+        if 20 <= len(digits) <= 32:
+            return digits
+    return ""
+
+
+def tax_kind(text: str) -> str | None:
+    """Το είδος φόρου, που σπάει σε δύο γραμμές στο έντυπο."""
+    nxt = "Ημερολογιακή|Συνολικό|Ποσό|Ταυτότητα|Ημ/νία|Προσοχή|ΔΟΥ|Τύπος"
+    m = re.search(r"Είδος\s*Φόρου\s*:?\s*([\s\S]{1,140}?)\s*(?=" + nxt + r"|$)", text)
+    if not m:
+        return None
+    value = re.sub(r"\s+", " ", m.group(1)).strip().rstrip(",.:")[:90]
+    return value or None
+
+
 def parse_aade(text: str, name: str) -> list[dict]:
-    identity = re.search(r"Ταυτότητα\s*Οφειλής\s*:?\s*([0-9][0-9\s]{18,45})", text)
-    reference = "".join(c for c in identity.group(1) if c.isdigit()) if identity else ""
+    reference = debt_identity(text)
     amount = (amount_after(text, r"Ποσό\s*δόσης")
               or amount_after(text, r"Συνολικό\s*ποσό\s*οφειλής"))
     if amount is None:
@@ -141,10 +177,9 @@ def parse_aade(text: str, name: str) -> list[dict]:
         due = re.search(r"μέχρι\s*τις\s*(\d{1,2}/\d{1,2}/\d{4})", text)
     span = re.search(r"Ημερολογιακή\s*Περίοδος\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})", text)
     period = (int(span.group(2)), int(span.group(3))) if span else from_file_name(name)
-    tax = re.search(r"Είδος\s*Φόρου\s*:?\s*(.+)", text)
     return [row(
         "AADE", period, amount, reference,
-        tax.group(1).strip()[:80] if tax else "Βεβαιωμένη οφειλή εκτός ρύθμισης",
+        tax_kind(text) or "Βεβαιωμένη οφειλή εκτός ρύθμισης",
         due=due.group(1) if due else None,
     )]
 
@@ -164,6 +199,7 @@ def parse_advertising(text: str, name: str) -> list[dict]:
 
 
 HEADER = re.compile(r"^\s*(\d{1,3})\s+([A-Za-z0-9]{2,6})\s+(\S.*)$")
+DETAIL = re.compile(r"^\s*([Α-ΩΆΈΉΊΌΎΏ]{2})\s+\S")
 
 
 def numbers_only(line: str) -> list[float] | None:
@@ -174,28 +210,93 @@ def numbers_only(line: str) -> list[float] | None:
     return values or None
 
 
+def name_of(rest: str) -> str:
+    """Επώνυμο και όνομα — πάντα τα δύο πρώτα λεκτικά, όσα κενά κι αν υπάρχουν."""
+    return " ".join(rest.strip().split()[:2]).strip()
+
+
+def read_people(text: str) -> list[dict]:
+    people: list[dict] = []
+    for line in text.splitlines():
+        head = HEADER.match(line)
+        if head and head.group(3)[:1].isalpha():
+            people.append({"code": head.group(2), "name": name_of(head.group(3)),
+                           "details": [], "payable": None})
+            continue
+        if not people:
+            continue
+        person = people[-1]
+
+        detail = DETAIL.match(line)
+        if detail:
+            found = ANY_AMOUNT.search(line)
+            gross = money(found.group(0)) if found else None
+            if gross:
+                person["details"].append((detail.group(1), gross))
+            continue
+
+        values = numbers_only(line)
+        if values and len(values) >= 8:
+            person["payable"] = values[-1]
+    return people
+
+
+def describe(details) -> str:
+    if not details:
+        return "Πληρωτέο μισθοδοσίας"
+    grouped: dict[str, float] = {}
+    for code, gross in details:
+        grouped[code] = grouped.get(code, 0.0) + gross
+    return " · ".join(f"{PAY_TYPES.get(c, c)} {g:,.2f} €".replace(",", "\x00")
+                      .replace(".", ",").replace("\x00", ".")
+                      for c, g in grouped.items())
+
+
+def rows_for(person: dict, period) -> list[dict]:
+    payable = person["payable"]
+    if not payable or payable <= 0 or not person["name"]:
+        return []
+
+    bonuses = [d for d in person["details"] if d[0] in BONUS_TYPES]
+    regular = [d for d in person["details"] if d[0] not in BONUS_TYPES]
+    total_gross = sum(g for _, g in person["details"])
+
+    if not bonuses or total_gross <= 0:
+        return [row("PAYROLL", period, payable, "", describe(regular),
+                    person["name"], person["code"])]
+
+    out, left = [], payable
+    for code, gross in bonuses:
+        share = round(payable * gross / total_gross, 2)
+        left -= share
+        out.append(row("PAYROLL_BONUS", period, share, "",
+                       f"{PAY_TYPES.get(code, code)} (αναλογικά)",
+                       person["name"], person["code"]))
+    if round(left, 2) > 0:
+        out.append(row("PAYROLL", period, round(left, 2), "", describe(regular),
+                       person["name"], person["code"]))
+    return out
+
+
+def merge(rows: list[dict]) -> list[dict]:
+    """Ο ίδιος εργαζόμενος δύο φορές γίνεται μία πληρωμή με το άθροισμα."""
+    out: dict[str, dict] = {}
+    for r in rows:
+        existing = out.get(r["id"])
+        if existing is None:
+            out[r["id"]] = r
+        else:
+            existing["amount"] = round(existing["amount"] + r["amount"], 2)
+            if r["description"] not in existing["description"]:
+                existing["description"] += " · " + r["description"]
+    return list(out.values())
+
+
 def parse_payroll(text: str, name: str) -> list[dict]:
     period = period_of(
         re.search(r"Μισθοδοτική\s*Κατάσταση\s*(\d{1,2})\s*/\s*(\d{4})", text)
     ) or from_file_name(name)
-
-    people: list[dict] = []
-    for line in text.splitlines():
-        match = HEADER.match(line)
-        if match and match.group(3)[:1].isalpha():
-            parts = [p.strip() for p in re.split(r"\s{2,}|\t", match.group(3)) if p.strip()]
-            people.append({"code": match.group(2), "name": " ".join(parts[:2]).strip(),
-                           "amount": None})
-            continue
-        values = numbers_only(line)
-        if values and len(values) >= 8 and people:
-            people[-1]["amount"] = values[-1]
-
-    return [
-        row("PAYROLL", period, p["amount"], "", "Πληρωτέο μισθοδοσίας", p["name"], p["code"])
-        for p in people
-        if p["name"] and (p["amount"] or 0) > 0
-    ]
+    return merge([r for p in read_people(text) for r in rows_for(p, period)])
 
 
 def parse(text: str, name: str = "") -> list[dict]:

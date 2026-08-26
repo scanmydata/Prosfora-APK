@@ -39,9 +39,9 @@ class Converters {
 @Database(
     entities = [
         OfferEntity::class, SpaceEntity::class, NoteEntity::class,
-        NotePresetEntity::class, DebtEntity::class,
+        NotePresetEntity::class, DebtEntity::class, EmployeeEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -52,6 +52,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun notePresetDao(): NotePresetDao
     abstract fun debtDao(): DebtDao
+    abstract fun employeeDao(): EmployeeDao
 
     companion object {
 
@@ -178,6 +179,40 @@ abstract class ProsforaDatabase : RoomDatabase() {
         }
 
         /**
+         * v9: προαιρετικές χρεώσεις στην προσφορά, ημερομηνία πληρωμής στις
+         * οφειλές, και το ευρετήριο εργαζομένων.
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                connection.execSQL("ALTER TABLE debts ADD COLUMN paidDay INTEGER")
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS employees (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        alias TEXT NOT NULL,
+                        code TEXT NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        deleted INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                connection.execSQL(
+                    "ALTER TABLE offers ADD COLUMN scaffolding INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.execSQL(
+                    "ALTER TABLE offers ADD COLUMN scaffoldingCost REAL NOT NULL DEFAULT 0",
+                )
+                connection.execSQL(
+                    "ALTER TABLE offers ADD COLUMN permit INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.execSQL(
+                    "ALTER TABLE offers ADD COLUMN permitCost REAL NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /**
          * Οι σημειώσεις που επαναλαμβάνονται σε κάθε προσφορά — από το δείγμα PDF
          * και το EnumList "Παρατηρήσεις Έργου" του AppSheet.
          */
@@ -204,6 +239,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
                     MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
+                    MIGRATION_8_9,
                 )
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {

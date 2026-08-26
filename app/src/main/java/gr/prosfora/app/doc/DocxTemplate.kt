@@ -44,10 +44,12 @@ object DocxTemplate {
     private const val PAYMENT_LINE = "&lt;&lt;[Τρόπος Πληρωμής]&gt;&gt;"
 
     /**
-     * Δείκτης «μόνο με ΦΠΑ». Όπου εμφανίζεται, η γραμμή του πίνακα (ή η
-     * παράγραφος, αν δεν είναι σε πίνακα) υπάρχει μόνο όταν η προσφορά έχει ΦΠΑ.
+     * Δείκτες «μόνο αν …». Όπου εμφανίζονται, η γραμμή του πίνακα (ή η
+     * παράγραφος, αν δεν είναι σε πίνακα) υπάρχει μόνο όταν ισχύει η συνθήκη.
      */
     private const val VAT_ONLY = "&lt;&lt;[Αν ΦΠΑ]&gt;&gt;"
+    private const val SCAFFOLDING_ONLY = "&lt;&lt;[Αν Σκαλωσιά]&gt;&gt;"
+    private const val PERMIT_ONLY = "&lt;&lt;[Αν Άδεια]&gt;&gt;"
 
     fun render(templateDocx: ByteArray, details: OfferWithDetails): ByteArray {
         val entries = readZip(templateDocx)
@@ -62,22 +64,24 @@ object DocxTemplate {
         result = expandNoteBullets(result, details)
         result = repeatParagraph(result, NOTE_LINE, details.notes.map { it.text })
         result = repeatParagraph(result, PAYMENT_LINE, details.paymentLines)
-        result = applyVat(result, details.offer.vatIncluded)
+        result = applyConditional(result, SCAFFOLDING_ONLY, details.scaffoldingCost > 0.0)
+        result = applyConditional(result, PERMIT_ONLY, details.permitCost > 0.0)
+        result = applyConditional(result, VAT_ONLY, details.offer.vatIncluded)
         return fillSimpleFields(result, details)
     }
 
     /**
-     * Με ΦΠΑ φεύγει μόνο ο δείκτης· χωρίς ΦΠΑ φεύγει ολόκληρη η γραμμή.
+     * Όταν ισχύει η συνθήκη φεύγει μόνο ο δείκτης· αλλιώς φεύγει ολόκληρη η γραμμή.
      *
-     * Δεν αρκεί να μείνουν κενά τα ποσά: μια άδεια γραμμή «ΦΠΑ 24%» μέσα στον
-     * πίνακα διαβάζεται σαν λάθος. Η αφαίρεση γίνεται στο επίπεδο του `<w:tr>`
-     * ώστε να δουλεύει και σε πρότυπο που έγραψε ο χρήστης.
+     * Δεν αρκεί να μείνουν κενά τα ποσά: μια άδεια γραμμή «ΦΠΑ 24%» ή
+     * «ΣΚΑΛΩΣΙΑ» μέσα στον πίνακα διαβάζεται σαν λάθος. Η αφαίρεση γίνεται στο
+     * επίπεδο του `<w:tr>` ώστε να δουλεύει και σε πρότυπο που έγραψε ο χρήστης.
      */
-    private fun applyVat(xml: String, vatIncluded: Boolean): String {
-        if (vatIncluded) return xml.replace(VAT_ONLY, "")
+    private fun applyConditional(xml: String, marker: String, keep: Boolean): String {
+        if (keep) return xml.replace(marker, "")
         var result = xml
         while (true) {
-            val at = result.indexOf(VAT_ONLY)
+            val at = result.indexOf(marker)
             if (at < 0) return result
             result = dropBlock(result, at)
         }
@@ -165,6 +169,8 @@ object DocxTemplate {
                 escape(offer.validUntilDay?.asOfferDate() ?: "—"),
             )
             .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", escape(details.total.asMoney()))
+            .replace("&lt;&lt;[Σκαλωσιά]&gt;&gt;", escape(details.scaffoldingCost.asMoney()))
+            .replace("&lt;&lt;[Άδεια]&gt;&gt;", escape(details.permitCost.asMoney()))
             .replace("&lt;&lt;[ΦΠΑ]&gt;&gt;", escape(details.vatAmount.asMoney()))
             .replace("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", escape(total))
             .replace("&lt;&lt;[Γενικό Σύνολο]&gt;&gt;", escape(total))

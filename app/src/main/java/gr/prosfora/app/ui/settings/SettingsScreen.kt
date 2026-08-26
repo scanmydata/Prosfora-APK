@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Star
@@ -312,6 +313,14 @@ fun SettingsScreen(onMenu: () -> Unit, onOpenTemplate: () -> Unit) {
             }
 
             SettingsSection(
+                title = "Οφειλές",
+                subtitle = "Ανάγνωση παραστατικών και ειδοποιήσεις",
+                icon = Icons.Default.AccountBalance,
+            ) {
+                DebtSettings(googleSettings)
+            }
+
+            SettingsSection(
                 title = "Δεδομένα",
                 subtitle = "Εισαγωγή παλιών προσφορών από Excel",
                 icon = Icons.Default.Inventory2,
@@ -397,4 +406,71 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
         Spacer(Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChange)
     }
+}
+
+/**
+ * Ρυθμίσεις των οφειλών.
+ *
+ * Το κλειδί του ocr.space ζει εδώ και όχι στον κώδικα για δύο λόγους: αλλάζει
+ * χωρίς νέα έκδοση, και αδειάζοντάς το ο χρήστης σταματάει να στέλνει τα
+ * παραστατικά του σε τρίτο πάροχο — μένει μόνο το OCR του Drive.
+ */
+@Composable
+private fun DebtSettings(settings: GoogleSettings) {
+    var askDate by remember { mutableStateOf(settings.askPaidDate) }
+    var notify by remember { mutableStateOf(settings.notifyDriveChanges) }
+    var key by remember { mutableStateOf(settings.ocrApiKey) }
+
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Ημερομηνία εξόφλησης", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Τσεκάροντας μια οφειλή, ρωτάει πότε πληρώθηκε",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = askDate,
+            onCheckedChange = { askDate = it; settings.askPaidDate = it },
+        )
+    }
+
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Ειδοποιήσεις για το Drive", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Όταν κάποιος άλλος προσθέσει ή σβήσει αρχείο στον κοινόχρηστο φάκελο",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = notify,
+            onCheckedChange = { notify = it; settings.notifyDriveChanges = it },
+        )
+    }
+
+    OutlinedTextField(
+        value = key,
+        onValueChange = { key = it; settings.ocrApiKey = it },
+        label = { Text("Κλειδί ocr.space") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        "Χρησιμοποιείται μόνο για παραστατικά χωρίς κείμενο μέσα τους — " +
+            "σαρωμένα έντυπα και στιγμιότυπα οθόνης. Το αρχείο φεύγει στον " +
+            "πάροχο· αν το πεδίο μείνει κενό, γίνεται OCR από το Google Drive.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }

@@ -34,6 +34,8 @@ LOOP_END = "&lt;&lt;End&gt;&gt;"
 NOTE_LINE = "&lt;&lt;[Παρατηρήσεις]&gt;&gt;"
 PAYMENT_LINE = "&lt;&lt;[Τρόπος Πληρωμής]&gt;&gt;"
 VAT_MARKER = "&lt;&lt;[Αν ΦΠΑ]&gt;&gt;"
+SCAFFOLDING_MARKER = "&lt;&lt;[Αν Σκαλωσιά]&gt;&gt;"
+PERMIT_MARKER = "&lt;&lt;[Αν Άδεια]&gt;&gt;"
 VAT_RATE = 0.24
 
 
@@ -93,12 +95,12 @@ def drop_block(xml: str, index: int) -> str:
     return xml[:open_] + xml[close:]
 
 
-def apply_vat(xml: str, vat: bool) -> str:
-    """Με ΦΠΑ μένει μόνο ο δείκτης έξω· χωρίς ΦΠΑ φεύγει όλη η γραμμή."""
-    if vat:
-        return xml.replace(VAT_MARKER, "")
+def apply_conditional(xml: str, marker: str, keep: bool) -> str:
+    """Όταν ισχύει, φεύγει μόνο ο δείκτης· αλλιώς φεύγει όλη η γραμμή."""
+    if keep:
+        return xml.replace(marker, "")
     while True:
-        at = xml.find(VAT_MARKER)
+        at = xml.find(marker)
         if at < 0:
             return xml
         xml = drop_block(xml, at)
@@ -144,12 +146,18 @@ def render(xml: str, offer: dict, spaces: list[dict], notes: list[dict]) -> str:
     xml = repeat_paragraph(xml, NOTE_LINE, [n["text"] for n in notes])
     xml = repeat_paragraph(xml, PAYMENT_LINE, offer.get("paymentLines", []))
 
-    # --- 4. ΦΠΑ -------------------------------------------------------------
+    # --- 4. Πρόσθετα κόστη και ΦΠΑ ------------------------------------------
     vat_on = bool(offer.get("vat"))
-    xml = apply_vat(xml, vat_on)
+    scaffolding = float(offer.get("scaffolding") or 0.0)
+    permit = float(offer.get("permit") or 0.0)
+
+    xml = apply_conditional(xml, SCAFFOLDING_MARKER, scaffolding > 0)
+    xml = apply_conditional(xml, PERMIT_MARKER, permit > 0)
+    xml = apply_conditional(xml, VAT_MARKER, vat_on)
 
     # --- 5. Απλά πεδία ------------------------------------------------------
-    net = sum(round(s["area"] * s["unitPrice"], 2) for s in spaces)
+    lines_total = sum(round(s["area"] * s["unitPrice"], 2) for s in spaces)
+    net = lines_total + scaffolding + permit
     vat = round(net * VAT_RATE, 2) if vat_on else 0.0
     total = net + vat
     for placeholder, value in {
@@ -158,6 +166,8 @@ def render(xml: str, offer: dict, spaces: list[dict], notes: list[dict]) -> str:
         "&lt;&lt;[Ημερομηνία]&gt;&gt;": offer["date"],
         "&lt;&lt;[Ισχύει έως]&gt;&gt;": offer.get("validUntil", "—"),
         "&lt;&lt;[Καθαρή Αξία]&gt;&gt;": money(net),
+        "&lt;&lt;[Σκαλωσιά]&gt;&gt;": money(scaffolding),
+        "&lt;&lt;[Άδεια]&gt;&gt;": money(permit),
         "&lt;&lt;[ΦΠΑ]&gt;&gt;": money(vat),
         "&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;": money(total),
         "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;": money(total),
@@ -268,10 +278,14 @@ def main() -> int:
     parser.add_argument("--out")
     parser.add_argument("--dump", action="store_true")
     parser.add_argument("--vat", action="store_true", help="με ΦΠΑ 24 τοις εκατό")
+    parser.add_argument("--scaffolding", type=float, default=0.0, help="κόστος σκαλωσιάς")
+    parser.add_argument("--permit", type=float, default=0.0, help="άδεια μικρής κλίμακας")
     args = parser.parse_args()
 
     offer, spaces, notes = (from_seed(args.offer) if args.offer else from_xls(args.xls))
     offer["vat"] = args.vat
+    offer["scaffolding"] = args.scaffolding
+    offer["permit"] = args.permit
     template = Path(args.template) if args.template else TEMPLATE
 
     with zipfile.ZipFile(template) as src:

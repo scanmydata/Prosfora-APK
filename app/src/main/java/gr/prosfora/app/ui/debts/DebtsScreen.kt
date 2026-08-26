@@ -1,5 +1,8 @@
 package gr.prosfora.app.ui.debts
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -23,12 +26,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -39,7 +46,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -55,9 +64,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.data.db.DebtAgency
 import gr.prosfora.app.data.db.DebtEntity
+import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.debt.DebtImporter
 import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.google.DriveClient
+import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.ui.MenuButton
@@ -66,9 +77,10 @@ import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.ZoneOffset
 
 /**
- * Οι οφειλές της επιχείρησης, χωρισμένες ανά φορέα και ανά μήνα αναφοράς.
+ * Οι οφειλές της επιχείρησης, χωρισμένες ανά έτος, ανά φορέα και ανά μήνα.
  *
  * Δύο δρόμοι για να μπουν: με το χέρι από το «+», ή διαβασμένες από τα
  * παραστατικά που κάθονται στον φάκελο «Οφειλές» του Drive. Ό,τι διαβάζεται
@@ -86,15 +98,31 @@ fun DebtsScreen(onMenu: () -> Unit) {
 
     val stream = remember(repository) { repository.observeAll() }
     val debts by stream.collectAsState(initial = emptyList())
+    val peopleStream = remember(repository) { repository.observeEmployees() }
+    val people by peopleStream.collectAsState(initial = emptyList())
+    // Τα ψευδώνυμα αντικαθιστούν το τυπωμένο όνομα παντού στη λίστα
+    val aliases = remember(people) {
+        people.filter { it.alias.isNotBlank() }.associate { it.id to it.alias }
+    }
+    val changes by DriveWatch.changes.collectAsState()
+    val newInDrive = remember(changes) { changes.filter { it.area == DriveWatch.Area.DEBTS } }
 
     var agency by remember { mutableStateOf<DebtAgency?>(null) }
     var onlyUnpaid by remember { mutableStateOf(true) }
     var editing by remember { mutableStateOf<DebtEntity?>(null) }
     var pending by remember { mutableStateOf<DebtImporter.Report?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
+    var showPeople by remember { mutableStateOf(false) }
+    var payingFor by remember { mutableStateOf<DebtEntity?>(null) }
     // Ο φορέας διαλέγεται πριν το αρχείο: αυτός ορίζει τον φάκελο του Drive
     var pickingFor by remember { mutableStateOf<DebtAgency?>(null) }
     var askAgency by remember { mutableStateOf(false) }
+
+    val years = remember(debts) {
+        debts.map { it.periodYear }.filter { it > 0 }.distinct().sortedDescending()
+            .ifEmpty { listOf(LocalDate.now().year) }
+    }
+    var year by remember(years) { mutableStateOf(years.first()) }
 
     fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 
@@ -109,10 +137,6 @@ fun DebtsScreen(onMenu: () -> Unit) {
             val result = runCatching {
                 val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                     ?: error("Δεν διαβάστηκε το αρχείο")
-                // Τα PDF αρχίζουν με «%PDF» — ο επιλογέας δείχνει και ό,τι άλλο
-                require(bytes.size > 4 && bytes.decodeToString(0, 4) == "%PDF") {
-                    "Το αρχείο δεν είναι PDF"
-                }
                 val name = displayName(context, uri)
                 val drive = DriveClient(authorizer.accessToken())
                 DebtImporter(drive, settings).importFile(target, name, bytes)
@@ -133,6 +157,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
                     .scan(repository.importedFileIds()) { name -> busy = "Ανάγνωση $name…" }
             }
             busy = null
+            DriveWatch.acknowledge(context, DriveWatch.Area.DEBTS)
             result.onSuccess { report ->
                 if (report.debts.isEmpty()) toast(report.summary) else pending = report
             }.onFailure { toast("Η σάρωση απέτυχε: ${it.message}") }
@@ -153,10 +178,22 @@ fun DebtsScreen(onMenu: () -> Unit) {
         }
     }
 
-    val visible = remember(debts, agency, onlyUnpaid) {
-        debts.filter { (agency == null || it.agency == agency) && (!onlyUnpaid || !it.paid) }
+    fun togglePaid(debt: DebtEntity) {
+        if (!debt.paid && settings.askPaidDate) {
+            payingFor = debt
+        } else {
+            scope.launch { repository.setPaid(debt.id, !debt.paid) }
+        }
     }
-    // Νεότερος μήνας πρώτος· οι οφειλές χωρίς περίοδο πέφτουν στο τέλος
+
+    val visible = remember(debts, agency, onlyUnpaid, year) {
+        debts.filter {
+            it.periodYear == year &&
+                (agency == null || it.agency == agency) &&
+                (!onlyUnpaid || !it.paid)
+        }
+    }
+    // Νεότερος μήνας πρώτος
     val groups = remember(visible) {
         visible.groupBy { it.periodKey }.entries.sortedByDescending { it.key }
     }
@@ -167,6 +204,9 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 title = { Text("Οφειλές") },
                 navigationIcon = { MenuButton(onMenu) },
                 actions = {
+                    IconButton(onClick = { showPeople = true }) {
+                        Icon(Icons.Default.Groups, contentDescription = "Εργαζόμενοι")
+                    }
                     IconButton(onClick = { openFolder() }) {
                         Icon(Icons.Default.FolderOpen, contentDescription = "Φάκελος στο Drive")
                     }
@@ -190,7 +230,24 @@ fun DebtsScreen(onMenu: () -> Unit) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { TotalsCard(debts) }
+            if (newInDrive.isNotEmpty()) {
+                item { DriveChangesCard(newInDrive, onRead = { scanDrive() }) }
+            }
+
+            item { TotalsCard(debts.filter { it.periodYear == year }) }
+
+            item {
+                // Ιστορικότητα: ένα έτος τη φορά, νεότερο πρώτα
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(years) { candidate ->
+                        FilterChip(
+                            selected = year == candidate,
+                            onClick = { year = candidate },
+                            label = { Text(candidate.toString(), maxLines = 1) },
+                        )
+                    }
+                }
+            }
 
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -202,7 +259,9 @@ fun DebtsScreen(onMenu: () -> Unit) {
                         )
                     }
                     items(DebtAgency.entries) { candidate ->
-                        val count = debts.count { it.agency == candidate && !it.paid }
+                        val count = debts.count {
+                            it.agency == candidate && it.periodYear == year && !it.paid
+                        }
                         FilterChip(
                             selected = agency == candidate,
                             onClick = { agency = if (agency == candidate) null else candidate },
@@ -257,8 +316,10 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 items(rows.sortedBy { it.kind.ordinal }, key = { it.id }) { debt ->
                     DebtRow(
                         debt = debt,
-                        onToggle = { scope.launch { repository.setPaid(debt.id, !debt.paid) } },
+                        title = titleFor(debt, aliases),
+                        onToggle = { togglePaid(debt) },
                         onOpen = { editing = debt },
+                        onCopy = { copyToClipboard(context, it, debt.title) },
                     )
                 }
             }
@@ -271,7 +332,26 @@ fun DebtsScreen(onMenu: () -> Unit) {
             onPick = { chosen ->
                 askAgency = false
                 pickingFor = chosen
+                // Και PDF και στιγμιότυπα οθόνης· ο έλεγχος γίνεται στα bytes
                 picker.launch(arrayOf("*/*"))
+            },
+        )
+    }
+
+    if (showPeople) {
+        EmployeeIndexDialog(
+            repository = repository,
+            debts = debts,
+            onDismiss = { showPeople = false },
+        )
+    }
+
+    payingFor?.let { debt ->
+        PaidDatePicker(
+            onDismiss = { payingFor = null },
+            onPick = { day ->
+                payingFor = null
+                scope.launch { repository.setPaid(debt.id, paid = true, day = day) }
             },
         )
     }
@@ -288,6 +368,14 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 editing = null
                 scope.launch { repository.delete(debt.id) }
             },
+            onDeleteFile = {
+                editing = null
+                scope.launch {
+                    val removed = repository.deleteFromFile(debt.source, debt.driveFileId)
+                    toast("Διαγράφηκαν $removed οφειλές από «${debt.source}»")
+                }
+            },
+            onCopy = { copyToClipboard(context, it, debt.title) },
         )
     }
 
@@ -303,6 +391,37 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 }
             },
         )
+    }
+}
+
+/** Τι εμφανίστηκε στον κοινόχρηστο φάκελο χωρίς να το βάλει αυτή η συσκευή. */
+@Composable
+private fun DriveChangesCard(changes: List<DriveWatch.Change>, onRead: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.tertiaryContainer)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                if (changes.size == 1) {
+                    "Νέο αρχείο στο Drive"
+                } else {
+                    "${changes.size} αλλαγές στο Drive"
+                },
+                style = MaterialTheme.typography.titleSmall,
+            )
+            changes.take(5).forEach { change ->
+                val who = change.author.ifBlank { "άγνωστος χρήστης" }
+                Text(
+                    if (change.removed) {
+                        "Διαγράφηκε: ${change.file.name}"
+                    } else {
+                        "${change.file.name} — από $who"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (changes.any { !it.removed }) {
+                TextButton(onClick = onRead) { Text("Διάβασέ τα") }
+            }
+        }
     }
 }
 
@@ -360,7 +479,13 @@ private fun PeriodHeader(label: String, total: Double) {
 }
 
 @Composable
-private fun DebtRow(debt: DebtEntity, onToggle: () -> Unit, onOpen: () -> Unit) {
+private fun DebtRow(
+    debt: DebtEntity,
+    title: String,
+    onToggle: () -> Unit,
+    onOpen: () -> Unit,
+    onCopy: (String) -> Unit,
+) {
     val today = LocalDate.now()
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
@@ -378,7 +503,7 @@ private fun DebtRow(debt: DebtEntity, onToggle: () -> Unit, onOpen: () -> Unit) 
             )
             Column(Modifier.weight(1f)) {
                 Text(
-                    debt.title,
+                    title,
                     style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -395,26 +520,55 @@ private fun DebtRow(debt: DebtEntity, onToggle: () -> Unit, onOpen: () -> Unit) 
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(
-                debt.amount.asMoney(),
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 8.dp),
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    debt.amount.asMoney(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                // Η ταυτότητα οφειλής και το RF πάνε στην τράπεζα — ένα άγγιγμα
+                // αντί για αντιγραφή με το δάχτυλο από τριάντα ψηφία
+                if (debt.reference.isNotBlank()) {
+                    TextButton(
+                        onClick = { onCopy(debt.reference) },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Text("  κωδικός", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
             Checkbox(checked = debt.paid, onCheckedChange = { onToggle() })
         }
     }
+}
+
+/** Ο τίτλος της γραμμής, με το ψευδώνυμο του εργαζόμενου αν έχει οριστεί. */
+private fun titleFor(debt: DebtEntity, aliases: Map<String, String>): String {
+    if (debt.personName.isBlank()) return debt.title
+    return aliases[EmployeeEntity.idFor(debt.personName)] ?: debt.title
 }
 
 private fun subtitleFor(debt: DebtEntity, today: LocalDate): String = buildString {
     append(debt.kind.label)
     append(" · ")
     append(debt.periodLabel)
+    if (debt.paid) {
+        debt.paidDay?.let {
+            append(" · πληρώθηκε ")
+            append(it.asOfferDate())
+        }
+        return@buildString
+    }
     debt.dueDay?.let { due ->
         append(" · λήξη ")
         append(due.asOfferDate())
         val left = debt.daysLeft(today)
-        if (!debt.paid && left != null && left < 0) append(" (πέρασε)")
+        if (left != null && left < 0) append(" (πέρασε)")
     }
 }
 
@@ -438,8 +592,40 @@ private fun EmptyHint(hasAny: Boolean) {
     }
 }
 
+/** Πότε πληρώθηκε στ' αλήθεια — συχνά όχι τη μέρα που τσεκάρεται το κουτάκι. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PaidDatePicker(onDismiss: () -> Unit, onPick: (Long) -> Unit) {
+    val state = rememberDatePickerState(
+        initialSelectedDateMillis = LocalDate.now().toEpochDay() * 86_400_000L,
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                // Ο DatePicker δουλεύει σε UTC· η μετατροπή γίνεται εκεί,
+                // αλλιώς η τοπική ζώνη μετακινεί τη μέρα κατά μία
+                val day = state.selectedDateMillis?.let { millis ->
+                    java.time.Instant.ofEpochMilli(millis)
+                        .atZone(ZoneOffset.UTC).toLocalDate().toEpochDay()
+                } ?: LocalDate.now().toEpochDay()
+                onPick(day)
+            }) { Text("Πληρώθηκε") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Άκυρο") } },
+    ) {
+        DatePicker(state = state)
+    }
+}
+
+internal fun copyToClipboard(context: Context, value: String, label: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    clipboard?.setPrimaryClip(ClipData.newPlainText(label, value))
+    Toast.makeText(context, "Αντιγράφηκε: $value", Toast.LENGTH_SHORT).show()
+}
+
 /** Το όνομα του αρχείου όπως το δείχνει ο επιλογέας, για να ταξιδέψει στο Drive. */
-private fun displayName(context: android.content.Context, uri: Uri): String {
+private fun displayName(context: Context, uri: Uri): String {
     val cursor = context.contentResolver.query(uri, null, null, null, null)
     cursor?.use {
         val index = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)

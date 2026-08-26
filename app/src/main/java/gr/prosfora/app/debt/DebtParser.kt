@@ -2,16 +2,16 @@ package gr.prosfora.app.debt
 
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.DebtKind
+import gr.prosfora.app.util.asMoney
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
  * Διαβάζει τα παραστατικά των οφειλών και βγάζει γραμμές για τη βάση.
  *
- * Το κείμενο έρχεται από το Drive: το PDF αντιγράφεται ως Google Doc και
- * εξάγεται σε σκέτο κείμενο. Όσα PDF έχουν επίπεδο κειμένου διαβάζονται
- * αυτούσια· όσα είναι σχεδιασμένα σε καμπύλες — το σημείωμα πληρωμής της ΑΑΔΕ
- * είναι τέτοιο — περνάνε από το OCR του Drive.
+ * Το κείμενο έρχεται είτε αυτούσιο από το αρχείο (όταν έχει επίπεδο κειμένου)
+ * είτε από OCR — βλ. [DocumentText]. Και στις δύο περιπτώσεις η διάταξη δεν
+ * είναι εγγυημένη.
  *
  * **Γιατί δεν ψάχνουμε συντεταγμένες**: η σειρά των γραμμών αλλάζει ανάλογα με
  * το πώς βγήκε το κείμενο, και στα ίδια τα παραστατικά κάποιοι αριθμοί
@@ -28,15 +28,16 @@ object DebtParser {
     /**
      * Ένα ποσό όπως γράφεται στα ελληνικά έντυπα: 1.296,83.
      *
-     * Τα δύο δεκαδικά με κόμμα είναι που το ξεχωρίζουν από ημερομηνία ή αριθμό
-     * πρωτοκόλλου — χωρίς αυτό, το «Ποσό δόσης δήλωσης της 31/08/2026 30,00 €»
-     * θα διαβαζόταν ως 31 ευρώ.
+     * Τα δύο δεκαδικά με κόμμα είναι που το ξεχωρίζουν από ημερομηνία, ώρες
+     * εργασίας ή αριθμό πρωτοκόλλου — χωρίς αυτό, το «Ποσό δόσης δήλωσης της
+     * 31/08/2026 30,00 €» θα διαβαζόταν ως 31 ευρώ.
      */
     private const val AMOUNT = """([0-9][0-9.]*,[0-9]{2})"""
 
     /** Πόσο κείμενο επιτρέπεται ανάμεσα στην ετικέτα και στο ποσό της. */
     private const val GAP = """[\s\S]{0,60}?"""
 
+    private val ANY_AMOUNT = Regex("""[0-9][0-9.]*,[0-9]{2}""")
     private val DATE = Regex("""(\d{1,2})/(\d{1,2})/(\d{4})""")
     private val PERIOD_SLASH = Regex("""(\d{1,2})\s*/\s*(\d{4})""")
 
@@ -44,6 +45,19 @@ object DebtParser {
         "ΙΑΝΟΥΑΡ", "ΦΕΒΡΟΥΑΡ", "ΜΑΡΤ", "ΑΠΡΙΛ", "ΜΑΙ", "ΙΟΥΝ",
         "ΙΟΥΛ", "ΑΥΓΟΥΣΤ", "ΣΕΠΤΕΜΒΡ", "ΟΚΤΩΒΡ", "ΝΟΕΜΒΡ", "ΔΕΚΕΜΒΡ",
     )
+
+    /** Οι κωδικοί αποδοχών της μισθοδοτικής κατάστασης, όπως τυπώνονται. */
+    private val PAY_TYPES = mapOf(
+        "ΤΑ" to "Τακτικές αποδοχές",
+        "ΕΑ" to "Επίδομα αδείας",
+        "ΑΛ" to "Άδεια ληφθείσα",
+        "ΜΛ" to "Άδεια μη ληφθείσα",
+        "ΔΠ" to "Δώρο Πάσχα",
+        "ΔΧ" to "Δώρο Χριστουγέννων",
+    )
+
+    /** Τα δώρα πληρώνονται χωριστά, οπότε γίνονται δική τους γραμμή. */
+    private val BONUS_TYPES = setOf("ΔΠ", "ΔΧ")
 
     /** Ο μήνας αναφοράς και το έτος μιας οφειλής. */
     data class Period(val month: Int, val year: Int) {
@@ -57,7 +71,7 @@ object DebtParser {
      * αναγνωρίστηκε — τότε ο χρήστης το γράφει με το χέρι.
      */
     fun parse(text: String, fileName: String = "", driveFileId: String = ""): List<DebtEntity> {
-        val clean = text.replace(' ', ' ')
+        val clean = text.replace(' ', ' ')
         return when {
             clean.contains("Μισθοδοτική Κατάσταση", true) -> payroll(clean, fileName, driveFileId)
             clean.contains("Ταυτότητα Οφειλής", true) ||
@@ -115,13 +129,6 @@ object DebtParser {
      * οφειλή εκτός ρύθμισης, οπότε ένας κανόνας τις καλύπτει όλες.
      */
     private fun aade(text: String, fileName: String, driveFileId: String): List<DebtEntity> {
-        // Η ταυτότητα τυπώνεται σε τριάδες με κενά· ζητούμενο είναι μία σειρά
-        val identity = Regex("""Ταυτότητα\s*Οφειλής\s*:?\s*([0-9][0-9\s]{18,45})""")
-            .find(text)
-            ?.groupValues?.get(1)
-            ?.filter { it.isDigit() }
-            .orEmpty()
-
         val amount = amountAfter(text, """Ποσό\s*δόσης""")
             ?: amountAfter(text, """Συνολικό\s*ποσό\s*οφειλής""")
             ?: return emptyList()
@@ -140,23 +147,56 @@ object DebtParser {
             fromFileName(fileName)
         }
 
-        val tax = Regex("""Είδος\s*Φόρου\s*:?\s*(.+)""").find(text)
-            ?.groupValues?.get(1)
-            ?.trim()
-            ?.take(80)
-
         return listOf(
             debt(
                 kind = DebtKind.AADE,
                 period = period,
                 amount = amount,
-                reference = identity,
-                description = tax ?: "Βεβαιωμένη οφειλή εκτός ρύθμισης",
+                reference = debtIdentity(text),
+                description = taxKind(text) ?: "Βεβαιωμένη οφειλή εκτός ρύθμισης",
                 dueDay = due?.let { parseDate(it) },
                 fileName = fileName,
                 driveFileId = driveFileId,
             ),
         )
+    }
+
+    /**
+     * Η «Ταυτότητα Οφειλής», ως μία συνεχόμενη σειρά ψηφίων.
+     *
+     * Τυπώνεται σε τριάδες με κενά και το OCR μπορεί να βάλει τελείες ή παύλες
+     * ανάμεσα. Αν η ετικέτα δεν βρεθεί καθόλου, ψάχνεται σκέτη μια αρκετά
+     * μεγάλη ομάδα ψηφίων: τίποτε άλλο στο έντυπο δεν έχει τόσα.
+     */
+    internal fun debtIdentity(text: String): String {
+        Regex("""Ταυτότητα\s*Οφειλής\s*:?\s*([0-9][0-9\s.\-]{18,50})""").find(text)
+            ?.groupValues?.get(1)
+            ?.filter { it.isDigit() }
+            ?.takeIf { it.length >= 15 }
+            ?.let { return it }
+
+        return Regex("""(?<![0-9])([0-9][0-9\s.\-]{22,45}[0-9])(?![0-9])""").findAll(text)
+            .map { it.groupValues[1].filter(Char::isDigit) }
+            .firstOrNull { it.length in 20..32 }
+            .orEmpty()
+    }
+
+    /**
+     * Το «Είδος Φόρου», που σπάει σε δύο γραμμές στο έντυπο.
+     *
+     * Διαβάζεται ως ό,τι υπάρχει μέχρι την **επόμενη ετικέτα** και όχι μέχρι το
+     * τέλος της γραμμής, αλλιώς έμενε μισό — «ΑΜΟΙΒΕΣ ΑΠΟ» χωρίς τη συνέχεια.
+     */
+    internal fun taxKind(text: String): String? {
+        val next = "Ημερολογιακή|Συνολικό|Ποσό|Ταυτότητα|Ημ/νία|Προσοχή|ΔΟΥ|Τύπος"
+        val match = Regex("""Είδος\s*Φόρου\s*:?\s*([\s\S]{1,140}?)\s*(?=$next|$)""").find(text)
+            ?: return null
+        return match.groupValues[1]
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .trimEnd(',', '.', ':')
+            .take(90)
+            .ifBlank { null }
     }
 
     // ----------------------------------------------- διαφημιστικά τέλη ---
@@ -181,7 +221,7 @@ object DebtParser {
                 reference = rfCode(text),
                 description = buildString {
                     append("Εισφορές διαφήμισης")
-                    if (cost != null) append(" · κόστος %.2f €".format(cost))
+                    if (cost != null) append(" · κόστος ${cost.asMoney()}")
                 },
                 fileName = fileName,
                 driveFileId = driveFileId,
@@ -191,13 +231,21 @@ object DebtParser {
 
     // --------------------------------------------------------- μισθοδοσία ---
 
+    private data class Detail(val code: String, val gross: Double)
+
+    private class Person(val code: String, val name: String) {
+        val details = mutableListOf<Detail>()
+        var payable: Double? = null
+    }
+
     /**
-     * Μισθοδοτική κατάσταση: μία γραμμή ανά εργαζόμενο.
+     * Μισθοδοτική κατάσταση: μία γραμμή ανά εργαζόμενο, με τα δώρα χωριστά.
      *
-     * Η κατάσταση είναι πίνακας σε στήλες σταθερού πλάτους. Ο εργαζόμενος
-     * ανοίγει με «α/α κωδικός ΕΠΩΝΥΜΟ ΟΝΟΜΑ …» και κλείνει με μια γραμμή που
-     * είναι **μόνο αριθμοί** — τα σύνολά του. Το τελευταίο νούμερο εκείνης της
-     * γραμμής είναι το πληρωτέο, δηλαδή αυτό που ζητείται.
+     * Η κατάσταση είναι πίνακας σε στήλες. Ο εργαζόμενος ανοίγει με
+     * «α/α κωδικός ΕΠΩΝΥΜΟ ΟΝΟΜΑ …», ακολουθούν γραμμές αποδοχών που ξεκινούν
+     * με τον κωδικό τους (ΤΑ, ΕΑ, ΑΛ, ΜΛ, ΔΠ, ΔΧ), και κλείνει με μια γραμμή
+     * που είναι **μόνο αριθμοί** — τα σύνολά του. Το τελευταίο νούμερο εκείνης
+     * της γραμμής είναι το πληρωτέο.
      *
      * Η γραμμή του γενικού συνόλου δεν μπερδεύεται: περιέχει και το όνομα του
      * έργου, οπότε δεν είναι «μόνο αριθμοί».
@@ -207,55 +255,149 @@ object DebtParser {
             Regex("""Μισθοδοτική\s*Κατάσταση\s*(\d{1,2})\s*/\s*(\d{4})""").find(text),
         ) ?: fromFileName(fileName)
 
+        val people = readPeople(text)
+        val rows = people.flatMap { rowsFor(it, period, fileName, driveFileId) }
+        return merge(rows)
+    }
+
+    private fun readPeople(text: String): List<Person> {
         val header = Regex("""^\s*(\d{1,3})\s+([A-Za-z0-9]{2,6})\s+(\S.*)$""")
-        val lines = text.lines()
-
-        data class Person(val code: String, val name: String, var amount: Double?)
-
+        val detail = Regex("""^\s*([Α-ΩΆΈΉΊΌΎΏ]{2})\s+\S""")
         val people = mutableListOf<Person>()
-        lines.forEach { line ->
-            val match = header.find(line)
-            if (match != null && looksLikeName(match.groupValues[3])) {
-                val parts = match.groupValues[3].split(Regex("""\s{2,}|\t"""))
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                val name = parts.take(2).joinToString(" ").trim()
-                people += Person(match.groupValues[2], name, null)
+
+        text.lines().forEach { line ->
+            val head = header.find(line)
+            if (head != null && head.groupValues[3].firstOrNull()?.isLetter() == true) {
+                people += Person(head.groupValues[2], nameOf(head.groupValues[3]))
                 return@forEach
             }
-            val numbers = numbersOnly(line)
+
+            val person = people.lastOrNull() ?: return@forEach
+
+            detail.find(line)?.let { match ->
+                val gross = ANY_AMOUNT.find(line)?.value?.let(::money)
+                if (gross != null && gross > 0.0) {
+                    person.details += Detail(match.groupValues[1], gross)
+                }
+                return@forEach
+            }
+
             // Οι ενδιάμεσες γραμμές αποδοχών έχουν λιγότερες στήλες· τα σύνολα
             // του εργαζόμενου είναι η πλατύτερη γραμμή του μπλοκ του
-            if (numbers != null && numbers.size >= 8) {
-                people.lastOrNull()?.amount = numbers.last()
+            val numbers = numbersOnly(line)
+            if (numbers != null && numbers.size >= 8) person.payable = numbers.last()
+        }
+        return people
+    }
+
+    /**
+     * Επώνυμο και όνομα — τα δύο πρώτα λεκτικά.
+     *
+     * Πάντα δύο, ανεξάρτητα από το πόσα κενά χωρίζουν τις στήλες: το κείμενο
+     * από OCR χάνει τη στοίχιση, και ένα όνομα που άλλαζε ανάλογα με τον τρόπο
+     * ανάγνωσης θα έφτιαχνε διπλοεγγραφές για το ίδιο άτομο.
+     */
+    private fun nameOf(rest: String): String =
+        rest.trim().split(Regex("""\s+""")).take(2).joinToString(" ").trim()
+
+    private fun rowsFor(
+        person: Person,
+        period: Period,
+        fileName: String,
+        driveFileId: String,
+    ): List<DebtEntity> {
+        val payable = person.payable ?: return emptyList()
+        if (payable <= 0.0 || person.name.isBlank()) return emptyList()
+
+        val bonuses = person.details.filter { it.code in BONUS_TYPES }
+        val regular = person.details.filterNot { it.code in BONUS_TYPES }
+        val totalGross = person.details.sumOf { it.gross }
+
+        // Χωρίς δώρα δεν υπάρχει τίποτα να μοιραστεί
+        if (bonuses.isEmpty() || totalGross <= 0.0) {
+            return listOf(
+                payrollRow(
+                    DebtKind.PAYROLL, person, period, payable,
+                    describe(regular), fileName, driveFileId,
+                ),
+            )
+        }
+
+        // Το πληρωτέο δίνεται ενιαίο για όλο τον μήνα· η κατανομή του στα δώρα
+        // γίνεται αναλογικά με τις μεικτές αποδοχές, γιατί άλλο στοιχείο δεν
+        // υπάρχει στο έντυπο. Είναι εκτίμηση και διορθώνεται με το χέρι.
+        val rows = mutableListOf<DebtEntity>()
+        var left = payable
+        bonuses.forEach { bonus ->
+            val share = round2(payable * bonus.gross / totalGross)
+            left -= share
+            rows += payrollRow(
+                DebtKind.PAYROLL_BONUS, person, period, share,
+                "${PAY_TYPES[bonus.code] ?: bonus.code} · μεικτά ${bonus.gross.asMoney()} " +
+                    "(αναλογικά)",
+                fileName, driveFileId,
+            )
+        }
+        if (round2(left) > 0.0) {
+            rows += payrollRow(
+                DebtKind.PAYROLL, person, period, round2(left),
+                describe(regular), fileName, driveFileId,
+            )
+        }
+        return rows
+    }
+
+    private fun payrollRow(
+        kind: DebtKind,
+        person: Person,
+        period: Period,
+        amount: Double,
+        description: String,
+        fileName: String,
+        driveFileId: String,
+    ) = debt(
+        kind = kind,
+        period = period,
+        amount = amount,
+        reference = "",
+        description = description,
+        personName = person.name,
+        personCode = person.code,
+        fileName = fileName,
+        driveFileId = driveFileId,
+    )
+
+    /** «Τακτικές αποδοχές 364,06 € · Επίδομα αδείας 120,00 €» */
+    private fun describe(details: List<Detail>): String {
+        if (details.isEmpty()) return "Πληρωτέο μισθοδοσίας"
+        return details
+            .groupBy { it.code }
+            .map { (code, rows) ->
+                "${PAY_TYPES[code] ?: code} ${rows.sumOf { it.gross }.asMoney()}"
+            }
+            .joinToString(" · ")
+    }
+
+    /**
+     * Ο ίδιος εργαζόμενος δύο φορές στην ίδια κατάσταση γίνεται μία πληρωμή.
+     *
+     * Συμβαίνει όταν οι αποδοχές του σπάνε σε περισσότερες από μία εγγραφές.
+     * Χωρίς αυτό, η δεύτερη γραμμή θα έσβηνε την πρώτη — το αναγνωριστικό
+     * βγαίνει από το όνομα και την περίοδο, οπότε είναι το ίδιο.
+     */
+    private fun merge(rows: List<DebtEntity>): List<DebtEntity> =
+        rows.groupBy { it.id }.map { (_, same) ->
+            if (same.size == 1) {
+                same.first()
+            } else {
+                same.first().copy(
+                    amount = round2(same.sumOf { it.amount }),
+                    description = same.map { it.description }.distinct().joinToString(" · "),
+                )
             }
         }
 
-        return people
-            .filter { it.name.isNotBlank() && (it.amount ?: 0.0) > 0.0 }
-            .map { person ->
-                debt(
-                    kind = DebtKind.PAYROLL,
-                    period = period,
-                    amount = person.amount ?: 0.0,
-                    reference = "",
-                    description = "Πληρωτέο μισθοδοσίας",
-                    personName = person.name,
-                    personCode = person.code,
-                    fileName = fileName,
-                    driveFileId = driveFileId,
-                )
-            }
-    }
-
     /** Το υπόλοιπο της γραμμής ξεκινάει με επώνυμο, όχι με νούμερο ή σύμβολο. */
-    private fun looksLikeName(rest: String): Boolean =
-        rest.firstOrNull()?.isLetter() == true
-
-    /**
-     * Τα νούμερα μιας γραμμής που δεν έχει τίποτε άλλο πάνω της.
-     * null σημαίνει ότι υπήρχαν και γράμματα, οπότε δεν είναι γραμμή συνόλων.
-     */
     private fun numbersOnly(line: String): List<Double>? {
         val trimmed = line.trim()
         if (trimmed.isEmpty()) return null
@@ -338,6 +480,8 @@ object DebtParser {
         }
         return normalized.toDoubleOrNull()
     }
+
+    private fun round2(value: Double) = Math.round(value * 100.0) / 100.0
 
     private fun parseDate(raw: String): Long? = runCatching {
         LocalDate.parse(raw, DateTimeFormatter.ofPattern("d/M/uuuu")).toEpochDay()

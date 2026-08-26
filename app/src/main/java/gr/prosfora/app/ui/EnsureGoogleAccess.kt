@@ -1,6 +1,9 @@
 package gr.prosfora.app.ui
 
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material.icons.Icons
@@ -20,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.google.DriveClient
+import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
@@ -49,15 +53,32 @@ fun EnsureGoogleAccess() {
     var found by remember { mutableStateOf<Found?>(null) }
     var busy by remember { mutableStateOf(false) }
 
+    // Android 13+: χωρίς αυτήν η ειδοποίηση για αλλαγές στο Drive δεν βγαίνει.
+    // Ζητείται σιωπηλά μία φορά· αν ο χρήστης αρνηθεί, μένουν οι εντός εφαρμογής.
+    val notifications = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+
     LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            settings.notifyDriveChanges
+        ) {
+            runCatching { notifications.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
+        }
+
         // Σιωπηλή αποτυχία: αν ο χρήστης πει όχι, συνεχίζει offline και θα
         // ξαναρωτηθεί όταν πράγματι χρειαστεί κάτι από τη Google
         val token = runCatching { authorizer.accessToken() }.getOrNull() ?: return@LaunchedEffect
-        if (settings.spreadsheetId != null) return@LaunchedEffect
+        val drive = DriveClient(token)
 
-        runCatching { discover(DriveClient(token), settings) }
-            .getOrNull()
-            ?.let { found = it }
+        if (settings.spreadsheetId == null) {
+            runCatching { discover(drive, settings) }
+                .getOrNull()
+                ?.let { found = it }
+        }
+
+        // Τι άλλαξε στον κοινόχρηστο φάκελο από τότε που κοιτάξαμε τελευταία
+        runCatching { DriveWatch.refresh(context, drive, settings) }
     }
 
     found?.let { existing ->

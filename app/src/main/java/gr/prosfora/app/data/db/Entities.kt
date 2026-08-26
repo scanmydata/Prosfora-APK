@@ -62,6 +62,15 @@ data class OfferEntity(
      */
     val vatIncluded: Boolean = false,
     /**
+     * Σκαλωσιά και άδεια μικρής κλίμακας: χρεώνονται μόνο σε κάποιες δουλειές
+     * και το ποσό αλλάζει κάθε φορά. Ο διακόπτης κρατιέται χωριστά από το ποσό
+     * ώστε το σβήσιμο να μη διαγράφει και το νούμερο που πληκτρολογήθηκε.
+     */
+    val scaffolding: Boolean = false,
+    val scaffoldingCost: Double = 0.0,
+    val permit: Boolean = false,
+    val permitCost: Double = 0.0,
+    /**
      * Από ποιο αρχείο ήρθε, αν ήρθε από εισαγωγή ιστορικού. Κενό σημαίνει ότι
      * γράφτηκε μέσα στην εφαρμογή. Τα εισαγόμενα είναι παλιές επιμετρήσεις που
      * δεν ξέρουμε σίγουρα αν έγιναν δουλειές, οπότε τα στατιστικά μπορούν να
@@ -187,13 +196,24 @@ data class OfferWithDetails(
     val spaces: List<SpaceEntity> get() = spacesRaw.filter { !it.deleted }.sortedBy { it.position }
     val notes: List<NoteEntity> get() = notesRaw.filter { !it.deleted }.sortedBy { it.position }
 
+    /** Το άθροισμα μόνο των γραμμών του πίνακα, χωρίς πρόσθετα κόστη. */
+    val linesTotal: Double get() = spaces.sumOf { it.lineTotal }
+
+    /** Σκαλωσιά, όσο είναι ενεργή. */
+    val scaffoldingCost: Double
+        get() = if (offer.scaffolding) offer.scaffoldingCost else 0.0
+
+    /** Άδεια μικρής κλίμακας, όσο είναι ενεργή. */
+    val permitCost: Double get() = if (offer.permit) offer.permitCost else 0.0
+
     /**
      * Καθαρή αξία — ήταν virtual column + action snapshot στο AppSheet.
      *
      * Μένει καθαρή αξία και όταν η προσφορά έχει ΦΠΑ: τα στατιστικά μετράνε
-     * τζίρο, και ο ΦΠΑ δεν είναι έσοδο.
+     * τζίρο, και ο ΦΠΑ δεν είναι έσοδο. Τα πρόσθετα κόστη όμως μετράνε — είναι
+     * κι αυτά χρέωση προς τον πελάτη.
      */
-    val total: Double get() = spaces.sumOf { it.lineTotal }
+    val total: Double get() = linesTotal + scaffoldingCost + permitCost
 
     /** Ο ΦΠΑ σε ευρώ — μηδέν όταν η προσφορά δεν τον περιλαμβάνει. */
     val vatAmount: Double

@@ -8,7 +8,7 @@
   * αρίθμηση σελίδων κάτω δεξιά, σε κάθε σελίδα
   * αέρας στην κορυφή από τη 2η σελίδα και μετά
   * ισχύς προσφοράς και τρόπος πληρωμής
-  * καθαρή αξία και ΦΠΑ 24% μέσα στον πίνακα
+  * σκαλωσιά, άδεια μικρής κλίμακας, σύνολο και ΦΠΑ 24% μέσα στον πίνακα
   * στοιχίσεις που έβγαιναν στραβές στο τυπωμένο PDF
 
 Τρέξιμο:
@@ -28,7 +28,8 @@ from docx.shared import Cm, Pt, RGBColor, Twips
 from docx.table import Table
 
 from make_template import (
-    FONT, GREEN_HEX, GREY, clone_row, field, para, rule, set_cell_text, write,
+    CLOSING_ROWS, DEEP, FONT, GREEN_HEX, GREY, clone_row, field, para, rule,
+    set_cell_text, write,
 )
 
 OUT = "assets/pdf-template/ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — κλασικό.docx"
@@ -181,29 +182,29 @@ def align_date_with_table(doc, section):
         date.paragraph_format.right_indent = Twips(gap)
 
 
-def add_vat_rows(doc):
-    """Καθαρή αξία και ΦΠΑ 24%, ακριβώς πάνω από το γενικό σύνολο.
+def add_closing_rows(doc):
+    """Πρόσθετα κόστη, σύνολο και ΦΠΑ, ακριβώς πάνω από το γενικό σύνολο.
 
-    Οι γραμμές γράφονται πάντα στο πρότυπο· η εφαρμογή τις αφαιρεί όταν η
-    προσφορά δεν έχει ΦΠΑ — αυτό δηλώνει ο δείκτης `<<[Αν ΦΠΑ]>>`.
+    Οι γραμμές γράφονται πάντα στο πρότυπο· η εφαρμογή αφαιρεί όποια δεν ισχύει
+    για τη συγκεκριμένη προσφορά — αυτό δηλώνει ο δείκτης «Αν …» στην αρχή τους.
     """
     table = prices_table(doc)
     if table is None:
         raise SystemExit("δεν βρέθηκε ο πίνακας της ανάλυσης χώρων")
 
     total_row = table.rows[-1]
-    if "<<[Αν ΦΠΑ]>>" in total_row.cells[0].text:
+    if "<<[Αν " in total_row.cells[0].text:
         return                                     # έχει ξανατρέξει
 
-    for label, value in (
-        ("<<[Αν ΦΠΑ]>>ΚΑΘΑΡΗ ΑΞΙΑ", "<<[Καθαρή Αξία]>>"),
-        ("<<[Αν ΦΠΑ]>>ΦΠΑ 24%", "<<[ΦΠΑ]>>"),
-    ):
+    # Στο πρωτότυπο η τελευταία γραμμή λέει σκέτο «ΣΥΝΟΛΟ»· με τον ΦΠΑ από
+    # πάνω της χρειάζεται να ξεχωρίζει ότι αυτή είναι η τελική
+    set_cell_text(total_row.cells[0], "ΓΕΝΙΚΟ ΣΥΝΟΛΟ")
+
+    for label, value, bold in CLOSING_ROWS:
         row = clone_row(table, total_row, total_row)
-        # Οι δύο ενδιάμεσες γραμμές είναι πληροφορία, όχι το συμπέρασμα:
-        # πιο ελαφριές από το γενικό σύνολο ώστε να ξεχωρίζει εκείνο
-        set_cell_text(row.cells[0], label, bold=False, color=GREY, size=9)
-        set_cell_text(row.cells[-1], value, bold=False, color=GREY, size=9)
+        colour = DEEP if bold else GREY
+        set_cell_text(row.cells[0], label, bold=bold, color=colour, size=9.5 if bold else 9)
+        set_cell_text(row.cells[-1], value, bold=bold, color=colour, size=9.5 if bold else 9)
 
 
 def fix_alignment(doc):
@@ -239,7 +240,7 @@ def build(source):
 
     furnish(section)
     add_terms(doc)
-    add_vat_rows(doc)
+    add_closing_rows(doc)
     align_date_with_table(doc, section)
     fix_alignment(doc)
 
