@@ -28,6 +28,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -509,4 +510,43 @@ private fun DebtSettings(settings: GoogleSettings) {
             }
         },
     ) { Text(if (checking) "Έλεγχος…" else "Δοκιμή κλειδιού") }
+
+    HorizontalDivider()
+
+    ModelKeys(settings)
+}
+
+/**
+ * Τα κλειδιά για την ανάγνωση από μοντέλο γλώσσας.
+ *
+ * Μπαίνουν με το χέρι και δεν ζουν στον κώδικα: το αποθετήριο είναι δημόσιο,
+ * και ένα κλειδί μέσα στο apk το διαβάζει όποιος το ανοίξει.
+ */
+@Composable
+private fun ModelKeys(settings: GoogleSettings) {
+    var groq by remember { mutableStateOf(settings.groqApiKey) }
+    var router by remember { mutableStateOf(settings.openRouterApiKey) }
+
+    Text("Ανάγνωση από μοντέλο", style = MaterialTheme.typography.titleSmall)
+    Text(
+        "Μπαίνει σε δεύτερη μοίρα: τρέχει μόνο όταν οι κανόνες δεν αναγνωρίσουν " +
+            "το παραστατικό. Χρησιμοποιούνται μόνο δωρεάν μοντέλα, και ό,τι " +
+            "διαβαστεί περνάει κι αυτό από την έγκρισή σου.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    OutlinedTextField(
+        value = groq,
+        onValueChange = { groq = it; settings.groqApiKey = it },
+        label = { Text("Κλειδί Groq") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = router,
+        onValueChange = { router = it; settings.openRouterApiKey = it },
+        label = { Text("Κλειδί OpenRouter") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }

@@ -61,7 +61,7 @@ def _char(ch: str) -> str:
 
 
 def anchor(text: str) -> str:
-    """Ένα σταθερό λεκτικό ως μοτίβο ανεκτικό στο OCR.
+    r"""Ένα σταθερό λεκτικό ως μοτίβο ανεκτικό στο OCR.
 
     Τα γράμματα κολλάνε με ``\s*`` γιατί το OCR σπάει λέξεις, και σε ετικέτες
     από ``SLACK_FROM`` γράμματα και πάνω επιτρέπεται **ένα** λάθος γράμμα: μια
@@ -194,13 +194,19 @@ def parse_apd(text: str, name: str) -> list[dict]:
 
 
 def debt_identity(text: str) -> str:
-    """Η ταυτότητα οφειλής ως μία συνεχόμενη σειρά ψηφίων."""
-    m = re.search(anchor("Ταυτότητα Οφειλής") + r"\s*:?\s*([0-9][0-9\s.\-]{18,50})", text)
+    """Η ταυτότητα οφειλής ως μία συνεχόμενη σειρά ψηφίων.
+
+    Τα κενά που επιτρέπονται είναι **μόνο της ίδιας γραμμής**. Η ταυτότητα
+    τυπώνεται σε τριάδες στη μία σειρά, και από κάτω της ακολουθεί η ημερομηνία
+    έκδοσης: επιτρέποντας αλλαγή γραμμής, το «12» του «12/08/2026» κολλούσε στο
+    τέλος της και έβγαινε ταυτότητα 32 ψηφίων αντί για 30.
+    """
+    m = re.search(anchor("Ταυτότητα Οφειλής") + r"\s*:?\s*([0-9][0-9 \t.\-]{18,50})", text)
     if m:
         digits = "".join(c for c in m.group(1) if c.isdigit())
         if len(digits) >= 15:
             return digits
-    for m in re.finditer(r"(?<![0-9])([0-9][0-9\s.\-]{22,45}[0-9])(?![0-9])", text):
+    for m in re.finditer(r"(?<![0-9])([0-9][0-9 \t.\-]{22,45}[0-9])(?![0-9])", text):
         digits = "".join(c for c in m.group(1) if c.isdigit())
         if 20 <= len(digits) <= 32:
             return digits
@@ -253,10 +259,31 @@ def aade_period(text: str, name: str, due: str | None) -> tuple[int, int]:
     return (0, 0)
 
 
+def aade_amount(text: str) -> float | None:
+    """Το ποσό που πρέπει να πληρωθεί.
+
+    Πρώτα δίπλα στην ετικέτα του, που είναι το ακριβές. Όταν όμως η μηχανή
+    βγάλει το έντυπο **σε στήλες** —πρώτα όλες οι ετικέτες, μετά όλες οι
+    τιμές— η τιμή απέχει εκατοντάδες χαρακτήρες από την ετικέτα της και καμία
+    απόσταση δεν είναι αρκετή χωρίς να αρχίσει να πιάνει λάθος νούμερα.
+
+    Τότε μετράει η σειρά: το έντυπο τυπώνει πρώτα το συνολικό ποσό και μετά τη
+    δόση, οπότε και στη στήλη των τιμών η δόση είναι η τελευταία. Και η δόση
+    είναι αυτό που πληρώνεις τώρα.
+    """
+    direct = (amount_after(text, anchor("Ποσό δόσης"))
+              or amount_after(text, anchor("Συνολικό ποσό οφειλής")))
+    if direct is not None:
+        return direct
+
+    found = [money(m.group(0)) for m in ANY_AMOUNT.finditer(text)]
+    found = [v for v in found if v is not None and v > 0]
+    return found[-1] if found else None
+
+
 def parse_aade(text: str, name: str) -> list[dict]:
     reference = debt_identity(text)
-    amount = (amount_after(text, anchor("Ποσό δόσης"))
-              or amount_after(text, anchor("Συνολικό ποσό οφειλής")))
+    amount = aade_amount(text)
     if amount is None:
         return []
     due = re.search(anchor("Ποσό δόσης δήλωσης της") + r"\s*(\d{1,2}/\d{1,2}/\d{4})", text)

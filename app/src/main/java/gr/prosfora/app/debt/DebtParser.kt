@@ -193,8 +193,7 @@ object DebtParser {
      * οφειλή εκτός ρύθμισης, οπότε ένας κανόνας τις καλύπτει όλες.
      */
     private fun aade(text: String, fileName: String, driveFileId: String): List<DebtEntity> {
-        val amount = amountAfter(text, anchor("Ποσό δόσης"))
-            ?: amountAfter(text, anchor("Συνολικό ποσό οφειλής"))
+        val amount = aadeAmount(text)
         if (amount == null) {
             // Το κλαδί ταίριαξε αλλά το ποσό δεν βρέθηκε: το πιο πιθανό είναι
             // ότι το OCR έσπασε τα δεκαδικά ή έχασε το κόμμα
@@ -225,6 +224,29 @@ object DebtParser {
                 driveFileId = driveFileId,
             ),
         )
+    }
+
+    /**
+     * Το ποσό που πρέπει να πληρωθεί.
+     *
+     * Πρώτα δίπλα στην ετικέτα του, που είναι το ακριβές. Όταν όμως η μηχανή
+     * βγάλει το έντυπο **σε στήλες** —πρώτα όλες οι ετικέτες, μετά όλες οι
+     * τιμές— η τιμή απέχει εκατοντάδες χαρακτήρες από την ετικέτα της, και
+     * καμία απόσταση δεν φτάνει χωρίς να αρχίσει να πιάνει λάθος νούμερα.
+     *
+     * Τότε μετράει η σειρά: το έντυπο τυπώνει πρώτα το συνολικό ποσό και μετά
+     * τη δόση, οπότε και στη στήλη των τιμών η δόση είναι η τελευταία. Και η
+     * δόση είναι αυτό που πληρώνεται τώρα.
+     */
+    private fun aadeAmount(text: String): Double? {
+        val beside = amountAfter(text, anchor("Ποσό δόσης"))
+            ?: amountAfter(text, anchor("Συνολικό ποσό οφειλής"))
+        if (beside != null) return beside
+
+        return ANY_AMOUNT.findAll(text)
+            .mapNotNull { money(it.value) }
+            .filter { it > 0.0 }
+            .lastOrNull()
     }
 
     /**
@@ -265,13 +287,13 @@ object DebtParser {
      * μεγάλη ομάδα ψηφίων: τίποτε άλλο στο έντυπο δεν έχει τόσα.
      */
     internal fun debtIdentity(text: String): String {
-        Regex(anchor("Ταυτότητα Οφειλής") + """\s*:?\s*([0-9][0-9\s.\-]{18,50})""").find(text)
+        Regex(anchor("Ταυτότητα Οφειλής") + """\s*:?\s*([0-9][0-9 	.\-]{18,50})""").find(text)
             ?.groupValues?.get(1)
             ?.filter { it.isDigit() }
             ?.takeIf { it.length >= 15 }
             ?.let { return it }
 
-        return Regex("""(?<![0-9])([0-9][0-9\s.\-]{22,45}[0-9])(?![0-9])""").findAll(text)
+        return Regex("""(?<![0-9])([0-9][0-9 	.\-]{22,45}[0-9])(?![0-9])""").findAll(text)
             .map { it.groupValues[1].filter(Char::isDigit) }
             .firstOrNull { it.length in 20..32 }
             .orEmpty()

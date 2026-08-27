@@ -28,6 +28,7 @@ class DocumentText(
         TEXT_LAYER("κείμενο από το αρχείο"),
         DRIVE_OCR("OCR (Google Drive)"),
         OCR_SPACE("OCR (ocr.space)"),
+        LLM("μοντέλο γλώσσας"),
         NONE("δεν διαβάστηκε"),
     }
 

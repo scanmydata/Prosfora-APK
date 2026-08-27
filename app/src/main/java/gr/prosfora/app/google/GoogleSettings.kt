@@ -146,6 +146,21 @@ class GoogleSettings(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_ASK_PAID_DATE, value).apply()
 
     /**
+     * Κλειδί Groq, για την ανάγνωση παραστατικού από μοντέλο γλώσσας.
+     *
+     * Όπως και του ocr.space, ζει εδώ και όχι στον κώδικα: το αποθετήριο είναι
+     * δημόσιο, και ένα κλειδί μέσα στο apk το βγάζει όποιος το ανοίξει.
+     */
+    var groqApiKey: String
+        get() = prefs.getString(KEY_GROQ, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_GROQ, value.trim()).apply()
+
+    /** Κλειδί OpenRouter. Χρησιμοποιούνται μόνο τα δωρεάν του μοντέλα. */
+    var openRouterApiKey: String
+        get() = prefs.getString(KEY_OPENROUTER, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_OPENROUTER, value.trim()).apply()
+
+    /**
      * Τοπική καταγραφή διαγνωστικών σε αρχείο.
      *
      * Σβηστή από προεπιλογή: το κείμενο των παραστατικών περιέχει ΑΦΜ, ονόματα
@@ -298,6 +313,8 @@ class GoogleSettings(context: Context) {
         private const val KEY_ASK_PAID_DATE = "ask_paid_date"
         private const val KEY_NOTIFY_DRIVE = "notify_drive_changes"
         private const val KEY_DEBUG_LOG = "debug_logging"
+        private const val KEY_GROQ = "groq_api_key"
+        private const val KEY_OPENROUTER = "openrouter_api_key"
         private const val KEY_KNOWN_FILES = "known_drive_files"
         private const val KEY_WATCH_READY = "drive_watch_ready"
 

@@ -35,6 +35,10 @@ class DebtImporter(
         ocr = settings.ocrApiKey.takeIf { it.isNotBlank() }?.let { OcrSpaceClient(it) },
     )
 
+    /** Το δίχτυ κάτω από τους κανόνες. Χωρίς κλειδιά, δεν υπάρχει καν. */
+    private val llm = LlmExtractor(settings.groqApiKey, settings.openRouterApiKey)
+        .takeIf { it.available }
+
     /** Τι βρέθηκε σε ένα παραστατικό. */
     data class Found(
         val fileName: String,
@@ -147,12 +151,23 @@ class DebtImporter(
         val result = reader.read(bytes, driveFileId, fileName) { text ->
             DebtParser.parse(text, fileName, driveFileId).isNotEmpty()
         }
+        val byRules = DebtParser.parse(result.text, fileName, driveFileId)
+        if (byRules.isNotEmpty() || result.text.isBlank() || llm?.available != true) {
+            return Found(fileName, driveFileId, byRules, result.route, result.note)
+        }
+
+        // Οι κανόνες δεν το αναγνώρισαν αλλά κείμενο υπάρχει. Πριν πει «δεν
+        // βρέθηκε τίποτα», ας το διαβάσει ένα μοντέλο: το έντυπο μπορεί να
+        // βγήκε σε διάταξη που κανένας κανόνας δεν προβλέπει.
+        val byModel = runCatching { llm.extract(result.text, fileName, driveFileId) }
+            .getOrDefault(emptyList())
+
         return Found(
             fileName = fileName,
             driveFileId = driveFileId,
-            debts = DebtParser.parse(result.text, fileName, driveFileId),
-            route = result.route,
-            note = result.note,
+            debts = byModel,
+            route = if (byModel.isEmpty()) result.route else DocumentText.Route.LLM,
+            note = if (byModel.isEmpty()) result.note else "διαβάστηκε από μοντέλο",
         )
     }
 
