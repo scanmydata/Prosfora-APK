@@ -152,14 +152,16 @@ class DebtImporter(
             DebtParser.parse(text, fileName, driveFileId).isNotEmpty()
         }
         val byRules = DebtParser.parse(result.text, fileName, driveFileId)
-        if (byRules.isNotEmpty() || result.text.isBlank() || llm?.available != true) {
+        // Τοπική μεταβλητή: η ιδιότητα της κλάσης δεν κάνει smart-cast
+        val model = llm
+        if (byRules.isNotEmpty() || result.text.isBlank() || model == null) {
             return Found(fileName, driveFileId, byRules, result.route, result.note)
         }
 
         // Οι κανόνες δεν το αναγνώρισαν αλλά κείμενο υπάρχει. Πριν πει «δεν
         // βρέθηκε τίποτα», ας το διαβάσει ένα μοντέλο: το έντυπο μπορεί να
         // βγήκε σε διάταξη που κανένας κανόνας δεν προβλέπει.
-        val byModel = runCatching { llm.extract(result.text, fileName, driveFileId) }
+        val byModel = runCatching { model.extract(result.text, fileName, driveFileId) }
             .getOrDefault(emptyList())
 
         return Found(
