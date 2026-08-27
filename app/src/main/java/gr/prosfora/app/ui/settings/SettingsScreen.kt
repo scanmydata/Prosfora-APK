@@ -56,6 +56,7 @@ import gr.prosfora.app.ui.MenuButton
 import gr.prosfora.app.ui.offers.EditBlue
 import gr.prosfora.app.ui.offers.EmailAmber
 import gr.prosfora.app.ui.offers.SentGreen
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 
 /**
@@ -492,7 +493,7 @@ private fun DebtSettings(settings: GoogleSettings) {
                     context,
                     outcome.fold(
                         onSuccess = { "Το κλειδί δουλεύει" },
-                        onFailure = { "Απέτυχε: ${it.message}" },
+                        onFailure = { "Απέτυχε: ${it.reason()}" },
                     ),
                     Toast.LENGTH_LONG,
                 ).show()

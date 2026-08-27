@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.data.HistoryImporter
 import gr.prosfora.app.util.asMoney
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -76,7 +77,7 @@ fun HistoryImportSettings() {
                 plan = comparison
                 includeChanged = true
             }.onFailure {
-                Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -212,7 +213,7 @@ fun HistoryImportSettings() {
                             }.onFailure {
                                 Toast.makeText(
                                     context,
-                                    "Απέτυχε: ${it.message}",
+                                    "Απέτυχε: ${it.reason()}",
                                     Toast.LENGTH_LONG,
                                 ).show()
                             }

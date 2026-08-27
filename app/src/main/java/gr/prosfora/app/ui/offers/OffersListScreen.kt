@@ -61,6 +61,7 @@ import gr.prosfora.app.update.UpdateChecker
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
 import gr.prosfora.app.util.asSentStamp
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -133,7 +134,7 @@ fun OffersListScreen(
                         }.onFailure {
                             Toast.makeText(
                                 context,
-                                "Ο συγχρονισμός απέτυχε: ${it.message}",
+                                "Ο συγχρονισμός απέτυχε: ${it.reason()}",
                                 Toast.LENGTH_LONG,
                             ).show()
                         }

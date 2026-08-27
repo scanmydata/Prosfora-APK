@@ -39,6 +39,7 @@ import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.sync.SheetSync
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -122,7 +123,7 @@ fun SharedDatabaseSettings(
                             Toast.LENGTH_LONG,
                         ).show()
                     }.onFailure {
-                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                     }
                 }
             },
@@ -154,7 +155,7 @@ fun SharedDatabaseSettings(
                         onSynced()
                         Toast.makeText(context, report.summary, Toast.LENGTH_LONG).show()
                     }.onFailure {
-                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                     }
                 }
             },
@@ -205,7 +206,7 @@ fun SharedDatabaseSettings(
                                 ),
                             )
                         }.onFailure {
-                            Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                         }
                     }
                 },

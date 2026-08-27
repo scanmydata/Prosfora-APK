@@ -55,6 +55,7 @@ import gr.prosfora.app.mail.MailSender
 import gr.prosfora.app.mail.OfferMail
 import gr.prosfora.app.settings.SmtpSettingsStore
 import gr.prosfora.app.ui.pdf.PdfPreviewDialog
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -106,7 +107,7 @@ fun EmailComposeScreen(
                 OfferPdf.generate(context, drive, googleSettings, current)
             }.onSuccess { pdf = it }
                 .onFailure {
-                    Toast.makeText(context, "Το PDF δεν δημιουργήθηκε: ${it.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Το PDF δεν δημιουργήθηκε: ${it.reason()}", Toast.LENGTH_LONG).show()
                 }
             busy = null
         }
@@ -171,7 +172,7 @@ fun EmailComposeScreen(
                             OfferPdf.generate(context, drive, googleSettings, current)
                         }.onSuccess { pdf = it }
                             .onFailure {
-                                Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                             }
                         busy = null
                     }
@@ -217,7 +218,7 @@ fun EmailComposeScreen(
                             viewModel.markSent(current.offer.id)
                             onBack()
                         }.onFailure {
-                            Toast.makeText(context, "Αποτυχία: ${it.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "Αποτυχία: ${it.reason()}", Toast.LENGTH_LONG).show()
                         }
                     }
                 },

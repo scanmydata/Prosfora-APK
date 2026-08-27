@@ -51,6 +51,7 @@ import gr.prosfora.app.message.MessageTemplates
 import gr.prosfora.app.notify.Channel
 import gr.prosfora.app.notify.ContactNotifier
 import gr.prosfora.app.notify.SmsSender
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 
 /**
@@ -114,7 +115,7 @@ fun MessageComposeScreen(
                 val result = SmsSender.send(context, phone, text)
                 busy = false
                 result.onSuccess { recordSent() }.onFailure {
-                    Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -206,7 +207,7 @@ fun MessageComposeScreen(
                                     result.onSuccess { recordSent() }.onFailure {
                                         Toast.makeText(
                                             context,
-                                            "Απέτυχε: ${it.message}",
+                                            "Απέτυχε: ${it.reason()}",
                                             Toast.LENGTH_LONG,
                                         ).show()
                                     }

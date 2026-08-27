@@ -1,6 +1,7 @@
 package gr.prosfora.app.debt
 
 import gr.prosfora.app.google.DriveClient
+import gr.prosfora.app.util.reason
 
 /**
  * Βγάζει το κείμενο ενός παραστατικού, δοκιμάζοντας δρόμους με σειρά.
@@ -49,7 +50,7 @@ class DocumentText(
 
         routes(bytes, driveFileId, fileName).forEach { (route, read) ->
             val text = runCatching { read() }
-                .onFailure { problems += "${route.label}: ${it.message}" }
+                .onFailure { problems += "${route.label}: ${it.reason()}" }
                 .getOrDefault("")
                 .trim()
 

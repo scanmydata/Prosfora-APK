@@ -35,6 +35,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.util.reason
 
 /**
  * Πότε και με τι κείμενο ζητείται αξιολόγηση μετά την ολοκλήρωση μιας εργασίας.
@@ -82,7 +83,7 @@ fun ReviewSettings(googleSettings: GoogleSettings) {
                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                         )
                     }.onFailure {
-                        Toast.makeText(context, "Δεν άνοιξε: ${it.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Δεν άνοιξε: ${it.reason()}", Toast.LENGTH_LONG).show()
                     }
                 },
                 verticalAlignment = Alignment.CenterVertically,

@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.BuildConfig
 import gr.prosfora.app.update.UpdateChecker
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 
 /**
@@ -56,7 +57,7 @@ fun UpdateDialog(release: UpdateChecker.Release, onDismiss: () -> Unit) {
                         result.onFailure {
                             Toast.makeText(
                                 context,
-                                "Αποτυχία λήψης: ${it.message}",
+                                "Αποτυχία λήψης: ${it.reason()}",
                                 Toast.LENGTH_LONG,
                             ).show()
                         }
@@ -96,7 +97,7 @@ fun UpdateAction() {
                         available = release
                     }
                 }.onFailure {
-                    Toast.makeText(context, "Αποτυχία ελέγχου: ${it.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Αποτυχία ελέγχου: ${it.reason()}", Toast.LENGTH_LONG).show()
                 }
             }
         },

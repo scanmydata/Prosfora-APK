@@ -48,6 +48,7 @@ import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.ui.components.ConfirmDialog
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 
 /**
@@ -221,7 +222,7 @@ fun TemplateEditorScreen(onBack: () -> Unit) {
                         edits.clear()
                         Toast.makeText(context, "Το πρότυπο ενημερώθηκε", Toast.LENGTH_LONG).show()
                     }.onFailure {
-                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                     }
                 }
             },

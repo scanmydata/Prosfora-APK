@@ -41,6 +41,7 @@ import gr.prosfora.app.doc.OfferPdf
 import gr.prosfora.app.ui.offers.OffersViewModel
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
+import gr.prosfora.app.util.reason
 import java.io.File
 
 /**
@@ -149,6 +150,6 @@ private fun sharePdf(context: android.content.Context, file: File) {
             ),
         )
     }.onFailure {
-        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+        Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
     }
 }

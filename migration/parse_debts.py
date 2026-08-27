@@ -50,19 +50,31 @@ def normalize(text: str) -> str:
     return stripped.upper().replace("\u03c2", "\u03a3").translate(LOOKALIKE)
 
 
+SLACK_FROM = 7   # από πόσα γράμματα και πάνω συγχωρείται ένα λάθος
+GLUE = r"\s*"    # ανάμεσα σε κάθε δύο γράμματα χωράει όσο κενό θέλει η μηχανή
+
+
+def _char(ch: str) -> str:
+    if ch in DIGIT_TWINS:
+        return "[" + DIGIT_TWINS[ch] + "]"
+    return ch if ch.isalnum() else re.escape(ch)
+
+
 def anchor(text: str) -> str:
-    """Ένα σταθερό λεκτικό ως μοτίβο ανεκτικό στο OCR."""
-    out = []
-    for ch in normalize(text):
-        if ch == " ":
-            out.append(r"\s*")
-        elif ch in DIGIT_TWINS:
-            out.append("[" + DIGIT_TWINS[ch] + "]")
-        elif ch.isalnum():
-            out.append(ch)
-        else:
-            out.append(re.escape(ch))
-    return "".join(out)
+    """Ένα σταθερό λεκτικό ως μοτίβο ανεκτικό στο OCR.
+
+    Τα γράμματα κολλάνε με ``\s*`` γιατί το OCR σπάει λέξεις, και σε ετικέτες
+    από ``SLACK_FROM`` γράμματα και πάνω επιτρέπεται **ένα** λάθος γράμμα: μια
+    ετικέτα δώδεκα γραμμάτων έχει δώδεκα ευκαιρίες να χαλάσει, και μία αρκούσε
+    για να χαθεί ολόκληρη η περίοδος της οφειλής.
+    """
+    parts = [_char(c) for c in normalize(text) if c != " "]
+    if len(parts) < SLACK_FROM:
+        return GLUE.join(parts)
+    return "(?:" + "|".join(
+        GLUE.join("." if at == free else part for at, part in enumerate(parts))
+        for free in range(len(parts))
+    ) + ")"
 
 MONTHS = [
     "ΙΑΝΟΥΑΡ", "ΦΕΒΡΟΥΑΡ", "ΜΑΡΤ", "ΑΠΡΙΛ", "ΜΑΙ", "ΙΟΥΝ",
@@ -208,6 +220,39 @@ def tax_kind(text: str) -> str | None:
     return value or None
 
 
+DATE_RANGE = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})\s*[-\u2010-\u2015]\s*\d{1,2}/\d{1,2}/\d{4}")
+
+
+def aade_period(text: str, name: str, due: str | None) -> tuple[int, int]:
+    """Ο μήνας αναφοράς, με σειρά αξιοπιστίας.
+
+    Η ετικέτα «Ημερολογιακή Περίοδος» είναι η ακριβέστερη αλλά και η πιο
+    μακριά — δώδεκα γράμματα, δώδεκα ευκαιρίες να τη χαλάσει το OCR. Το εύρος
+    ημερομηνιών από κάτω δεν χρειάζεται καθόλου ετικέτα: κανένα άλλο σημείο
+    του εντύπου δεν έχει δύο ημερομηνίες με παύλα ανάμεσα.
+
+    Τελευταία λύση, το **έτος** της προθεσμίας. Ο μήνας μένει άγνωστος αντί να
+    μαντευτεί, αλλά η οφειλή πέφτει στη σωστή χρονιά — αλλιώς έμενε αόρατη.
+    """
+    span = re.search(
+        anchor("Ημερολογιακή Περίοδος") + r"\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})", text
+    )
+    if span:
+        return (int(span.group(2)), int(span.group(3)))
+
+    rng = DATE_RANGE.search(text)
+    if rng:
+        return (int(rng.group(2)), int(rng.group(3)))
+
+    from_name = from_file_name(name)
+    if from_name[1] > 0:
+        return from_name
+
+    if due:
+        return (0, int(due.split("/")[2]))
+    return (0, 0)
+
+
 def parse_aade(text: str, name: str) -> list[dict]:
     reference = debt_identity(text)
     amount = (amount_after(text, anchor("Ποσό δόσης"))
@@ -217,8 +262,7 @@ def parse_aade(text: str, name: str) -> list[dict]:
     due = re.search(anchor("Ποσό δόσης δήλωσης της") + r"\s*(\d{1,2}/\d{1,2}/\d{4})", text)
     if not due:
         due = re.search(anchor("μέχρι τις") + r"\s*(\d{1,2}/\d{1,2}/\d{4})", text)
-    span = re.search(anchor("Ημερολογιακή Περίοδος") + r"\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})", text)
-    period = (int(span.group(2)), int(span.group(3))) if span else from_file_name(name)
+    period = aade_period(text, name, due.group(1) if due else None)
     return [row(
         "AADE", period, amount, reference,
         tax_kind(text) or "Βεβαιωμένη οφειλή εκτός ρύθμισης",

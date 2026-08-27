@@ -61,21 +61,39 @@ internal object DebtText {
         return LOOKALIKE[upper] ?: upper
     }
 
+    /** Από πόσους χαρακτήρες και πάνω συγχωρείται ένα λάθος γράμμα. */
+    private const val SLACK_FROM = 7
+
+    /** Ανάμεσα σε κάθε δύο γράμματα χωράει όσο κενό θέλει η μηχανή. */
+    private const val GLUE = """\s*"""
+
     /**
      * Μια σταθερή ετικέτα ως μοτίβο ανεκτικό στο OCR.
      *
-     * Τα κενά γίνονται «όσα κενά θέλεις», και τα γράμματα που η μηχανή
-     * μπερδεύει με ψηφία δέχονται και τα δύο.
+     * Δύο ελευθερίες, και οι δύο από παρατηρημένες αστοχίες:
+     *
+     *  * **κενά όπου να 'ναι** — η μηχανή σπάει λέξεις («ΗΜΕΡ ΟΛΟΓΙΑΚΗ») και
+     *    αλλάζει γραμμή μέσα σε ετικέτα, οπότε τα γράμματα κολλάνε με `\s*`,
+     *  * **ένα λάθος γράμμα** σε ετικέτες από [SLACK_FROM] χαρακτήρες και πάνω.
+     *    Μια ετικέτα δώδεκα γραμμάτων έχει δώδεκα ευκαιρίες να χαλάσει, και μία
+     *    αρκούσε για να χαθεί ολόκληρη η περίοδος της οφειλής. Με έντεκα σωστά
+     *    γράμματα η ταύτιση παραμένει βέβαιη.
      */
-    fun anchor(label: String): String = buildString {
-        normalize(label).forEach { ch ->
-            when {
-                ch == ' ' -> append("""\s*""")
-                DIGIT_TWINS.containsKey(ch) -> append("[").append(DIGIT_TWINS[ch]).append("]")
-                ch.isLetterOrDigit() -> append(ch)
-                else -> append(Regex.escape(ch.toString()))
-            }
+    fun anchor(label: String): String {
+        val parts = normalize(label).filterNot { it == ' ' }.map(::charPattern)
+        if (parts.size < SLACK_FROM) return parts.joinToString(GLUE)
+        // Κάθε εναλλακτική αφήνει μία θέση ελεύθερη· η θέση που «ταιριάζει με
+        // τα πάντα» δέχεται και το σωστό γράμμα, οπότε το ακέραιο λεκτικό
+        // καλύπτεται κι αυτό
+        return parts.indices.joinToString(separator = "|", prefix = "(?:", postfix = ")") { free ->
+            parts.mapIndexed { at, part -> if (at == free) "." else part }.joinToString(GLUE)
         }
+    }
+
+    private fun charPattern(ch: Char): String = when {
+        DIGIT_TWINS.containsKey(ch) -> "[" + DIGIT_TWINS[ch] + "]"
+        ch.isLetterOrDigit() -> ch.toString()
+        else -> Regex.escape(ch.toString())
     }
 
     /** Υπάρχει κάποια από τις [words] στο ήδη κανονικοποιημένο [text]; */

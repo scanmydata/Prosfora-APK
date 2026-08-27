@@ -58,6 +58,7 @@ import gr.prosfora.app.notify.ContactNotifier
 import gr.prosfora.app.notify.SmsSender
 import gr.prosfora.app.settings.SmtpSettingsStore
 import gr.prosfora.app.ui.offers.OffersViewModel
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 
 private enum class ReviewChannel(val label: String) { EMAIL("Email"), SMS("SMS"), VIBER("Viber") }
@@ -120,7 +121,7 @@ fun ReviewComposeScreen(
                 val result = SmsSender.send(context, recipient, text)
                 busy = false
                 result.onSuccess { done() }.onFailure {
-                    Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                 }
             }
         } else if (ContactNotifier.openSmsApp(context, recipient, text)) {
@@ -227,7 +228,7 @@ fun ReviewComposeScreen(
                                     val result = SmsSender.send(context, recipient, text)
                                     busy = false
                                     result.onSuccess { done() }.onFailure {
-                                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                                     }
                                 }
                             } else {
@@ -256,7 +257,7 @@ fun ReviewComposeScreen(
                                 }
                                 busy = false
                                 result.onSuccess { done() }.onFailure {
-                                    Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                                 }
                             }
                         }

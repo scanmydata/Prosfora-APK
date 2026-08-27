@@ -30,6 +30,7 @@ import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.sync.SheetSync
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 
 /**
@@ -98,7 +99,7 @@ fun ConnectInviteDialog(invite: ConnectLink.Invite, onDismiss: () -> Unit) {
                         }.onFailure {
                             Toast.makeText(
                                 context,
-                                "Συνδέθηκε, αλλά ο συγχρονισμός απέτυχε: ${it.message}",
+                                "Συνδέθηκε, αλλά ο συγχρονισμός απέτυχε: ${it.reason()}",
                                 Toast.LENGTH_LONG,
                             ).show()
                         }

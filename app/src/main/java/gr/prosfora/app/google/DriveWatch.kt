@@ -98,6 +98,12 @@ object DriveWatch {
             }
 
         if (!settings.driveWatchReady) {
+            // Χωρίς δίκτυο δεν διαβάστηκε τίποτα. Αν σημειωθεί «έτοιμο» τώρα,
+            // η καταγραφή μένει άδεια και στο επόμενο άνοιγμα κάθε παραστατικό
+            // του περασμένου χρόνου θα μοιάζει νέο — δεκάδες ειδοποιήσεις για
+            // αρχεία που ανέβασε ο ίδιος ο χρήστης. Καλύτερα να περιμένει.
+            if (!readAll) return@withContext emptyList()
+
             settings.rememberDriveFiles(seen.keys)
             settings.driveWatchReady = true
             _changes.value = emptyList()

@@ -79,6 +79,7 @@ import gr.prosfora.app.ui.components.ConfirmDialog
 import gr.prosfora.app.ui.offers.DeleteRed
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -146,7 +147,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
             busy = null
             result.onSuccess { found ->
                 pending = DebtImporter.Report(scanned = 1, skipped = 0, found = listOf(found))
-            }.onFailure { toast("Δεν έγινε η εισαγωγή: ${it.message}") }
+            }.onFailure { toast("Δεν έγινε η εισαγωγή: ${it.reason()}") }
         }
     }
 
@@ -162,7 +163,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
             DriveWatch.acknowledge(context, DriveWatch.Area.DEBTS)
             result.onSuccess { report ->
                 if (report.debts.isEmpty()) toast(report.summary) else pending = report
-            }.onFailure { toast("Η σάρωση απέτυχε: ${it.message}") }
+            }.onFailure { toast("Η σάρωση απέτυχε: ${it.reason()}") }
         }
     }
 
@@ -190,7 +191,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
 
     val visible = remember(debts, agency, onlyUnpaid, year) {
         debts.filter {
-            it.periodYear == year &&
+            inYear(it, year) &&
                 (agency == null || it.agency == agency) &&
                 (!onlyUnpaid || !it.paid)
         }
@@ -265,7 +266,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 }
             }
 
-            item { TotalsCard(debts.filter { it.periodYear == year }) }
+            item { TotalsCard(debts.filter { inYear(it, year) }) }
 
             item {
                 // Ιστορικότητα: ένα έτος τη φορά, νεότερο πρώτα
@@ -291,7 +292,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
                     }
                     items(DebtAgency.entries) { candidate ->
                         val count = debts.count {
-                            it.agency == candidate && it.periodYear == year && !it.paid
+                            it.agency == candidate && inYear(it, year) && !it.paid
                         }
                         FilterChip(
                             selected = agency == candidate,
@@ -436,6 +437,17 @@ fun DebtsScreen(onMenu: () -> Unit) {
         )
     }
 }
+
+/**
+ * Ανήκει η οφειλή στο έτος που δείχνει η λίστα;
+ *
+ * Ό,τι δεν έχει έτος φαίνεται **παντού**. Ένα παραστατικό που δεν έδωσε
+ * περίοδο αποθηκευόταν κανονικά αλλά δεν ταίριαζε με κανένα φίλτρο, οπότε
+ * έμοιαζε σαν να μην είχε γίνει η αποθήκευση. Μια οφειλή που δεν ξέρουμε πότε
+ * αφορά είναι ακριβώς αυτή που πρέπει να δει ο χρήστης, όχι να κρυφτεί.
+ */
+private fun inYear(debt: DebtEntity, year: Int): Boolean =
+    debt.periodYear == year || debt.periodYear <= 0
 
 /** Τι εμφανίστηκε στον κοινόχρηστο φάκελο χωρίς να το βάλει αυτή η συσκευή. */
 @Composable

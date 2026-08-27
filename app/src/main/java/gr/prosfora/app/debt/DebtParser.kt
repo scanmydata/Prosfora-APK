@@ -49,6 +49,14 @@ object DebtParser {
     private val DATE = Regex("""(\d{1,2})/(\d{1,2})/(\d{4})""")
     private val PERIOD_SLASH = Regex("""(\d{1,2})\s*/\s*(\d{4})""")
 
+    /**
+     * «01/06/2026-30/06/2026» — αναγνωρίσιμο και χωρίς την ετικέτα του.
+     * Η κλάση παύλας πιάνει και τα τυπογραφικά που βάζει το OCR (‐ έως ―).
+     */
+    private val DATE_RANGE = Regex(
+        """(\d{1,2})/(\d{1,2})/(\d{4})\s*[-‐-―]\s*\d{1,2}/\d{1,2}/\d{4}""",
+    )
+
     private val MONTHS = listOf(
         "ΙΑΝΟΥΑΡ", "ΦΕΒΡΟΥΑΡ", "ΜΑΡΤ", "ΑΠΡΙΛ", "ΜΑΙ", "ΙΟΥΝ",
         "ΙΟΥΛ", "ΑΥΓΟΥΣΤ", "ΣΕΠΤΕΜΒΡ", "ΟΚΤΩΒΡ", "ΝΟΕΜΒΡ", "ΔΕΚΕΜΒΡ",
@@ -163,19 +171,10 @@ object DebtParser {
                 anchor("μέχρι τις") + """\s*(\d{1,2}/\d{1,2}/\d{4})""",
             ).find(text)?.groupValues?.get(1)
 
-        val range = Regex(
-            anchor("Ημερολογιακή Περίοδος") + """\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})""",
-        ).find(text)
-        val period = if (range != null) {
-            Period(range.groupValues[2].toInt(), range.groupValues[3].toInt())
-        } else {
-            fromFileName(fileName)
-        }
-
         return listOf(
             debt(
                 kind = DebtKind.AADE,
-                period = period,
+                period = aadePeriod(text, fileName, due),
                 amount = amount,
                 reference = debtIdentity(text),
                 description = taxKind(text) ?: "Βεβαιωμένη οφειλή εκτός ρύθμισης",
@@ -184,6 +183,36 @@ object DebtParser {
                 driveFileId = driveFileId,
             ),
         )
+    }
+
+    /**
+     * Ο μήνας αναφοράς της ΑΑΔΕ, με σειρά αξιοπιστίας.
+     *
+     * Η ετικέτα «Ημερολογιακή Περίοδος» είναι η ακριβέστερη αλλά και η πιο
+     * μακριά: δώδεκα γράμματα, δώδεκα ευκαιρίες να τη χαλάσει το OCR. Το εύρος
+     * ημερομηνιών από κάτω **δεν χρειάζεται καθόλου ετικέτα** — κανένα άλλο
+     * σημείο του εντύπου δεν έχει δύο ημερομηνίες με παύλα ανάμεσα.
+     *
+     * Τελευταία λύση, το **έτος** της προθεσμίας. Ο μήνας μένει άγνωστος αντί
+     * να μαντευτεί, αλλά η οφειλή πέφτει στη σωστή χρονιά· χωρίς έτος έμενε
+     * εκτός από κάθε φίλτρο της λίστας, αποθηκευμένη αλλά αόρατη.
+     */
+    private fun aadePeriod(text: String, fileName: String, due: String?): Period {
+        Regex(
+            anchor("Ημερολογιακή Περίοδος") + """\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})""",
+        ).find(text)?.let {
+            return Period(it.groupValues[2].toInt(), it.groupValues[3].toInt())
+        }
+
+        DATE_RANGE.find(text)?.let {
+            return Period(it.groupValues[2].toInt(), it.groupValues[3].toInt())
+        }
+
+        fromFileName(fileName).takeIf { it.year > 0 }?.let { return it }
+
+        return due?.substringAfterLast('/')?.toIntOrNull()
+            ?.let { Period(0, it) }
+            ?: Period.NONE
     }
 
     /**

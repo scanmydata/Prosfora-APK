@@ -51,6 +51,7 @@ import gr.prosfora.app.message.MessageTemplates
 import gr.prosfora.app.settings.SmtpSettingsStore
 import gr.prosfora.app.ui.components.ConfirmDialog
 import gr.prosfora.app.ui.offers.DeleteRed
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 
 /**
@@ -87,7 +88,7 @@ fun ShareFolderDialog(
             drive.collaborators(id)
         }.onSuccess { people = it }
             .onFailure {
-                Toast.makeText(context, "Δεν διαβάστηκαν οι συνεργάτες: ${it.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Δεν διαβάστηκαν οι συνεργάτες: ${it.reason()}", Toast.LENGTH_LONG).show()
             }
     }
 
@@ -239,7 +240,7 @@ fun ShareFolderDialog(
                             Toast.LENGTH_LONG,
                         ).show()
                     }.onFailure {
-                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                     }
                     busy = false
                 }
@@ -263,7 +264,7 @@ fun ShareFolderDialog(
                     }.onSuccess {
                         reload()
                     }.onFailure {
-                        Toast.makeText(context, "Απέτυχε: ${it.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                     }
                     busy = false
                 }
