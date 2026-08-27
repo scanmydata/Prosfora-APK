@@ -2,6 +2,9 @@ package gr.prosfora.app.debt
 
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.DebtKind
+import gr.prosfora.app.debt.DebtText.anchor
+import gr.prosfora.app.debt.DebtText.looksLike
+import gr.prosfora.app.debt.DebtText.normalize
 import gr.prosfora.app.util.asMoney
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -17,6 +20,11 @@ import java.time.format.DateTimeFormatter
  * το πώς βγήκε το κείμενο, και στα ίδια τα παραστατικά κάποιοι αριθμοί
  * τυπώνονται *πριν* από την ετικέτα τους. Όλα τα μοτίβα εδώ αγκυρώνονται σε
  * ετικέτα και δέχονται οποιοδήποτε κενό ή αλλαγή γραμμής ως το νούμερο.
+ *
+ * **Γιατί περνάει πρώτα από την [DebtText]**: οι ετικέτες δεν γράφονται ποτέ
+ * κατά λέξη. Το OCR χάνει τους τόνους και μπερδεύει τα ελληνικά κεφαλαία με τα
+ * λατινικά δίδυμά τους, οπότε ένα «Ποσό δόσης» γραμμένο έτσι δεν ταιριάζει με
+ * τίποτα. Κείμενο και ετικέτες κανονικοποιούνται και οι δύο πριν συγκριθούν.
  *
  * Ό,τι βρεθεί περνάει πάντα από επιβεβαίωση του χρήστη πριν αποθηκευτεί.
  *
@@ -71,15 +79,26 @@ object DebtParser {
      * αναγνωρίστηκε — τότε ο χρήστης το γράφει με το χέρι.
      */
     fun parse(text: String, fileName: String = "", driveFileId: String = ""): List<DebtEntity> {
-        val clean = text.replace(' ', ' ')
+        val clean = normalize(text)
         return when {
-            clean.contains("Μισθοδοτική Κατάσταση", true) -> payroll(clean, fileName, driveFileId)
-            clean.contains("Ταυτότητα Οφειλής", true) ||
-                clean.contains("Σημείωμα για Πληρωμή", true) -> aade(clean, fileName, driveFileId)
-            clean.contains("Διαφήμισης", true) ||
-                clean.contains("ΔΗΜΟΣΙΟΓΡΑΦΙΚΟΣ", true) -> advertising(clean, fileName, driveFileId)
-            clean.contains("ΑΠΔ", true) ||
-                clean.contains("ΑΠΟΔΕΙΚΤΙΚΟΥ ΥΠΟΒΟΛΗΣ", true) -> apd(clean, fileName, driveFileId)
+            looksLike(clean, "Μισθοδοτική Κατάσταση") ->
+                payroll(text, clean, fileName, driveFileId)
+
+            looksLike(clean, "Ταυτότητα Οφειλής", "Σημείωμα για Πληρωμή") ->
+                aade(clean, fileName, driveFileId)
+
+            looksLike(clean, "Διαφήμισης", "ΔΗΜΟΣΙΟΓΡΑΦΙΚΟΣ") ->
+                advertising(clean, fileName, driveFileId)
+
+            looksLike(clean, "ΑΠΔ", "ΑΠΟΔΕΙΚΤΙΚΟΥ ΥΠΟΒΟΛΗΣ") ->
+                apd(clean, fileName, driveFileId)
+
+            // Τελευταία γραμμή άμυνας. Το σημείωμα της ΑΑΔΕ είναι το μόνο
+            // έντυπο χωρίς επίπεδο κειμένου, άρα φτάνει πάντα μέσω OCR — και
+            // αν χαθεί ακόμη και ο τίτλος του, η ταυτότητα οφειλής μένει:
+            // τίποτε άλλο στο έντυπο δεν έχει τόσα συνεχόμενα ψηφία.
+            debtIdentity(clean).isNotBlank() -> aade(clean, fileName, driveFileId)
+
             else -> emptyList()
         }
     }
@@ -92,19 +111,22 @@ object DebtParser {
      * χωριστό RF το καθένα, οπότε πληρώνονται χωριστά.
      */
     private fun apd(text: String, fileName: String, driveFileId: String): List<DebtEntity> {
-        val teka = text.contains("ΤΕΚΑ", true) || fileName.contains("ΤΕΚΑ", true)
+        val teka = text.contains("ΤΕΚΑ") || normalize(fileName).contains("ΤΕΚΑ")
         val kind = if (teka) DebtKind.TEKA else DebtKind.IKA
 
         val period = periodOf(
-            Regex("""Περίοδος\s*(?:Από|Έως)?\s*:?\s*(\d{1,2})\s*/\s*(\d{4})""").find(text),
+            Regex(
+                anchor("Περίοδος") + """\s*(?:ΑΠΟ|ΕΩΣ)?\s*:?\s*(\d{1,2})\s*/\s*(\d{4})""",
+            ).find(text),
         ) ?: fromFileName(fileName)
 
-        // Το «Σύνολο Εισφορών» γράφεται σε κάποια έντυπα με λατινικό o
-        val amount = amountAfter(text, """Σύνολο\s*Εισφ\S*""")
-            ?: amountAfter(text, """Καταβλητέες\s*Εισφορές""")
+        val amount = amountAfter(text, anchor("Σύνολο Εισφ") + """\S*""")
+            ?: amountAfter(text, anchor("Καταβλητέες Εισφορές"))
             ?: return emptyList()
 
-        val submission = Regex("""Αριθμ?\.?\s*Υποβολής\s*:?\s*(\d+)""").find(text)?.groupValues?.get(1)
+        val submission = Regex(
+            anchor("Αριθμ") + """\.?\s*""" + anchor("Υποβολής") + """\s*:?\s*(\d+)""",
+        ).find(text)?.groupValues?.get(1)
 
         return listOf(
             debt(
@@ -129,17 +151,20 @@ object DebtParser {
      * οφειλή εκτός ρύθμισης, οπότε ένας κανόνας τις καλύπτει όλες.
      */
     private fun aade(text: String, fileName: String, driveFileId: String): List<DebtEntity> {
-        val amount = amountAfter(text, """Ποσό\s*δόσης""")
-            ?: amountAfter(text, """Συνολικό\s*ποσό\s*οφειλής""")
+        val amount = amountAfter(text, anchor("Ποσό δόσης"))
+            ?: amountAfter(text, anchor("Συνολικό ποσό οφειλής"))
             ?: return emptyList()
 
         // Η προθεσμία γράφεται δύο φορές: στην ετικέτα της δόσης και στο κείμενο
-        val due = Regex("""Ποσό\s*δόσης\s*δήλωσης\s*της\s*(\d{1,2}/\d{1,2}/\d{4})""").find(text)
-            ?.groupValues?.get(1)
-            ?: Regex("""μέχρι\s*τις\s*(\d{1,2}/\d{1,2}/\d{4})""").find(text)?.groupValues?.get(1)
+        val due = Regex(
+            anchor("Ποσό δόσης δήλωσης της") + """\s*(\d{1,2}/\d{1,2}/\d{4})""",
+        ).find(text)?.groupValues?.get(1)
+            ?: Regex(
+                anchor("μέχρι τις") + """\s*(\d{1,2}/\d{1,2}/\d{4})""",
+            ).find(text)?.groupValues?.get(1)
 
         val range = Regex(
-            """Ημερολογιακή\s*Περίοδος\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})""",
+            anchor("Ημερολογιακή Περίοδος") + """\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})""",
         ).find(text)
         val period = if (range != null) {
             Period(range.groupValues[2].toInt(), range.groupValues[3].toInt())
@@ -169,7 +194,7 @@ object DebtParser {
      * μεγάλη ομάδα ψηφίων: τίποτε άλλο στο έντυπο δεν έχει τόσα.
      */
     internal fun debtIdentity(text: String): String {
-        Regex("""Ταυτότητα\s*Οφειλής\s*:?\s*([0-9][0-9\s.\-]{18,50})""").find(text)
+        Regex(anchor("Ταυτότητα Οφειλής") + """\s*:?\s*([0-9][0-9\s.\-]{18,50})""").find(text)
             ?.groupValues?.get(1)
             ?.filter { it.isDigit() }
             ?.takeIf { it.length >= 15 }
@@ -188,9 +213,13 @@ object DebtParser {
      * τέλος της γραμμής, αλλιώς έμενε μισό — «ΑΜΟΙΒΕΣ ΑΠΟ» χωρίς τη συνέχεια.
      */
     internal fun taxKind(text: String): String? {
-        val next = "Ημερολογιακή|Συνολικό|Ποσό|Ταυτότητα|Ημ/νία|Προσοχή|ΔΟΥ|Τύπος"
-        val match = Regex("""Είδος\s*Φόρου\s*:?\s*([\s\S]{1,140}?)\s*(?=$next|$)""").find(text)
-            ?: return null
+        val next = listOf(
+            "Ημερολογιακή", "Συνολικό", "Ποσό", "Ταυτότητα", "Ημ/νία",
+            "Προσοχή", "ΔΟΥ", "Τύπος",
+        ).joinToString("|") { anchor(it) }
+        val match = Regex(
+            anchor("Είδος Φόρου") + """\s*:?\s*([\s\S]{1,140}?)\s*(?=$next|$)""",
+        ).find(text) ?: return null
         return match.groupValues[1]
             .replace(Regex("""\s+"""), " ")
             .trim()
@@ -203,15 +232,15 @@ object DebtParser {
 
     private fun advertising(text: String, fileName: String, driveFileId: String): List<DebtEntity> {
         // «Ποσοστό Εισφορών 2,00» μοιάζει με το ποσό — το € το ξεχωρίζει
-        val amount = amountAfter(text, """Εισφορές\s*€""")
-            ?: amountAfter(text, """Εισφορές""")
+        val amount = amountAfter(text, anchor("Εισφορές") + """\s*€""")
+            ?: amountAfter(text, anchor("Εισφορές"))
             ?: return emptyList()
 
         val period = periodOf(
-            Regex("""Περίοδος\s*:?\s*(\d{1,2})\s*/\s*(\d{4})""").find(text),
+            Regex(anchor("Περίοδος") + """\s*:?\s*(\d{1,2})\s*/\s*(\d{4})""").find(text),
         ) ?: fromFileName(fileName)
 
-        val cost = amountAfter(text, """Κόστος\s*Διαφήμισης\s*€?""")
+        val cost = amountAfter(text, anchor("Κόστος Διαφήμισης") + """\s*€?""")
 
         return listOf(
             debt(
@@ -250,36 +279,58 @@ object DebtParser {
      * Η γραμμή του γενικού συνόλου δεν μπερδεύεται: περιέχει και το όνομα του
      * έργου, οπότε δεν είναι «μόνο αριθμοί».
      */
-    private fun payroll(text: String, fileName: String, driveFileId: String): List<DebtEntity> {
+    private fun payroll(
+        raw: String,
+        text: String,
+        fileName: String,
+        driveFileId: String,
+    ): List<DebtEntity> {
         val period = periodOf(
-            Regex("""Μισθοδοτική\s*Κατάσταση\s*(\d{1,2})\s*/\s*(\d{4})""").find(text),
+            Regex(
+                anchor("Μισθοδοτική Κατάσταση") + """\s*(\d{1,2})\s*/\s*(\d{4})""",
+            ).find(text),
         ) ?: fromFileName(fileName)
 
-        val people = readPeople(text)
+        val people = readPeople(raw, text)
         val rows = people.flatMap { rowsFor(it, period, fileName, driveFileId) }
         return merge(rows)
     }
 
-    private fun readPeople(text: String): List<Person> {
-        val header = Regex("""^\s*(\d{1,3})\s+([A-Za-z0-9]{2,6})\s+(\S.*)$""")
-        val detail = Regex("""^\s*([Α-ΩΆΈΉΊΌΎΏ]{2})\s+\S""")
+    /**
+     * Οι εργαζόμενοι, με τα ονόματα **όπως ακριβώς τυπώνονται**.
+     *
+     * Το ταίριασμα γίνεται στο κανονικοποιημένο κείμενο, γιατί εκεί δουλεύουν
+     * τα μοτίβα· το όνομα όμως κόβεται από το αυθεντικό, στην ίδια θέση. Στη
+     * μισθοδοσία τα ονόματα είναι συχνά λατινικά, και η κανονικοποίηση —που
+     * γυρίζει τα λατινικά δίδυμα σε ελληνικά— θα έκανε το «BUTT HURARA»
+     * «ΒUΤΤ ΗURΑRΑ». Η [normalize] δεν αλλάζει μήκος, οπότε οι θέσεις
+     * συμπίπτουν γράμμα προς γράμμα.
+     */
+    private fun readPeople(raw: String, text: String): List<Person> {
+        val header = Regex("""^\s*(\d{1,3})\s+([Α-Ω0-9]{2,6})\s+(\S.*)$""")
+        val detail = Regex("""^\s*([Α-Ω]{2})\s+\S""")
         val people = mutableListOf<Person>()
+        val printed = raw.lines()
 
-        text.lines().forEach { line ->
+        text.lines().forEachIndexed { index, line ->
             val head = header.find(line)
             if (head != null && head.groupValues[3].firstOrNull()?.isLetter() == true) {
-                people += Person(head.groupValues[2], nameOf(head.groupValues[3]))
-                return@forEach
+                val printedName = printed.getOrNull(index)
+                    ?.takeIf { it.length == line.length }
+                    ?.slice(head.groups[3]!!.range)
+                    ?.takeIf { it.isNotBlank() }
+                people += Person(head.groupValues[2], nameOf(printedName ?: head.groupValues[3]))
+                return@forEachIndexed
             }
 
-            val person = people.lastOrNull() ?: return@forEach
+            val person = people.lastOrNull() ?: return@forEachIndexed
 
             detail.find(line)?.let { match ->
                 val gross = ANY_AMOUNT.find(line)?.value?.let(::money)
                 if (gross != null && gross > 0.0) {
                     person.details += Detail(match.groupValues[1], gross)
                 }
-                return@forEach
+                return@forEachIndexed
             }
 
             // Οι ενδιάμεσες γραμμές αποδοχών έχουν λιγότερες στήλες· τα σύνολα
@@ -446,7 +497,7 @@ object DebtParser {
      * κατεβαίνουν συνήθως ως «… 2026 ΙΟΥΛΙΟΣ.pdf».
      */
     private fun fromFileName(fileName: String): Period {
-        val upper = fileName.uppercase()
+        val upper = normalize(fileName)
         val year = Regex("""(20\d{2})""").find(upper)?.groupValues?.get(1)?.toIntOrNull()
             ?: return Period.NONE
         val month = MONTHS.indexOfFirst { upper.contains(it) } + 1
@@ -465,7 +516,7 @@ object DebtParser {
      * στην τράπεζα.
      */
     private fun rfCode(text: String): String {
-        val match = Regex("""RF\d{2}[0-9A-Z ]{10,40}""").find(text) ?: return ""
+        val match = Regex("""RF\d{2}[0-9A-ZΑ-Ω ]{10,40}""").find(text) ?: return ""
         return match.value.filter { !it.isWhitespace() }.take(25)
     }
 

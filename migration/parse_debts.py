@@ -20,10 +20,49 @@ import calendar
 import hashlib
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 AMOUNT = r"([0-9][0-9.]*,[0-9]{2})"
 GAP = r"[\s\S]{0,60}?"
+
+# Λατινικά κεφαλαία που μοιράζονται γλυφο με ελληνικά. Το OCR διαλέγει το ένα
+# ή το άλλο χωρίς κανόνα, οπότε όλα γυρίζουν στο ελληνικό.
+LOOKALIKE = str.maketrans({
+    "A": "Α", "B": "Β", "E": "Ε", "Z": "Ζ", "H": "Η", "I": "Ι", "K": "Κ",
+    "M": "Μ", "N": "Ν", "O": "Ο", "P": "Ρ", "T": "Τ", "Y": "Υ", "X": "Χ",
+})
+
+# Ψηφία που το OCR βάζει μέσα σε λέξεις, στη θέση του γράμματος
+DIGIT_TWINS = {"Ο": "Ο0", "Ι": "Ι1"}
+
+
+def normalize(text: str) -> str:
+    """Το κείμενο σε μορφή που δεν εξαρτάται από την ποιότητα του OCR.
+
+    Τόνοι, τελικό σίγμα και πεζά/κεφαλαία φεύγουν, και τα λατινικά δίδυμα
+    γυρίζουν σε ελληνικά. Χωρίς αυτό, ένα «Ποσό δόσης» που το OCR το έβγαλε
+    «ΠOΣO ΔOΣΗΣ» με λατινικό O δεν ταιριάζει με τίποτα.
+    """
+    plain = text.replace("\u00a0", " ").replace("\xa0", " ")
+    decomposed = unicodedata.normalize("NFD", plain)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return stripped.upper().replace("\u03c2", "\u03a3").translate(LOOKALIKE)
+
+
+def anchor(text: str) -> str:
+    """Ένα σταθερό λεκτικό ως μοτίβο ανεκτικό στο OCR."""
+    out = []
+    for ch in normalize(text):
+        if ch == " ":
+            out.append(r"\s*")
+        elif ch in DIGIT_TWINS:
+            out.append("[" + DIGIT_TWINS[ch] + "]")
+        elif ch.isalnum():
+            out.append(ch)
+        else:
+            out.append(re.escape(ch))
+    return "".join(out)
 
 MONTHS = [
     "ΙΑΝΟΥΑΡ", "ΦΕΒΡΟΥΑΡ", "ΜΑΡΤ", "ΑΠΡΙΛ", "ΜΑΙ", "ΙΟΥΝ",
@@ -129,13 +168,13 @@ def parse_apd(text: str, name: str) -> list[dict]:
     teka = "ΤΕΚΑ" in text or "ΤΕΚΑ" in name.upper()
     kind = "TEKA" if teka else "IKA"
     period = period_of(
-        re.search(r"Περίοδος\s*(?:Από|Έως)?\s*:?\s*(\d{1,2})\s*/\s*(\d{4})", text)
+        re.search(anchor("Περίοδος") + r"\s*(?:ΑΠΟ|ΕΩΣ)?\s*:?\s*(\d{1,2})\s*/\s*(\d{4})", text)
     ) or from_file_name(name)
-    amount = (amount_after(text, r"Σύνολο\s*Εισφ\S*")
-              or amount_after(text, r"Καταβλητέες\s*Εισφορές"))
+    amount = (amount_after(text, anchor("Σύνολο Εισφ") + r"\S*")
+              or amount_after(text, anchor("Καταβλητέες Εισφορές")))
     if amount is None:
         return []
-    submission = re.search(r"Αριθμ?\.?\s*Υποβολής\s*:?\s*(\d+)", text)
+    submission = re.search(anchor("Αριθμ") + r"\.?\s*" + anchor("Υποβολής") + r"\s*:?\s*(\d+)", text)
     label = "ΑΠΔ ΤΕΚΑ" if teka else "ΑΠΔ ΙΚΑ"
     if submission:
         label += f" · υποβολή {submission.group(1)}"
@@ -144,7 +183,7 @@ def parse_apd(text: str, name: str) -> list[dict]:
 
 def debt_identity(text: str) -> str:
     """Η ταυτότητα οφειλής ως μία συνεχόμενη σειρά ψηφίων."""
-    m = re.search(r"Ταυτότητα\s*Οφειλής\s*:?\s*([0-9][0-9\s.\-]{18,50})", text)
+    m = re.search(anchor("Ταυτότητα Οφειλής") + r"\s*:?\s*([0-9][0-9\s.\-]{18,50})", text)
     if m:
         digits = "".join(c for c in m.group(1) if c.isdigit())
         if len(digits) >= 15:
@@ -158,8 +197,11 @@ def debt_identity(text: str) -> str:
 
 def tax_kind(text: str) -> str | None:
     """Το είδος φόρου, που σπάει σε δύο γραμμές στο έντυπο."""
-    nxt = "Ημερολογιακή|Συνολικό|Ποσό|Ταυτότητα|Ημ/νία|Προσοχή|ΔΟΥ|Τύπος"
-    m = re.search(r"Είδος\s*Φόρου\s*:?\s*([\s\S]{1,140}?)\s*(?=" + nxt + r"|$)", text)
+    nxt = "|".join(anchor(w) for w in (
+        "Ημερολογιακή", "Συνολικό", "Ποσό", "Ταυτότητα", "Ημ/νία",
+        "Προσοχή", "ΔΟΥ", "Τύπος",
+    ))
+    m = re.search(anchor("Είδος Φόρου") + r"\s*:?\s*([\s\S]{1,140}?)\s*(?=" + nxt + r"|$)", text)
     if not m:
         return None
     value = re.sub(r"\s+", " ", m.group(1)).strip().rstrip(",.:")[:90]
@@ -168,14 +210,14 @@ def tax_kind(text: str) -> str | None:
 
 def parse_aade(text: str, name: str) -> list[dict]:
     reference = debt_identity(text)
-    amount = (amount_after(text, r"Ποσό\s*δόσης")
-              or amount_after(text, r"Συνολικό\s*ποσό\s*οφειλής"))
+    amount = (amount_after(text, anchor("Ποσό δόσης"))
+              or amount_after(text, anchor("Συνολικό ποσό οφειλής")))
     if amount is None:
         return []
-    due = re.search(r"Ποσό\s*δόσης\s*δήλωσης\s*της\s*(\d{1,2}/\d{1,2}/\d{4})", text)
+    due = re.search(anchor("Ποσό δόσης δήλωσης της") + r"\s*(\d{1,2}/\d{1,2}/\d{4})", text)
     if not due:
-        due = re.search(r"μέχρι\s*τις\s*(\d{1,2}/\d{1,2}/\d{4})", text)
-    span = re.search(r"Ημερολογιακή\s*Περίοδος\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})", text)
+        due = re.search(anchor("μέχρι τις") + r"\s*(\d{1,2}/\d{1,2}/\d{4})", text)
+    span = re.search(anchor("Ημερολογιακή Περίοδος") + r"\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})", text)
     period = (int(span.group(2)), int(span.group(3))) if span else from_file_name(name)
     return [row(
         "AADE", period, amount, reference,
@@ -185,21 +227,23 @@ def parse_aade(text: str, name: str) -> list[dict]:
 
 
 def parse_advertising(text: str, name: str) -> list[dict]:
-    amount = amount_after(text, r"Εισφορές\s*€") or amount_after(text, r"Εισφορές")
+    amount = (amount_after(text, anchor("Εισφορές") + r"\s*\u20ac")
+              or amount_after(text, anchor("Εισφορές")))
     if amount is None:
         return []
     period = period_of(
-        re.search(r"Περίοδος\s*:?\s*(\d{1,2})\s*/\s*(\d{4})", text)
+        re.search(anchor("Περίοδος") + r"\s*:?\s*(\d{1,2})\s*/\s*(\d{4})", text)
     ) or from_file_name(name)
-    cost = amount_after(text, r"Κόστος\s*Διαφήμισης\s*€?")
+    cost = amount_after(text, anchor("Κόστος Διαφήμισης") + r"\s*\u20ac?")
     label = "Εισφορές διαφήμισης"
     if cost is not None:
         label += f" · κόστος {cost:.2f} €"
     return [row("ADVERTISING", period, amount, rf_code(text), label)]
 
 
-HEADER = re.compile(r"^\s*(\d{1,3})\s+([A-Za-z0-9]{2,6})\s+(\S.*)$")
-DETAIL = re.compile(r"^\s*([Α-ΩΆΈΉΊΌΎΏ]{2})\s+\S")
+# Το κείμενο έχει ήδη κανονικοποιηθεί: κεφαλαία, χωρίς τόνους, χωρίς λατινικά
+HEADER = re.compile(r"^\s*(\d{1,3})\s+([Α-Ω0-9]{2,6})\s+(\S.*)$")
+DETAIL = re.compile(r"^\s*([Α-Ω]{2})\s+\S")
 
 
 def numbers_only(line: str) -> list[float] | None:
@@ -215,12 +259,21 @@ def name_of(rest: str) -> str:
     return " ".join(rest.strip().split()[:2]).strip()
 
 
-def read_people(text: str) -> list[dict]:
+def read_people(raw: str, norm: str) -> list[dict]:
+    """Οι εργαζόμενοι, με τα ονόματα όπως ακριβώς τυπώνονται.
+
+    Το ταίριασμα γίνεται στο κανονικοποιημένο κείμενο —εκεί δουλεύουν τα
+    μοτίβα— αλλά το όνομα κόβεται από το αυθεντικό στην ίδια θέση. Η
+    ``normalize`` δεν αλλάζει μήκος, οπότε οι θέσεις συμπίπτουν. Χωρίς αυτό
+    ένα «BUTT HURARA» θα γινόταν «ΒUΤΤ ΗURΑRΑ»: το OCR θα διορθωνόταν και το
+    όνομα θα χαλούσε.
+    """
     people: list[dict] = []
-    for line in text.splitlines():
+    for line, plain in zip(norm.splitlines(), raw.splitlines()):
         head = HEADER.match(line)
         if head and head.group(3)[:1].isalpha():
-            people.append({"code": head.group(2), "name": name_of(head.group(3)),
+            start, end = head.span(3)
+            people.append({"code": head.group(2), "name": name_of(plain[start:end]),
                            "details": [], "payable": None})
             continue
         if not people:
@@ -292,23 +345,33 @@ def merge(rows: list[dict]) -> list[dict]:
     return list(out.values())
 
 
-def parse_payroll(text: str, name: str) -> list[dict]:
+def parse_payroll(raw: str, norm: str, name: str) -> list[dict]:
     period = period_of(
-        re.search(r"Μισθοδοτική\s*Κατάσταση\s*(\d{1,2})\s*/\s*(\d{4})", text)
+        re.search(anchor("Μισθοδοτική Κατάσταση") + r"\s*(\d{1,2})\s*/\s*(\d{4})", norm)
     ) or from_file_name(name)
-    return merge([r for p in read_people(text) for r in rows_for(p, period)])
+    return merge([r for p in read_people(raw, norm) for r in rows_for(p, period)])
+
+
+def looks_like(clean: str, *words: str) -> bool:
+    return any(re.search(anchor(w), clean) for w in words)
 
 
 def parse(text: str, name: str = "") -> list[dict]:
-    clean = text.replace(" ", " ")
-    if "Μισθοδοτική Κατάσταση" in clean:
-        return parse_payroll(clean, name)
-    if "Ταυτότητα Οφειλής" in clean or "Σημείωμα για Πληρωμή" in clean:
-        return parse_aade(clean, name)
-    if "Διαφήμισης" in clean or "ΔΗΜΟΣΙΟΓΡΑΦΙΚΟΣ" in clean:
-        return parse_advertising(clean, name)
-    if "ΑΠΔ" in clean or "ΑΠΟΔΕΙΚΤΙΚΟΥ ΥΠΟΒΟΛΗΣ" in clean:
-        return parse_apd(clean, name)
+    clean = normalize(text)
+    upper = normalize(name)
+    if looks_like(clean, "Μισθοδοτική Κατάσταση"):
+        return parse_payroll(text, clean, upper)
+    if looks_like(clean, "Ταυτότητα Οφειλής", "Σημείωμα για Πληρωμή"):
+        return parse_aade(clean, upper)
+    if looks_like(clean, "Διαφήμισης", "ΔΗΜΟΣΙΟΓΡΑΦΙΚΟΣ"):
+        return parse_advertising(clean, upper)
+    if looks_like(clean, "ΑΠΔ", "ΑΠΟΔΕΙΚΤΙΚΟΥ ΥΠΟΒΟΛΗΣ"):
+        return parse_apd(clean, upper)
+    # Τελευταία γραμμή άμυνας: το σημείωμα της ΑΑΔΕ είναι το μόνο έντυπο που
+    # φτάνει πάντα μέσω OCR, και η ταυτότητα οφειλής του είναι αλάνθαστο
+    # αποτύπωμα — τίποτε άλλο στο έντυπο δεν έχει τόσα συνεχόμενα ψηφία
+    if debt_identity(clean):
+        return parse_aade(clean, upper)
     return []
 
 

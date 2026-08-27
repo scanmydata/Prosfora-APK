@@ -1,0 +1,84 @@
+package gr.prosfora.app.debt
+
+import java.text.Normalizer
+
+/**
+ * Φέρνει το κείμενο ενός παραστατικού σε μορφή που αντέχει το OCR.
+ *
+ * Τα σαρωμένα έντυπα δεν γυρίζουν ποτέ γράμμα προς γράμμα σωστά στα ελληνικά.
+ * Τρία πράγματα χαλάνε σχεδόν πάντα:
+ *
+ *  * **οι τόνοι** — «Ποσό δόσης» βγαίνει «Ποσο δοσης»,
+ *  * **το τελικό σίγμα** — «Οφειλής» βγαίνει «Οφειλησ»,
+ *  * **τα λατινικά δίδυμα** — το Ο, το Α και το Τ έχουν ίδιο σχήμα με τα
+ *    λατινικά O, A, T, και η μηχανή διαλέγει χωρίς κανόνα.
+ *
+ * Ένα μοτίβο γραμμένο με τόνους δεν ταιριάζει σε τίποτε από αυτά. Γι' αυτό
+ * **και το κείμενο και οι ετικέτες** περνούν από την [normalize] πριν
+ * συγκριθούν: όλα γίνονται κεφαλαία, άτονα, ελληνικά.
+ *
+ * Η [normalize] **δεν αλλάζει μήκος**. Αυτό δεν είναι λεπτομέρεια: επιτρέπει
+ * να βρίσκουμε κάτι στο κανονικοποιημένο κείμενο και να το κόβουμε από το
+ * αυθεντικό στην ίδια θέση. Έτσι ένα «BUTT HURARA» στη μισθοδοσία μένει
+ * λατινικό στην οθόνη, αντί να γίνει «ΒUΤΤ ΗURΑRΑ».
+ */
+internal object DebtText {
+
+    /**
+     * Λατινικά κεφαλαία που μοιράζονται γλυφο με ελληνικά — όλα γυρίζουν στο
+     * ελληνικό, ώστε οι δύο εκδοχές να πέφτουν στο ίδιο σημείο.
+     */
+    private val LOOKALIKE = mapOf(
+        'A' to 'Α', 'B' to 'Β', 'E' to 'Ε', 'Z' to 'Ζ', 'H' to 'Η', 'I' to 'Ι',
+        'K' to 'Κ', 'M' to 'Μ', 'N' to 'Ν', 'O' to 'Ο', 'P' to 'Ρ', 'T' to 'Τ',
+        'Y' to 'Υ', 'X' to 'Χ',
+    )
+
+    /** Ψηφία που το OCR βάζει μέσα σε λέξεις, στη θέση του γράμματος. */
+    private val DIGIT_TWINS = mapOf('Ο' to "Ο0", 'Ι' to "Ι1")
+
+    private val MARKS = Regex("""\p{Mn}""")
+
+    /** Κεφαλαία, άτονα, χωρίς λατινικά δίδυμα — με το μήκος ανέπαφο. */
+    fun normalize(text: String): String = buildString(text.length) {
+        text.forEach { append(fold(it)) }
+    }
+
+    private fun fold(ch: Char): Char {
+        if (ch == ' ') return ' '
+        val bare = if (ch.code < 0x80) {
+            ch
+        } else {
+            val stripped = MARKS.replace(
+                Normalizer.normalize(ch.toString(), Normalizer.Form.NFD),
+                "",
+            )
+            // Ό,τι δεν λύνεται σε έναν χαρακτήρα μένει ως έχει: η αντιστοιχία
+            // θέσεων με το αυθεντικό κείμενο είναι πιο πολύτιμη
+            if (stripped.length == 1) stripped[0] else return ch
+        }
+        val upper = bare.uppercaseChar()
+        return LOOKALIKE[upper] ?: upper
+    }
+
+    /**
+     * Μια σταθερή ετικέτα ως μοτίβο ανεκτικό στο OCR.
+     *
+     * Τα κενά γίνονται «όσα κενά θέλεις», και τα γράμματα που η μηχανή
+     * μπερδεύει με ψηφία δέχονται και τα δύο.
+     */
+    fun anchor(label: String): String = buildString {
+        normalize(label).forEach { ch ->
+            when {
+                ch == ' ' -> append("""\s*""")
+                DIGIT_TWINS.containsKey(ch) -> append("[").append(DIGIT_TWINS[ch]).append("]")
+                ch.isLetterOrDigit() -> append(ch)
+                else -> append(Regex.escape(ch.toString()))
+            }
+        }
+    }
+
+    /** Υπάρχει κάποια από τις [words] στο ήδη κανονικοποιημένο [text]; */
+    fun looksLike(text: String, vararg words: String): Boolean =
+        words.any { Regex(anchor(it)).containsMatchIn(text) }
+}

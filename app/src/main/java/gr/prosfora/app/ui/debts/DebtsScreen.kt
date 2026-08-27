@@ -256,7 +256,13 @@ fun DebtsScreen(onMenu: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (newInDrive.isNotEmpty()) {
-                item { DriveChangesCard(newInDrive, onRead = { scanDrive() }) }
+                item {
+                    DriveChangesCard(
+                        changes = newInDrive,
+                        onRead = { scanDrive() },
+                        onDismiss = { DriveWatch.acknowledge(context, DriveWatch.Area.DEBTS) },
+                    )
+                }
             }
 
             item { TotalsCard(debts.filter { it.periodYear == year }) }
@@ -433,17 +439,30 @@ fun DebtsScreen(onMenu: () -> Unit) {
 
 /** Τι εμφανίστηκε στον κοινόχρηστο φάκελο χωρίς να το βάλει αυτή η συσκευή. */
 @Composable
-private fun DriveChangesCard(changes: List<DriveWatch.Change>, onRead: () -> Unit) {
+private fun DriveChangesCard(
+    changes: List<DriveWatch.Change>,
+    onRead: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val unread = changes.count { !it.removed }
     Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.tertiaryContainer)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                if (changes.size == 1) {
-                    "Νέο αρχείο στο Drive"
-                } else {
-                    "${changes.size} αλλαγές στο Drive"
-                },
-                style = MaterialTheme.typography.titleSmall,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (changes.size == 1) {
+                        "Νέο αρχείο στο Drive"
+                    } else {
+                        "${changes.size} αλλαγές στο Drive"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                // Χωρίς αυτό μια κάρτα που λέει μόνο «διαγράφηκε» δεν είχε
+                // κανένα κουμπί, και έμενε στην οθόνη για πάντα
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Το είδα")
+                }
+            }
             changes.take(5).forEach { change ->
                 val who = change.author.ifBlank { "άγνωστος χρήστης" }
                 Text(
@@ -455,7 +474,7 @@ private fun DriveChangesCard(changes: List<DriveWatch.Change>, onRead: () -> Uni
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            if (changes.any { !it.removed }) {
+            if (unread > 0) {
                 TextButton(onClick = onRead) { Text("Διάβασέ τα") }
             }
         }
