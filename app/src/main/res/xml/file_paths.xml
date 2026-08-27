@@ -4,4 +4,6 @@
     <cache-path name="updates" path="." />
     <!-- Τα PDF προσφορών που παράγονται τοπικά -->
     <files-path name="documents" path="documents/" />
+    <!-- Το αρχείο καταγραφής, για να μπορεί να σταλεί -->
+    <files-path name="diagnostics" path="diagnostics/" />
 </paths>

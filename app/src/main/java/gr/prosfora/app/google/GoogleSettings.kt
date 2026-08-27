@@ -145,6 +145,16 @@ class GoogleSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ASK_PAID_DATE, false)
         set(value) = prefs.edit().putBoolean(KEY_ASK_PAID_DATE, value).apply()
 
+    /**
+     * Τοπική καταγραφή διαγνωστικών σε αρχείο.
+     *
+     * Σβηστή από προεπιλογή: το κείμενο των παραστατικών περιέχει ΑΦΜ, ονόματα
+     * και ποσά, και δεν γράφεται πουθενά χωρίς να το ζητήσει ο χρήστης.
+     */
+    var debugLogging: Boolean
+        get() = prefs.getBoolean(KEY_DEBUG_LOG, false)
+        set(value) = prefs.edit().putBoolean(KEY_DEBUG_LOG, value).apply()
+
     /** Ειδοποιήσεις για αλλαγές στον κοινόχρηστο φάκελο του Drive. */
     var notifyDriveChanges: Boolean
         get() = prefs.getBoolean(KEY_NOTIFY_DRIVE, true)
@@ -287,6 +297,7 @@ class GoogleSettings(context: Context) {
         private const val KEY_OCR_KEY = "ocr_api_key"
         private const val KEY_ASK_PAID_DATE = "ask_paid_date"
         private const val KEY_NOTIFY_DRIVE = "notify_drive_changes"
+        private const val KEY_DEBUG_LOG = "debug_logging"
         private const val KEY_KNOWN_FILES = "known_drive_files"
         private const val KEY_WATCH_READY = "drive_watch_ready"
 

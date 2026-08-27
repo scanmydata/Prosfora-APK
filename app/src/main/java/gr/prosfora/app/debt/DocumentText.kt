@@ -1,5 +1,6 @@
 package gr.prosfora.app.debt
 
+import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.util.reason
 
@@ -48,16 +49,42 @@ class DocumentText(
         val problems = mutableListOf<String>()
         var firstText: Result? = null
 
-        routes(bytes, driveFileId, fileName).forEach { (route, read) ->
+        val plan = routes(bytes, driveFileId, fileName)
+        DebugLog.log(TAG) {
+            "«$fileName» ${bytes?.size ?: 0} bytes · " +
+                "μορφή ${bytes?.let { DocumentBytes.kindOf(it)?.name } ?: "άγνωστη"} · " +
+                "επίπεδο κειμένου ${bytes != null && DocumentBytes.hasTextLayer(bytes)} · " +
+                "δρόμοι: ${plan.joinToString { it.first.label }}"
+        }
+
+        plan.forEach { (route, read) ->
             val text = runCatching { read() }
-                .onFailure { problems += "${route.label}: ${it.reason()}" }
+                .onFailure {
+                    problems += "${route.label}: ${it.reason()}"
+                    val error = it
+                    DebugLog.log(TAG) {
+                        "${route.label} ΑΠΕΤΥΧΕ: ${error.stackTraceToString().take(600)}"
+                    }
+                }
                 .getOrDefault("")
                 .trim()
 
-            if (text.isBlank()) return@forEach
+            if (text.isBlank()) {
+                DebugLog.log(TAG, "${route.label}: κενό κείμενο")
+                return@forEach
+            }
+
+            // Εδώ κρίνονται όλα: αν το κείμενο ήρθε αλλά δεν βγάζει οφειλή, το
+            // ίδιο το κείμενο είναι η μόνη απόδειξη για το τι πήγε στραβά
+            DebugLog.dump(TAG, "${route.label} → κείμενο", text)
+
             if (firstText == null) firstText = Result(text, route)
-            if (accept(text)) return Result(text, route, problems.joinToString(" · "))
+            if (accept(text)) {
+                DebugLog.log(TAG, "${route.label}: ΟΚ, αναγνωρίστηκε οφειλή")
+                return Result(text, route, problems.joinToString(" · "))
+            }
             problems += "${route.label}: δεν αναγνωρίστηκε οφειλή"
+            DebugLog.log(TAG, "${route.label}: το κείμενο ΔΕΝ έβγαλε οφειλή")
         }
 
         return firstText?.copy(note = problems.joinToString(" · "))
@@ -92,5 +119,9 @@ class DocumentText(
         if (bytes == null && driveFileId.isNotBlank()) {
             add(Route.DRIVE_OCR to { drive.readTextOf(driveFileId) })
         }
+    }
+
+    private companion object {
+        const val TAG = "ανάγνωση"
     }
 }

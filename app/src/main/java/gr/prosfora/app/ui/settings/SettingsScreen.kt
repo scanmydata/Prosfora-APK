@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Star
@@ -322,6 +323,14 @@ fun SettingsScreen(onMenu: () -> Unit, onOpenTemplate: () -> Unit) {
                 icon = Icons.Default.AccountBalance,
             ) {
                 DebtSettings(googleSettings)
+            }
+
+            SettingsSection(
+                title = "Διαγνωστικά",
+                subtitle = "Καταγραφή για όταν κάτι δεν διαβάζεται σωστά",
+                icon = Icons.Default.BugReport,
+            ) {
+                DiagnosticsSettings(googleSettings)
             }
 
             SettingsSection(

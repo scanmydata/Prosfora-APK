@@ -2,6 +2,7 @@ package gr.prosfora.app.debt
 
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.DebtKind
+import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.debt.DebtText.anchor
 import gr.prosfora.app.debt.DebtText.looksLike
 import gr.prosfora.app.debt.DebtText.normalize
@@ -32,6 +33,8 @@ import java.time.format.DateTimeFormatter
  * `migration/parse_debts.py`.
  */
 object DebtParser {
+
+    private const val TAG = "parser"
 
     /**
      * Ένα ποσό όπως γράφεται στα ελληνικά έντυπα: 1.296,83.
@@ -88,6 +91,37 @@ object DebtParser {
      */
     fun parse(text: String, fileName: String = "", driveFileId: String = ""): List<DebtEntity> {
         val clean = normalize(text)
+        val rows = branch(clean, text, fileName, driveFileId)
+        DebugLog.log(TAG) {
+            if (rows.isEmpty()) {
+                "«$fileName»: κανένα κλαδί δεν ταίριαξε · " + fingerprints(clean)
+            } else {
+                "«$fileName»: ${rows.size} γραμμές — " +
+                    rows.joinToString { "${it.kind} ${it.amount} ${it.periodMonth}/${it.periodYear}" }
+            }
+        }
+        return rows
+    }
+
+    /**
+     * Ποια λέξη-κλειδί βρέθηκε και ποια όχι.
+     *
+     * Μπαίνει στο αρχείο καταγραφής μόνο όταν αποτύχει η αναγνώριση, και είναι
+     * το πρώτο πράγμα που δείχνει αν φταίει το OCR ή τα μοτίβα.
+     */
+    private fun fingerprints(clean: String): String = listOf(
+        "Ταυτότητα Οφειλής", "Σημείωμα για Πληρωμή", "Μισθοδοτική Κατάσταση",
+        "ΑΠΔ", "Διαφήμισης", "Ποσό δόσης", "Ημερολογιακή Περίοδος",
+    ).joinToString(" ") { word ->
+        if (looksLike(clean, word)) "✓$word" else "✗$word"
+    }
+
+    private fun branch(
+        clean: String,
+        text: String,
+        fileName: String,
+        driveFileId: String,
+    ): List<DebtEntity> {
         return when {
             looksLike(clean, "Μισθοδοτική Κατάσταση") ->
                 payroll(text, clean, fileName, driveFileId)
@@ -161,7 +195,15 @@ object DebtParser {
     private fun aade(text: String, fileName: String, driveFileId: String): List<DebtEntity> {
         val amount = amountAfter(text, anchor("Ποσό δόσης"))
             ?: amountAfter(text, anchor("Συνολικό ποσό οφειλής"))
-            ?: return emptyList()
+        if (amount == null) {
+            // Το κλαδί ταίριαξε αλλά το ποσό δεν βρέθηκε: το πιο πιθανό είναι
+            // ότι το OCR έσπασε τα δεκαδικά ή έχασε το κόμμα
+            DebugLog.log(TAG) {
+                "ΑΑΔΕ: δεν βρέθηκε ποσό. Ποσά στο κείμενο: " +
+                    ANY_AMOUNT.findAll(text).map { it.value }.take(12).joinToString()
+            }
+            return emptyList()
+        }
 
         // Η προθεσμία γράφεται δύο φορές: στην ετικέτα της δόσης και στο κείμενο
         val due = Regex(

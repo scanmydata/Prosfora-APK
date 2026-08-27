@@ -1,5 +1,6 @@
 package gr.prosfora.app.google
 
+import gr.prosfora.app.debug.DebugLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -136,6 +137,7 @@ class DriveClient(private val accessToken: String) {
         mimeType: String,
         ocrLanguage: String = "el",
     ): String {
+        DebugLog.log(TAG, "ανέβασμα «$name» ($mimeType, ${bytes.size} bytes) ως έγγραφο Google, ocrLanguage=$ocrLanguage")
         val docId = upload(
             name = "prosfora-ocr-$name",
             bytes = bytes,
@@ -143,10 +145,13 @@ class DriveClient(private val accessToken: String) {
             convertToGoogleDoc = true,
             ocrLanguage = ocrLanguage,
         )
+        DebugLog.log(TAG, "προσωρινό έγγραφο $docId · εξαγωγή σε κείμενο")
         return try {
             export(docId, TEXT_MIME).toString(Charsets.UTF_8)
+                .also { DebugLog.log(TAG, "εξήχθησαν ${it.length} χαρακτήρες") }
         } finally {
-            runCatching { delete(docId) }
+            val wiped = runCatching { delete(docId) }.isSuccess
+            DebugLog.log(TAG, "διαγραφή προσωρινού $docId: ${if (wiped) "έγινε" else "ΑΠΕΤΥΧΕ"}")
         }
     }
 
@@ -178,11 +183,14 @@ class DriveClient(private val accessToken: String) {
      * Drive του χρήστη με σκουπίδια σε κάθε σάρωση.
      */
     suspend fun readTextOf(fileId: String, ocrLanguage: String = "el"): String {
+        DebugLog.log(TAG, "αντιγραφή $fileId ως έγγραφο Google")
         val copyId = copyAsGoogleDoc(fileId, ocrLanguage)
         return try {
             export(copyId, TEXT_MIME).toString(Charsets.UTF_8)
+                .also { DebugLog.log(TAG, "εξήχθησαν ${it.length} χαρακτήρες") }
         } finally {
-            runCatching { delete(copyId) }
+            val wiped = runCatching { delete(copyId) }.isSuccess
+            DebugLog.log(TAG, "διαγραφή προσωρινού $copyId: ${if (wiped) "έγινε" else "ΑΠΕΤΥΧΕ"}")
         }
     }
 
@@ -303,6 +311,7 @@ class DriveClient(private val accessToken: String) {
         private val JSON = "application/json; charset=utf-8".toMediaType()
 
         const val FOLDER_MIME = "application/vnd.google-apps.folder"
+        private const val TAG = "drive"
         const val DOC_MIME = "application/vnd.google-apps.document"
         const val DOCX_MIME =
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
