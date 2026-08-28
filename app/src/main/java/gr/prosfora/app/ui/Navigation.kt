@@ -4,8 +4,11 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -14,6 +17,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import gr.prosfora.app.notify.Channel
+import gr.prosfora.app.ui.debts.DebtNotificationFocusDialog
 import gr.prosfora.app.ui.debts.DebtsScreen
 import gr.prosfora.app.ui.jobs.JobsScreen
 import gr.prosfora.app.ui.jobs.ReviewComposeScreen
@@ -44,7 +48,10 @@ private const val ROUTE_TEMPLATE = "settings/template"
 private const val ROUTE_TEMPLATE_EDIT = "settings/template/edit"
 
 @Composable
-fun ProsforaNavHost() {
+fun ProsforaNavHost(
+    openDebtId: String? = null,
+    onDebtNavigationConsumed: () -> Unit = {},
+) {
     val navController = rememberNavController()
     val viewModel: OffersViewModel = viewModel()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -58,17 +65,24 @@ fun ProsforaNavHost() {
 
     EnsureGoogleAccess()
 
+    LaunchedEffect(openDebtId) {
+        if (!openDebtId.isNullOrBlank()) {
+            navController.navigate(ROUTE_DEBTS) {
+                popUpTo(ROUTE_STATS) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
-        // Στις εσωτερικές οθόνες το σύρσιμο ανήκει στο περιεχόμενο, όχι στο μενού
         gesturesEnabled = onTopLevel || drawerState.isOpen,
         drawerContent = {
             AppDrawer(current = route) { destination ->
                 scope.launch { drawerState.close() }
                 if (destination.route != route) {
                     navController.navigate(destination.route) {
-                        // Οι σελίδες πρώτου επιπέδου δεν στοιβάζονται: το «πίσω»
-                        // από οποιαδήποτε από αυτές γυρνάει στα Στατιστικά και μετά βγαίνει
                         popUpTo(ROUTE_STATS) { saveState = true }
                         launchSingleTop = true
                         restoreState = true
@@ -78,60 +92,34 @@ fun ProsforaNavHost() {
         },
     ) {
         NavHost(navController = navController, startDestination = ROUTE_STATS) {
-            composable(ROUTE_STATS) {
-                StatsScreen(viewModel = viewModel, onMenu = openDrawer)
-            }
+            composable(ROUTE_STATS) { StatsScreen(viewModel = viewModel, onMenu = openDrawer) }
             composable(ROUTE_LIST) {
                 OffersListScreen(
                     viewModel = viewModel,
                     onMenu = openDrawer,
-                    onOpenOffer = { id ->
-                        viewModel.select(id)
-                        navController.navigate(ROUTE_DETAIL)
-                    },
+                    onOpenOffer = { id -> viewModel.select(id); navController.navigate(ROUTE_DETAIL) },
                 )
             }
             composable(ROUTE_DETAIL) {
                 OfferDetailScreen(
                     viewModel = viewModel,
-                    onBack = {
-                        viewModel.select(null)
-                        navController.popBackStack()
-                    },
+                    onBack = { viewModel.select(null); navController.popBackStack() },
                     onComposeEmail = { navController.navigate(ROUTE_EMAIL) },
-                    onComposeMessage = { channel ->
-                        navController.navigate("$ROUTE_MESSAGE/${channel.name}")
-                    },
+                    onComposeMessage = { channel -> navController.navigate("$ROUTE_MESSAGE/${channel.name}") },
                 )
             }
-            composable(ROUTE_EMAIL) {
-                EmailComposeScreen(
-                    viewModel = viewModel,
-                    onBack = { navController.popBackStack() },
-                )
-            }
+            composable(ROUTE_EMAIL) { EmailComposeScreen(viewModel = viewModel, onBack = { navController.popBackStack() }) }
             composable(
                 route = "$ROUTE_MESSAGE/{channel}",
                 arguments = listOf(navArgument("channel") { type = NavType.StringType }),
             ) { entry ->
-                val channel = runCatching {
-                    Channel.valueOf(entry.arguments?.getString("channel").orEmpty())
-                }.getOrDefault(Channel.SMS)
-                MessageComposeScreen(
-                    viewModel = viewModel,
-                    channel = channel,
-                    onBack = { navController.popBackStack() },
-                )
+                val channel = runCatching { Channel.valueOf(entry.arguments?.getString("channel").orEmpty()) }
+                    .getOrDefault(Channel.SMS)
+                MessageComposeScreen(viewModel = viewModel, channel = channel, onBack = { navController.popBackStack() })
             }
-            composable(ROUTE_ARCHIVE) {
-                PdfArchiveScreen(viewModel = viewModel, onMenu = openDrawer)
-            }
+            composable(ROUTE_ARCHIVE) { PdfArchiveScreen(viewModel = viewModel, onMenu = openDrawer) }
             composable(ROUTE_JOBS) {
-                JobsScreen(
-                    viewModel = viewModel,
-                    onMenu = openDrawer,
-                    onRequestReview = { id -> navController.navigate("$ROUTE_REVIEW/$id") },
-                )
+                JobsScreen(viewModel = viewModel, onMenu = openDrawer, onRequestReview = { id -> navController.navigate("$ROUTE_REVIEW/$id") })
             }
             composable(
                 route = "$ROUTE_REVIEW/{offerId}",
@@ -143,24 +131,21 @@ fun ProsforaNavHost() {
                     onBack = { navController.popBackStack() },
                 )
             }
-            composable(ROUTE_DEBTS) {
-                DebtsScreen(onMenu = openDrawer)
-            }
+            composable(ROUTE_DEBTS) { DebtsScreen(onMenu = openDrawer) }
             composable(ROUTE_SETTINGS) {
-                SettingsScreen(
-                    onMenu = openDrawer,
-                    onOpenTemplate = { navController.navigate(ROUTE_TEMPLATE) },
-                )
+                SettingsScreen(onMenu = openDrawer, onOpenTemplate = { navController.navigate(ROUTE_TEMPLATE) })
             }
             composable(ROUTE_TEMPLATE) {
-                TemplateScreen(
-                    onBack = { navController.popBackStack() },
-                    onEditText = { navController.navigate(ROUTE_TEMPLATE_EDIT) },
-                )
+                TemplateScreen(onBack = { navController.popBackStack() }, onEditText = { navController.navigate(ROUTE_TEMPLATE_EDIT) })
             }
-            composable(ROUTE_TEMPLATE_EDIT) {
-                TemplateEditorScreen(onBack = { navController.popBackStack() })
-            }
+            composable(ROUTE_TEMPLATE_EDIT) { TemplateEditorScreen(onBack = { navController.popBackStack() }) }
+        }
+
+        openDebtId?.takeIf { it.isNotBlank() }?.let { debtId ->
+            DebtNotificationFocusDialog(
+                debtId = debtId,
+                onDismiss = onDebtNavigationConsumed,
+            )
         }
     }
 }
