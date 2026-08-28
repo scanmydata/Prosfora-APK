@@ -15,19 +15,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,7 +49,9 @@ import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.debt.DocumentText
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.google.rememberGoogleAuthorizer
+import gr.prosfora.app.sync.SheetSync
 import gr.prosfora.app.util.asMoney
 import kotlinx.coroutines.launch
 
@@ -110,14 +113,16 @@ fun EmployeesScreen(onMenu: () -> Unit) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text(employee.display, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                Text(if (employee.alias.isBlank()) employee.name else employee.name + " · " + employee.alias, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (employee.alias.isNotBlank()) {
+                                    Text(employee.alias, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = BrandGreen)
+                                }
+                                Text(employee.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                Text("Κωδικός: ${employee.code.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Icon(Icons.Default.Edit, contentDescription = null, tint = BrandGreen)
+                            Icon(Icons.Default.Edit, contentDescription = "Επεξεργασία", tint = BrandGreen)
                         }
-                        Text("Κωδικός: ${employee.code.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall)
-                        Text("Συνολικά πληρωτέα: ${rows.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodyMedium)
-                        Text("Προβολή καρτέλας ανά μήνα / έτος →", style = MaterialTheme.typography.bodySmall, color = BrandGreen)
+                        Text("Συνολικά πληρωτέα: ${rows.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Text("Άνοιγμα καρτέλας ανά μήνα / έτος →", style = MaterialTheme.typography.bodySmall, color = BrandGreen)
                     }
                 }
             }
@@ -130,87 +135,183 @@ fun EmployeesScreen(onMenu: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EmployeeDetailScreen(employee: EmployeeEntity, debts: List<DebtEntity>, context: Context, repository: DebtRepository, onBack: () -> Unit) {
+private fun EmployeeDetailScreen(
+    employee: EmployeeEntity,
+    debts: List<DebtEntity>,
+    context: Context,
+    repository: DebtRepository,
+    onBack: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val authorizer = rememberGoogleAuthorizer()
     val settings = remember { GoogleSettings(context) }
+    val sheets = remember { SheetsClient(authorizer.accessToken()) }
     val rows = remember(debts, employee.id) { debts.filter { it.kind.perPerson && EmployeeEntity.idFor(it.personName) == employee.id } }
     val years = remember(rows) { rows.map { it.periodYear }.filter { it > 0 }.distinct().sortedDescending().ifEmpty { listOf(java.time.LocalDate.now().year) } }
     var year by remember(years) { mutableStateOf(years.first()) }
+    var showEdit by remember { mutableStateOf(false) }
     var alias by remember(employee) { mutableStateOf(employee.alias) }
     var savingAlias by remember { mutableStateOf(false) }
-    val costByFile = remember { mutableStateMapOf<String, Double>() }
-    val loadingFiles = remember { mutableStateMapOf<String, Boolean>() }
+    var cacheLoaded by remember(employee.id) { mutableStateOf(false) }
+    val costByMonth = remember(employee.id) { mutableStateMapOf<String, Double>() }
+    val loadingMonths = remember(employee.id) { mutableStateMapOf<String, Boolean>() }
 
-    fun ensureCost(fileId: String, fileName: String) {
-        if (fileId.isBlank() || costByFile.containsKey(fileId) || loadingFiles[fileId] == true) return
-        loadingFiles[fileId] = true
-        scope.launch {
-            val value = runCatching {
-                val drive = DriveClient(authorizer.accessToken())
-                val bytes = drive.download(fileId)
-                val reader = DocumentText(drive, settings.ocrApiKey.takeIf { it.isNotBlank() }?.let { gr.prosfora.app.debt.OcrSpaceClient(it) })
-                val text = reader.read(bytes, fileId, fileName) { it.contains("Μισθοδοτική", ignoreCase = true) || it.contains("ΜΙΣΘΟΔΟΤΙΚΗ", ignoreCase = true) }.text
-                PayrollInsuranceCostExtractor.find(text, employee)
-            }.getOrElse { 0.0 }
-            costByFile[fileId] = value
-            loadingFiles[fileId] = false
+    fun keyFor(targetYear: Int, month: Int) = "$targetYear-$month"
+
+    suspend fun saveCostToSheet(targetYear: Int, month: Int, cost: Double, sourceFileId: String) {
+        val spreadsheetId = settings.spreadsheetId ?: return
+        val existing = sheets.sheetTitles(spreadsheetId)
+        if (SheetSync.TAB_EMPLOYEE_COSTS !in existing) sheets.addSheet(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
+        val current = sheets.readRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
+        val data = current.drop(1)
+            .filter { it.firstOrNull()?.isNotBlank() == true }
+            .map { row -> List(SheetSync.EMPLOYEE_COST_HEADER.size) { i -> row.getOrElse(i) { "" } } }
+            .toMutableList()
+        val key = keyFor(targetYear, month)
+        val replacement = listOf(
+            employee.id,
+            employee.name,
+            targetYear.toString(),
+            month.toString(),
+            rows.filter { it.periodYear == targetYear && it.periodMonth == month }.sumOf { it.amount }.toString(),
+            cost.toString(),
+            sourceFileId,
+            System.currentTimeMillis().toString(),
+        )
+        val index = data.indexOfFirst { it[0] == employee.id && keyFor(it[2].toIntOrNull() ?: -1, it[3].toIntOrNull() ?: -1) == key }
+        if (index >= 0) data[index] = replacement else data += replacement
+        sheets.replaceRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS, listOf(SheetSync.EMPLOYEE_COST_HEADER) + data)
+    }
+
+    suspend fun computeMonthIfNeeded(targetYear: Int, month: Int, monthRows: List<DebtEntity>) {
+        val key = keyFor(targetYear, month)
+        if (!cacheLoaded || costByMonth.containsKey(key) || loadingMonths[key] == true) return
+        val source = monthRows.map { it.driveFileId to it.source }.distinct().firstOrNull { it.first.isNotBlank() }
+            ?: return
+        loadingMonths[key] = true
+        val value = runCatching {
+            val drive = DriveClient(authorizer.accessToken())
+            val bytes = drive.download(source.first)
+            val reader = DocumentText(drive, settings.ocrApiKey.takeIf { it.isNotBlank() }?.let { gr.prosfora.app.debt.OcrSpaceClient(it) })
+            val text = reader.read(bytes, source.first, source.second) {
+                it.contains("Μισθοδοτική", ignoreCase = true) || it.contains("ΜΙΣΘΟΔΟΤΙΚΗ", ignoreCase = true)
+            }.text
+            PayrollInsuranceCostExtractor.find(text, employee)
+        }.getOrElse { 0.0 }
+        costByMonth[key] = value
+        runCatching { saveCostToSheet(targetYear, month, value, source.first) }
+        loadingMonths[key] = false
+    }
+
+    LaunchedEffect(employee.id) {
+        costByMonth.clear()
+        loadingMonths.clear()
+        cacheLoaded = false
+        val spreadsheetId = settings.spreadsheetId
+        if (spreadsheetId != null) {
+            runCatching {
+                val current = sheets.readRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
+                current.drop(1).forEach { row ->
+                    if (row.getOrElse(0) { "" } == employee.id) {
+                        val y = row.getOrElse(2) { "" }.toIntOrNull() ?: return@forEach
+                        val m = row.getOrElse(3) { "" }.toIntOrNull() ?: return@forEach
+                        val c = row.getOrElse(5) { "" }.replace(",", ".").toDoubleOrNull() ?: return@forEach
+                        costByMonth[keyFor(y, m)] = c
+                    }
+                }
+            }
         }
+        cacheLoaded = true
     }
 
     val selectedRows = rows.filter { it.periodYear == year }
-    LaunchedEffect(selectedRows) { selectedRows.map { it.driveFileId to it.source }.distinct().forEach { (id, source) -> ensureCost(id, source) } }
-
     val months = selectedRows.groupBy { it.periodMonth }.entries.sortedByDescending { it.key }
+    LaunchedEffect(year, selectedRows, cacheLoaded) {
+        if (cacheLoaded) months.forEach { (month, monthRows) -> computeMonthIfNeeded(year, month, monthRows) }
+    }
+
     val annualPayroll = selectedRows.sumOf { it.amount }
-    val annualCost = selectedRows.map { it.driveFileId to it.source }.distinct().sumOf { (id, _) -> costByFile[id] ?: 0.0 }
-    val loading = selectedRows.any { loadingFiles[it.driveFileId] == true }
+    val annualCost = months.sumOf { (month, _) -> costByMonth[keyFor(year, month)] ?: 0.0 }
+    val loading = months.any { (month, _) -> loadingMonths[keyFor(year, month)] == true }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text(employee.display) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Πίσω") } }) },
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(if (employee.alias.isNotBlank()) employee.alias else employee.name, fontWeight = FontWeight.Bold)
+                        if (employee.alias.isNotBlank()) Text(employee.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Πίσω") } },
+                actions = { IconButton(onClick = { showEdit = true }) { Icon(Icons.Default.Edit, contentDescription = "Επεξεργασία", tint = BrandGreen) } },
+            )
+        },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
-                Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant)) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(employee.name, style = MaterialTheme.typography.bodyMedium)
-                        Text("Κωδικός ${employee.code.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(value = alias, onValueChange = { alias = it }, modifier = Modifier.weight(1f), singleLine = true, label = { Text("Ψευδώνυμο") })
-                            TextButton(enabled = !savingAlias && alias != employee.alias, onClick = {
-                                savingAlias = true
-                                scope.launch { repository.saveEmployee(employee.copy(alias = alias.trim())); savingAlias = false; Toast.makeText(context, "Αποθηκεύτηκε το ψευδώνυμο", Toast.LENGTH_SHORT).show() }
-                            }) { Text("Αποθήκευση") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    years.forEach { candidate -> FilterChip(selected = candidate == year, onClick = { year = candidate }, label = { Text(candidate.toString()) }) }
+                }
+            }
+            months.forEach { (month, monthRows) ->
+                val monthlyPayable = monthRows.sumOf { it.amount }
+                val monthlyCost = costByMonth[keyFor(year, month)] ?: 0.0
+                item(key = "employee-month-$year-$month") {
+                    Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(16.dp)) {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("${month.toString().padStart(2, '0')}/$year", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text("ΠΛΗΡΩΤΕΟ", style = MaterialTheme.typography.labelMedium, color = BrandGreen, fontWeight = FontWeight.Bold)
+                            Text(monthlyPayable.asMoney(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                            Text("Κόστος ενσήμων: ${monthlyCost.asMoney()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            monthRows.sortedBy { it.kind.ordinal }.forEach { row ->
+                                Text("• ${row.kind.label}: ${row.amount.asMoney()}", style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
             }
-            item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { years.forEach { candidate -> FilterChip(selected = candidate == year, onClick = { year = candidate }, label = { Text(candidate.toString()) }) } } }
             item {
-                Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.secondaryContainer)) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Σύνολα $year", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        Text("Πληρωτέα: ${annualPayroll.asMoney()}", style = MaterialTheme.typography.bodyMedium)
-                        Text("Κόστος ενσήμων: ${annualCost.asMoney()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, color = BrandGreen)
-                        if (loading) Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.padding(end = 8.dp), strokeWidth = 2.dp); Text("Υπολογισμός από τις μισθοδοτικές καταστάσεις…", style = MaterialTheme.typography.bodySmall) }
-                    }
-                }
-            }
-            months.forEach { (month, monthRows) ->
-                val cost = monthRows.map { it.driveFileId to it.source }.distinct().sumOf { (id, _) -> costByFile[id] ?: 0.0 }
-                item(key = "employee-month-$year-$month") {
-                    Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surface)) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text("${month.toString().padStart(2, '0')}/$year", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("Πληρωτέα: ${monthRows.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodyMedium)
-                            Text("Κόστος ενσήμων: ${cost.asMoney()}", style = MaterialTheme.typography.bodyMedium, color = BrandGreen)
-                            monthRows.sortedBy { it.kind.ordinal }.forEach { row -> Text("• ${row.kind.label}: ${row.amount.asMoney()}", style = MaterialTheme.typography.bodySmall) }
+                Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.primaryContainer), shape = RoundedCornerShape(16.dp)) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("ΣΥΝΟΛΟ $year", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("ΠΛΗΡΩΤΕΟ", style = MaterialTheme.typography.labelLarge, color = BrandGreen, fontWeight = FontWeight.Bold)
+                        Text(annualPayroll.asMoney(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                        Text("Κόστος ενσήμων: ${annualCost.asMoney()}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (loading) Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.padding(end = 8.dp), strokeWidth = 2.dp)
+                            Text("Υπολογισμός μόνο για μήνες που δεν έχουν ακόμη αποθηκευτεί…", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
             }
             if (months.isEmpty()) item { Text("Δεν υπάρχουν μισθοδοτικές εγγραφές για το $year.") }
         }
+    }
+
+    if (showEdit) {
+        AlertDialog(
+            onDismissRequest = { showEdit = false },
+            title = { Text("Επεξεργασία εργαζομένου") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(employee.name, style = MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(value = alias, onValueChange = { alias = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Ψευδώνυμο") })
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !savingAlias, onClick = {
+                    savingAlias = true
+                    scope.launch {
+                        repository.saveEmployee(employee.copy(alias = alias.trim()))
+                        savingAlias = false
+                        showEdit = false
+                        Toast.makeText(context, "Αποθηκεύτηκε το ψευδώνυμο", Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("Αποθήκευση", color = BrandGreen) }
+            },
+            dismissButton = { TextButton(onClick = { showEdit = false }) { Text("Άκυρο") } },
+        )
     }
 }
 
