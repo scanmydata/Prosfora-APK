@@ -24,12 +24,16 @@ object DriveSyncCoordinator {
         val drive = DriveClient(accessToken)
         val repository = DebtRepository(app)
 
-        DebugLog.log("sync") { "έναρξη ενιαίου συγχρονισμού · sheet=$syncSheet · owner=${settings.ownerEmail.ifBlank { "άγνωστος" }}" }
+        DebugLog.log("sync") {
+            "έναρξη ενιαίου συγχρονισμού · sheet=$syncSheet · owner=${settings.ownerEmail.ifBlank { "άγνωστος" }}"
+        }
 
         val sheetSummary = if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) {
             runCatching {
                 SheetSync(app, SheetsClient(accessToken), settings).sync().summary
-            }.onFailure { DebugLog.log("sync", "Sheet sync απέτυχε: ${it.stackTraceToString()}") }.getOrNull()
+            }.onFailure {
+                DebugLog.log("sync", "Sheet sync απέτυχε: ${it.stackTraceToString()}")
+            }.getOrNull()
         } else null
 
         DebugLog.log("sync", "Sheet αποτέλεσμα: ${sheetSummary ?: "παραλείφθηκε/χωρίς αποτέλεσμα"}")
@@ -37,8 +41,9 @@ object DriveSyncCoordinator {
         val report = runCatching {
             DebtImporter(drive, settings).scan(
                 alreadyImported = repository.importedFileIds(),
+                onProgress = { message -> DebugLog.log("sync", message) },
                 includePdfArchive = true,
-            ) { message -> DebugLog.log("sync", message) }
+            )
         }.onFailure {
             DebugLog.log("sync", "Debt scan απέτυχε: ${it.stackTraceToString()}")
         }.getOrNull() ?: return Result(sheetSummary = sheetSummary)
@@ -47,10 +52,15 @@ object DriveSyncCoordinator {
         if (validDebts.isNotEmpty()) {
             repository.saveAll(validDebts)
             DebugLog.log("sync", "αποθηκεύτηκαν ${validDebts.size} νέες οφειλές")
-            if (settings.notifyDriveChanges) DriveNotifier.notifyDebts(app, validDebts)
+            if (settings.notifyDriveChanges) {
+                DriveNotifier.notifyDebts(app, validDebts)
+            }
         }
 
-        DebugLog.log("sync", "τέλος · scanned=${report.scanned}, skipped=${report.skipped}, debts=${validDebts.size}")
+        DebugLog.log(
+            "sync",
+            "τέλος · scanned=${report.scanned}, skipped=${report.skipped}, debts=${validDebts.size}",
+        )
         return Result(sheetSummary, validDebts, report.unreadable.size)
     }
 }
