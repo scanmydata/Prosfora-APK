@@ -64,6 +64,7 @@ class DebtImporter(
         var scanned = 0
         var skipped = 0
         val found = mutableListOf<Found>()
+        val processed = alreadyImported.toMutableSet()
 
         val rootFolder = runCatching { workspace.debtsFolder() }.getOrNull()
         val folders = buildList {
@@ -75,20 +76,20 @@ class DebtImporter(
             }
         }.distinct()
 
-        DebugLog.log("debt-scan", "Folders=$folders")
         if (folders.isEmpty()) return@withContext Report(0, 0, emptyList())
 
         folders.forEach { folder ->
             val files = runCatching { workspace.documentsIn(folder) }
                 .onFailure { DebugLog.log("debt-scan", "list failed folder=$folder: ${it.stackTraceToString()}") }
                 .getOrDefault(emptyList())
-            DebugLog.log("debt-scan", "folder=$folder files=${files.size}")
 
             files.forEach { file ->
-                if (file.id in alreadyImported) {
+                if (!processed.add(file.id)) {
                     skipped++
+                    DebugLog.log("debt-scan", "SKIP ήδη επεξεργασμένο fileId=${file.id}, name=${file.name}")
                     return@forEach
                 }
+
                 onProgress(file.name)
                 scanned++
                 val bytes = runCatching { drive.download(file.id) }
@@ -106,7 +107,6 @@ class DebtImporter(
                 }
             }
         }
-        DebugLog.log("debt-scan", "Τέλος scan · scanned=$scanned skipped=$skipped debts=${found.sumOf { it.debts.size }}")
         Report(scanned, skipped, found)
     }
 
@@ -114,7 +114,7 @@ class DebtImporter(
         found.debts.firstOrNull()?.agency?.let { agency ->
             runCatching {
                 drive.moveToFolder(fileId, workspace.debtsFolder(agency))
-                DebugLog.log("debt-drive", "Ματακινήθηκε $fileName ($fileId) -> ${agency.label}; αφαιρέθηκε από την αρχική θέση")
+                DebugLog.log("debt-drive", "Μετακινήθηκε $fileName ($fileId) -> ${agency.label}; αφαιρέθηκε από την αρχική θέση")
             }.onFailure {
                 DebugLog.log("debt-drive", "ΑΠΟΤΥΧΙΑ move $fileName ($fileId): ${it.stackTraceToString()}")
             }
@@ -122,7 +122,6 @@ class DebtImporter(
     }
 
     private suspend fun read(fileName: String, driveFileId: String, bytes: ByteArray?): Found {
-        DebugLog.log("debt-read", "read start file=$fileName id=$driveFileId bytes=${bytes?.size ?: 0}")
         val result = reader.read(bytes, driveFileId, fileName) { text ->
             val parsed = DebtParser.parse(text, fileName, driveFileId)
             DebugLog.log("debt-read", "validator parsed=${parsed.size} file=$fileName")
