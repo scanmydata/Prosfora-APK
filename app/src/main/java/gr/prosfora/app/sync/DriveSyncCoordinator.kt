@@ -10,6 +10,8 @@ import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.notify.DriveNotifier
 import gr.prosfora.app.notify.PendingDebtNotificationStore
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 /** Ενιαίος συγχρονισμός Sheet + Οφειλών + PDF archive. */
 object DriveSyncCoordinator {
@@ -19,7 +21,7 @@ object DriveSyncCoordinator {
         val unreadableDebts: Int = 0,
     )
 
-    suspend fun sync(context: Context, accessToken: String, syncSheet: Boolean = true): Result {
+    suspend fun sync(context: Context, accessToken: String, syncSheet: Boolean = true): Result = coroutineScope {
         val app = context.applicationContext
         val settings = GoogleSettings(app)
         val drive = DriveClient(accessToken)
@@ -29,63 +31,100 @@ object DriveSyncCoordinator {
             "έναρξη ενιαίου συγχρονισμού · sheet=$syncSheet · owner=${settings.ownerEmail.ifBlank { "άγνωστος" }}"
         }
 
-        val sheetSummary = if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) {
-            runCatching {
-                SheetSync(app, SheetsClient(accessToken), settings).sync().summary
-            }.onFailure {
-                DebugLog.log("sync", "Sheet sync απέτυχε: ${it.stackTraceToString()}")
-            }.getOrNull()
+        // Το Sheet δεν πρέπει να μπλοκάρει τον έλεγχο Οφειλών/notifications.
+        val sheetJob = if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) {
+            async {
+                runCatching {
+                    SheetSync(app, SheetsClient(accessToken), settings).sync().summary
+                }.onFailure {
+                    DebugLog.log("sync", "Sheet sync απέτυχε: ${it.stackTraceToString()}")
+                }.getOrNull()
+            }
         } else null
 
-        DebugLog.log("sync", "Sheet αποτέλεσμα: ${sheetSummary ?: "παραλείφθηκε/χωρίς αποτέλεσμα"}")
-
         val alreadyImported = repository.importedFileIds() + PendingDebtNotificationStore.fileIds(app)
+        val deferInstallments = settings.notifyDriveChanges
+        val savedIds = mutableSetOf<String>()
+        val pendingFiles = mutableSetOf<String>()
+        val notifiedFiles = mutableSetOf<String>()
+        val savedDebts = mutableListOf<DebtEntity>()
+
         val report = runCatching {
             DebtImporter(drive, settings).scan(
                 alreadyImported = alreadyImported,
                 onProgress = { message -> DebugLog.log("sync", message) },
                 includePdfArchive = true,
+                onFound = { found ->
+                    if (found.afmMismatch || found.debts.isEmpty()) return@scan
+
+                    val pending = deferInstallments && found.installmentPlan != null
+                    if (pending) {
+                        if (pendingFiles.add(found.driveFileId)) {
+                            PendingDebtNotificationStore.enqueue(app, listOf(found))
+                            DebugLog.log("sync", "άμεση εκκρεμής ειδοποίηση δόσεων · file=${found.fileName}")
+                        }
+                        if (notifiedFiles.add(found.driveFileId)) {
+                            DriveNotifier.notifyDebts(
+                                context = app,
+                                debts = found.debts,
+                                openPendingInstallments = true,
+                            )
+                        }
+                    } else {
+                        val fresh = found.debts.filter { savedIds.add(it.id) }
+                        if (fresh.isNotEmpty()) {
+                            repository.saveAll(fresh)
+                            savedDebts += fresh
+                            DebugLog.log("sync", "άμεση αποθήκευση ${fresh.size} οφειλών από ${found.fileName}")
+                            if (notifiedFiles.add(found.driveFileId)) {
+                                DriveNotifier.notifyDebts(
+                                    context = app,
+                                    debts = fresh,
+                                    openPendingInstallments = false,
+                                )
+                            }
+                        }
+                    }
+                },
             )
         }.onFailure {
             DebugLog.log("sync", "Debt scan απέτυχε: ${it.stackTraceToString()}")
-        }.getOrNull() ?: return Result(sheetSummary = sheetSummary)
+        }.getOrNull()
 
-        val deferInstallments = settings.notifyDriveChanges
-        val pendingInstallments = if (deferInstallments) {
-            report.found.filter {
-                !it.afmMismatch && it.debts.isNotEmpty() && it.installmentPlan != null
+        val sheetSummary = sheetJob?.await()
+        DebugLog.log("sync", "Sheet αποτέλεσμα: ${sheetSummary ?: "παραλείφθηκε/χωρίς αποτέλεσμα"}")
+
+        if (report == null) return@coroutineScope Result(sheetSummary = sheetSummary)
+
+        // Fallback για περίπτωση που το callback απέτυχε ή κάποιο αποτέλεσμα
+        // δημιουργήθηκε εκτός της normal callback ροής.
+        report.found.forEach { found ->
+            if (found.afmMismatch || found.debts.isEmpty()) return@forEach
+            val pending = deferInstallments && found.installmentPlan != null
+            if (pending) {
+                if (pendingFiles.add(found.driveFileId)) {
+                    PendingDebtNotificationStore.enqueue(app, listOf(found))
+                }
+                if (notifiedFiles.add(found.driveFileId)) {
+                    DriveNotifier.notifyDebts(app, found.debts, openPendingInstallments = true)
+                }
+            } else {
+                val fresh = found.debts.filter { savedIds.add(it.id) }
+                if (fresh.isNotEmpty()) {
+                    repository.saveAll(fresh)
+                    savedDebts += fresh
+                    if (notifiedFiles.add(found.driveFileId)) {
+                        DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
+                    }
+                }
             }
-        } else {
-            emptyList()
-        }
-        val immediateDebts = report.found
-            .filter { !it.afmMismatch && (it.installmentPlan == null || !deferInstallments) }
-            .flatMap { it.debts }
-
-        if (immediateDebts.isNotEmpty()) {
-            repository.saveAll(immediateDebts)
-            DebugLog.log("sync", "αποθηκεύτηκαν ${immediateDebts.size} νέες οφειλές")
-        }
-
-        if (pendingInstallments.isNotEmpty()) {
-            PendingDebtNotificationStore.enqueue(app, pendingInstallments)
-            DebugLog.log("sync", "σε εκκρεμότητα για επιλογή δόσεων: ${pendingInstallments.size} αρχεία")
-        }
-
-        val notifyDebts = immediateDebts + pendingInstallments.flatMap { it.debts }
-        if (settings.notifyDriveChanges && notifyDebts.isNotEmpty()) {
-            DriveNotifier.notifyDebts(
-                context = app,
-                debts = notifyDebts,
-                openPendingInstallments = pendingInstallments.isNotEmpty(),
-            )
         }
 
         DebugLog.log(
             "sync",
             "τέλος · scanned=${report.scanned}, skipped=${report.skipped}, " +
-                "saved=${immediateDebts.size}, pendingInstallments=${pendingInstallments.size}",
+                "saved=${savedDebts.size}, pendingInstallments=${pendingFiles.size}, notifications=${notifiedFiles.size}",
         )
-        return Result(sheetSummary, immediateDebts, report.unreadable.size)
+        Result(sheetSummary, savedDebts.distinctBy { it.id }, report.unreadable.size)
     }
 }
