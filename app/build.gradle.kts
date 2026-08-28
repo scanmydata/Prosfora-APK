@@ -65,7 +65,6 @@ android {
     }
 
     packaging {
-        // Το android-mail και το android-activation φέρνουν τα ίδια META-INF αρχεία
         resources.excludes += setOf(
             "META-INF/DEPENDENCIES",
             "META-INF/NOTICE",
@@ -101,6 +100,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.play.services.auth)
     implementation(libs.androidx.core.splashscreen)
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
 }
