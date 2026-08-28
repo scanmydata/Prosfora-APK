@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,6 +54,7 @@ import kotlinx.coroutines.launch
 
 private val BrandGreen = Color(0xFF00E2A2)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmployeesScreen(onMenu: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -126,6 +128,7 @@ fun EmployeesScreen(onMenu: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EmployeeDetailScreen(employee: EmployeeEntity, debts: List<DebtEntity>, context: Context, repository: DebtRepository, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
