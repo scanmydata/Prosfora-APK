@@ -53,9 +53,8 @@ import gr.prosfora.app.BuildConfig
 import gr.prosfora.app.data.db.OfferStatus
 import gr.prosfora.app.data.db.OfferWithDetails
 import gr.prosfora.app.google.GoogleSettings
-import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.google.rememberGoogleAuthorizer
-import gr.prosfora.app.sync.SheetSync
+import gr.prosfora.app.sync.DriveSyncCoordinator
 import gr.prosfora.app.ui.components.ConfirmDialog
 import gr.prosfora.app.update.UpdateChecker
 import gr.prosfora.app.util.asMoney
@@ -73,7 +72,6 @@ fun OffersListScreen(
 ) {
     val offers by viewModel.offers.collectAsState()
     val query by viewModel.query.collectAsState()
-
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val authorizer = rememberGoogleAuthorizer()
@@ -106,7 +104,7 @@ fun OffersListScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             )
 
-            // Τράβηγμα προς τα κάτω = συγχρονισμός με το κοινόχρηστο Sheet
+            // Τράβηγμα προς τα κάτω = συγχρονισμός προσφορών + Οφειλών + PDF archive
             PullToRefreshBox(
                 isRefreshing = refreshing,
                 onRefresh = {
@@ -121,16 +119,25 @@ fun OffersListScreen(
                     refreshing = true
                     scope.launch {
                         val result = runCatching {
-                            val sheets = SheetsClient(authorizer.accessToken())
-                            SheetSync(context, sheets, googleSettings).sync()
+                            DriveSyncCoordinator.sync(
+                                context = context,
+                                accessToken = authorizer.accessToken(),
+                                syncSheet = true,
+                            )
                         }
-                        // Το τράβηγμα κάνει και έλεγχο έκδοσης, όπως το κουμπί ανανέωσης
                         val release = runCatching {
                             UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
                         }.getOrNull()
                         refreshing = false
-                        result.onSuccess {
-                            Toast.makeText(context, it.summary, Toast.LENGTH_SHORT).show()
+                        result.onSuccess { sync ->
+                            val message = buildString {
+                                append(sync.sheetSummary ?: "Συγχρονισμός ολοκληρώθηκε")
+                                if (sync.importedDebts.isNotEmpty()) {
+                                    append(" · ${sync.importedDebts.size} νέα οφειλή")
+                                    if (sync.importedDebts.size != 1) append("ές")
+                                }
+                            }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                         }.onFailure {
                             Toast.makeText(
                                 context,
@@ -144,7 +151,6 @@ fun OffersListScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 if (offers.isEmpty()) {
-                    // Πρέπει να είναι scrollable, αλλιώς το pull-to-refresh δεν πιάνει
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         item {
                             Box(
@@ -235,28 +241,18 @@ private fun OfferRow(
                     color = statusColor(offer.status),
                 )
             }
-
-            // Τι έχει σταλεί και πότε — με μια ματιά από τη λίστα
             val badges = buildList {
                 offer.lastSentAt?.let { add(Triple(Icons.Default.Email, "Email", it)) }
                 offer.notifiedAt?.let { at ->
                     val viber = offer.notifiedVia.equals("VIBER", ignoreCase = true)
-                    add(
-                        Triple(
-                            if (viber) Icons.Default.Send else Icons.Default.Sms,
-                            if (viber) "Viber" else "SMS",
-                            at,
-                        ),
-                    )
+                    add(Triple(if (viber) Icons.Default.Send else Icons.Default.Sms, if (viber) "Viber" else "SMS", at))
                 }
             }
             if (badges.isNotEmpty()) {
                 FlowRow(
                     modifier = Modifier.padding(top = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    badges.forEach { (icon, label, at) -> SentBadge(icon, label, at) }
-                }
+                ) { badges.forEach { (icon, label, at) -> SentBadge(icon, label, at) } }
             }
         }
     }
@@ -266,11 +262,7 @@ private fun OfferRow(
 private fun SentBadge(icon: ImageVector, label: String, at: Long) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, contentDescription = null, tint = SentGreen, modifier = Modifier.size(14.dp))
-        Text(
-            " $label ${at.asSentStamp()}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Text(" $label ${at.asSentStamp()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -279,7 +271,6 @@ internal fun StatusDot(status: OfferStatus) {
     Surface(color = statusColor(status), shape = CircleShape, modifier = Modifier.size(12.dp)) {}
 }
 
-/** Ίδια με τα Format Rules του AppSheet: Ολοκληρώθηκε πράσινο, Σε επεξεργασία κόκκινο. */
 internal fun statusColor(status: OfferStatus): Color = when (status) {
     OfferStatus.COMPLETED -> Color(0xFF1DB954)
     OfferStatus.IN_PROGRESS -> Color(0xFFD32F2F)
