@@ -31,7 +31,6 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -113,7 +112,6 @@ fun DebtsScreen(onMenu: () -> Unit) {
     var afmQueue by remember { mutableStateOf(emptyList<DebtImporter.Found>()) }
     var pendingAfterAfm by remember { mutableStateOf<DebtImporter.Report?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
-    var showPeople by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var confirmBulk by remember { mutableStateOf(false) }
     var payingFor by remember { mutableStateOf<DebtEntity?>(null) }
@@ -215,7 +213,6 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 },
                 actions = {
                     if (selected.isEmpty()) {
-                        IconButton(onClick = { showPeople = true }) { Icon(Icons.Default.Groups, contentDescription = "Εργαζόμενοι") }
                         IconButton(onClick = { openFolder() }) { Icon(Icons.Default.FolderOpen, contentDescription = "Φάκελος στο Drive") }
                         IconButton(onClick = { picker.launch(arrayOf("*/*")) }) {
                             Icon(Icons.Default.UploadFile, contentDescription = "Εισαγωγή αρχείου", tint = BrandGreen)
@@ -316,7 +313,6 @@ fun DebtsScreen(onMenu: () -> Unit) {
             onDismiss = { confirmBulk = false },
         )
     }
-    if (showPeople) EmployeeIndexDialog(repository = repository, debts = debts, onDismiss = { showPeople = false })
     payingFor?.let { debt ->
         PaidDatePicker(
             onDismiss = { payingFor = null },
