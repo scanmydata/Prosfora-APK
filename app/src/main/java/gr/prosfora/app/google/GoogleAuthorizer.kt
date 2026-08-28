@@ -3,7 +3,6 @@ package gr.prosfora.app.google
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResult
-import androidx.activity.compose.*
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -38,9 +37,7 @@ class GoogleAuthorizer internal constructor(
 
                 if (result.hasResolution() && resolution != null) {
                     pending = continuation
-                    launchConsent(
-                        IntentSenderRequest.Builder(resolution.intentSender).build(),
-                    )
+                    launchConsent(IntentSenderRequest.Builder(resolution.intentSender).build())
                 } else {
                     rememberAccount(result)
                     val token = result.accessToken
@@ -53,13 +50,9 @@ class GoogleAuthorizer internal constructor(
                     }
                 }
             }
-            .addOnFailureListener {
-                continuation.resumeWithException(it)
-            }
+            .addOnFailureListener { continuation.resumeWithException(it) }
 
-        continuation.invokeOnCancellation {
-            pending = null
-        }
+        continuation.invokeOnCancellation { pending = null }
     }
 
     private fun rememberAccount(result: AuthorizationResult) {
@@ -90,12 +83,12 @@ class GoogleAuthorizer internal constructor(
     }
 
     companion object {
-        /** Πλήρης διαχείριση Drive: ανάγνωση, μετακίνηση και διαγραφή αρχείων. */
+        /**
+         * Πλήρης πρόσβαση Drive. Χρειάζεται για διαγραφή και μετακίνηση αρχείων
+         * που ανέβασε ο χρήστης εκτός της εφαρμογής.
+         */
         const val DRIVE = "https://www.googleapis.com/auth/drive"
-
-        /** Διατηρείται για συμβατότητα με παλιό κώδικα που αναφέρεται στο όνομα. */
         const val DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
-
         const val SPREADSHEETS = "https://www.googleapis.com/auth/spreadsheets"
         const val GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
         val EMAIL = Scopes.EMAIL
@@ -116,9 +109,7 @@ fun rememberGoogleAuthorizer(): GoogleAuthorizer {
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
-    ) { result ->
-        holder[0]?.onConsentResult(result)
-    }
+    ) { result -> holder[0]?.onConsentResult(result) }
 
     return remember(context) {
         GoogleAuthorizer(context) { request -> launcher.launch(request) }
