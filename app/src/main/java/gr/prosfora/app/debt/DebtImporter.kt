@@ -226,16 +226,24 @@ class DebtImporter(
             DebtParser.parse(text, fileName, driveFileId).isNotEmpty()
         }
 
-        // Μόνο όταν βρέθηκε ρητά διαφορετικό ΑΦΜ απορρίπτεται το αρχείο.
-        // Άγνωστο/χαμένο ΑΦΜ από OCR δεν αντιμετωπίζεται ως «άλλο ΑΦΜ».
+        // Η εισαγωγή επιτρέπεται ΜΟΝΟ όταν το ΑΦΜ επιβεβαιωθεί.
+        // Δεν αρκεί να είναι «γνωστό» έγγραφο ΑΑΔΕ: και τα εσωτερικά uploads
+        // και τα εξωτερικά αρχεία Drive πρέπει να περάσουν από τον ίδιο έλεγχο.
         val afmStatus = AadeInstallmentParser.afmStatus(result.text)
-        if (afmStatus == AadeInstallmentParser.AfmStatus.MISMATCH) {
+        if (afmStatus != AadeInstallmentParser.AfmStatus.MATCH) {
+            val note = when (afmStatus) {
+                AadeInstallmentParser.AfmStatus.MISMATCH ->
+                    "Απορρίφθηκε: το αρχείο δεν αφορά το ΑΦΜ 802576637."
+                AadeInstallmentParser.AfmStatus.UNKNOWN ->
+                    "Δεν κατέστη δυνατή η επιβεβαίωση ότι το αρχείο αφορά το ΑΦΜ 802576637."
+                AadeInstallmentParser.AfmStatus.MATCH -> ""
+            }
             return Found(
                 fileName = fileName,
                 driveFileId = driveFileId,
                 debts = emptyList(),
                 route = result.route,
-                note = "Απορρίφθηκε: το αρχείο δεν αφορά το ΑΦΜ 802576637",
+                note = note,
                 afmMismatch = true,
             )
         }
