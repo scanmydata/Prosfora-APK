@@ -145,7 +145,7 @@ private fun EmployeeDetailScreen(
     val scope = rememberCoroutineScope()
     val authorizer = rememberGoogleAuthorizer()
     val settings = remember { GoogleSettings(context) }
-    val sheets = remember { SheetsClient(authorizer.accessToken()) }
+    var sheetsClient by remember(employee.id) { mutableStateOf<SheetsClient?>(null) }
     val rows = remember(debts, employee.id) { debts.filter { it.kind.perPerson && EmployeeEntity.idFor(it.personName) == employee.id } }
     val years = remember(rows) { rows.map { it.periodYear }.filter { it > 0 }.distinct().sortedDescending().ifEmpty { listOf(java.time.LocalDate.now().year) } }
     var year by remember(years) { mutableStateOf(years.first()) }
@@ -159,10 +159,11 @@ private fun EmployeeDetailScreen(
     fun keyFor(targetYear: Int, month: Int) = "$targetYear-$month"
 
     suspend fun saveCostToSheet(targetYear: Int, month: Int, cost: Double, sourceFileId: String) {
+        val client = sheetsClient ?: return
         val spreadsheetId = settings.spreadsheetId ?: return
-        val existing = sheets.sheetTitles(spreadsheetId)
-        if (SheetSync.TAB_EMPLOYEE_COSTS !in existing) sheets.addSheet(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
-        val current = sheets.readRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
+        val existing = client.sheetTitles(spreadsheetId)
+        if (SheetSync.TAB_EMPLOYEE_COSTS !in existing) client.addSheet(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
+        val current = client.readRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
         val data = current.drop(1)
             .filter { it.firstOrNull()?.isNotBlank() == true }
             .map { row -> List(SheetSync.EMPLOYEE_COST_HEADER.size) { i -> row.getOrElse(i) { "" } } }
@@ -178,9 +179,11 @@ private fun EmployeeDetailScreen(
             sourceFileId,
             System.currentTimeMillis().toString(),
         )
-        val index = data.indexOfFirst { it[0] == employee.id && keyFor(it[2].toIntOrNull() ?: -1, it[3].toIntOrNull() ?: -1) == key }
+        val index = data.indexOfFirst {
+            it[0] == employee.id && keyFor(it[2].toIntOrNull() ?: -1, it[3].toIntOrNull() ?: -1) == key
+        }
         if (index >= 0) data[index] = replacement else data += replacement
-        sheets.replaceRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS, listOf(SheetSync.EMPLOYEE_COST_HEADER) + data)
+        client.replaceRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS, listOf(SheetSync.EMPLOYEE_COST_HEADER) + data)
     }
 
     suspend fun computeMonthIfNeeded(targetYear: Int, month: Int, monthRows: List<DebtEntity>) {
@@ -207,10 +210,17 @@ private fun EmployeeDetailScreen(
         costByMonth.clear()
         loadingMonths.clear()
         cacheLoaded = false
+        val client = runCatching { SheetsClient(authorizer.accessToken()) }.getOrNull()
+        sheetsClient = client
         val spreadsheetId = settings.spreadsheetId
-        if (spreadsheetId != null) {
+        if (client != null && spreadsheetId != null) {
             runCatching {
-                val current = sheets.readRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
+                val existing = client.sheetTitles(spreadsheetId)
+                if (SheetSync.TAB_EMPLOYEE_COSTS !in existing) {
+                    client.addSheet(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
+                    client.replaceRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS, listOf(SheetSync.EMPLOYEE_COST_HEADER))
+                }
+                val current = client.readRows(spreadsheetId, SheetSync.TAB_EMPLOYEE_COSTS)
                 current.drop(1).forEach { row ->
                     if (row.getOrElse(0) { "" } == employee.id) {
                         val y = row.getOrElse(2) { "" }.toIntOrNull() ?: return@forEach
