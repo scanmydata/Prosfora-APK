@@ -11,30 +11,30 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import gr.prosfora.app.google.ConnectLink
+import gr.prosfora.app.notify.DriveNotifier
 import gr.prosfora.app.ui.ConnectInviteDialog
 import gr.prosfora.app.ui.ProsforaNavHost
 import gr.prosfora.app.ui.ProsforaSplash
 import gr.prosfora.app.ui.theme.ProsforaTheme
 
 class MainActivity : ComponentActivity() {
-
-    /**
-     * Η πρόσκληση που άνοιξε την εφαρμογή. Ζει εδώ και όχι στο Compose, γιατί
-     * μπορεί να φτάσει και σε ήδη ανοιχτή εφαρμογή, μέσω [onNewIntent].
-     */
     private val invite = mutableStateOf<ConnectLink.Invite?>(null)
+    private val pendingDebtId = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        invite.value = ConnectLink.parse(intent?.data)
+        handleIntent(intent)
 
         setContent {
             ProsforaTheme {
                 var splashDone by remember { mutableStateOf(false) }
                 if (splashDone) {
-                    ProsforaNavHost()
+                    ProsforaNavHost(
+                        openDebtId = pendingDebtId.value,
+                        onDebtNavigationConsumed = { pendingDebtId.value = null },
+                    )
                     invite.value?.let { pending ->
                         ConnectInviteDialog(pending) { invite.value = null }
                     }
@@ -48,6 +48,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        ConnectLink.parse(intent.data)?.let { invite.value = it }
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        invite.value = ConnectLink.parse(intent?.data)
+        pendingDebtId.value = intent?.getStringExtra(DriveNotifier.EXTRA_OPEN_DEBT_ID)
+            ?.takeIf { it.isNotBlank() }
     }
 }
