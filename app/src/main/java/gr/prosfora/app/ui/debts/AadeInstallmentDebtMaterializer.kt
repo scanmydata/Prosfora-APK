@@ -17,9 +17,7 @@ fun materializeInstallmentDebt(
     }
     fun lastBusinessDay(year: Int, month: Int): LocalDate {
         var date = YearMonth.of(year, month).atEndOfMonth()
-        while (date.dayOfWeek == DayOfWeek.SATURDAY || date.dayOfWeek == DayOfWeek.SUNDAY) {
-            date = date.minusDays(1)
-        }
+        while (date.dayOfWeek == DayOfWeek.SATURDAY || date.dayOfWeek == DayOfWeek.SUNDAY) date = date.minusDays(1)
         return date
     }
     fun roundMoney(value: Double): Double = Math.round(value * 100.0) / 100.0
