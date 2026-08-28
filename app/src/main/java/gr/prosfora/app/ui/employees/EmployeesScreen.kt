@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -60,6 +61,7 @@ import gr.prosfora.app.util.asMoney
 import kotlinx.coroutines.launch
 
 private val BrandGreen = Color(0xFF00E2A2)
+private val DeleteRed = Color(0xFFD32F2F)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +72,11 @@ fun EmployeesScreen(onMenu: () -> Unit) {
     val debts by repository.observeAll().collectAsState(initial = emptyList())
     var query by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<EmployeeEntity?>(null) }
+    var deletingEmployee by remember { mutableStateOf<EmployeeEntity?>(null) }
+
+    LaunchedEffect(debts) {
+        repository.ensureEmployeesFromExistingDebts()
+    }
 
     if (selected != null) {
         EmployeeDetailScreen(selected!!, debts, context, repository) { selected = null }
@@ -123,7 +130,12 @@ fun EmployeesScreen(onMenu: () -> Unit) {
                                 Text(employee.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                                 Text("Κωδικός: ${employee.code.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Icon(Icons.Default.Edit, contentDescription = "Επεξεργασία", tint = BrandGreen)
+                            IconButton(onClick = { selected = employee }) {
+                                Icon(Icons.Default.Edit, contentDescription = "Επεξεργασία", tint = BrandGreen)
+                            }
+                            IconButton(onClick = { deletingEmployee = employee }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Διαγραφή από ευρετήριο", tint = DeleteRed)
+                            }
                         }
                         Text("Συνολικά πληρωτέα: ${rows.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                         Text("Άνοιγμα καρτέλας ανά μήνα / έτος →", style = MaterialTheme.typography.bodySmall, color = BrandGreen)
@@ -134,6 +146,31 @@ fun EmployeesScreen(onMenu: () -> Unit) {
                 item { Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant)) { Text("Δεν βρέθηκε εργαζόμενος.", modifier = Modifier.padding(16.dp)) } }
             }
         }
+    }
+
+    deletingEmployee?.let { employee ->
+        AlertDialog(
+            onDismissRequest = { deletingEmployee = null },
+            title = { Text("Διαγραφή εργαζομένου") },
+            text = {
+                Text(
+                    "Θα αφαιρεθεί ο «${employee.display}» από το ευρετήριο εργαζομένων. Οι υπάρχουσες μισθοδοσίες και το ιστορικό του δεν θα διαγραφούν.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val victim = employee
+                        deletingEmployee = null
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                            repository.deleteEmployee(victim.id)
+                            Toast.makeText(context, "Ο εργαζόμενος αφαιρέθηκε από το ευρετήριο.", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                ) { Text("Διαγραφή", color = DeleteRed) }
+            },
+            dismissButton = { TextButton(onClick = { deletingEmployee = null }) { Text("Άκυρο", color = BrandGreen) } },
+        )
     }
 }
 
