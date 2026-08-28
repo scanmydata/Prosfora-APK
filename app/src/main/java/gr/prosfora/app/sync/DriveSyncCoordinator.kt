@@ -22,19 +22,16 @@ object DriveSyncCoordinator {
         val drive = DriveClient(accessToken)
         val repository = DebtRepository(app)
         DebugLog.log("sync") { "έναρξη ενιαίου συγχρονισμού · sheet=$syncSheet · owner=${settings.ownerEmail.ifBlank { "άγνωστος" }}" }
-
         val sheetJob = if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) async {
             runCatching { SheetSync(app, SheetsClient(accessToken), settings).sync().summary }
                 .onFailure { DebugLog.log("sync", "Sheet sync απέτυχε: ${it.stackTraceToString()}") }.getOrNull()
         } else null
-
         val alreadyImported = repository.importedFileIds() + PendingDebtNotificationStore.fileIds(app)
         val deferInstallments = settings.notifyDriveChanges
         val savedIds = mutableSetOf<String>()
         val pendingFiles = mutableSetOf<String>()
         val notifiedFiles = mutableSetOf<String>()
         val savedDebts = mutableListOf<DebtEntity>()
-
         val report = runCatching {
             DebtImporter(drive, settings).scan(
                 alreadyImported = alreadyImported,
@@ -42,9 +39,11 @@ object DriveSyncCoordinator {
                 includePdfArchive = true,
                 onFound = { found ->
                     if (found.afmMismatch || found.debts.isEmpty()) return@scan
-                    runCatching { PayrollCostIndexer.index(app, accessToken, found) }
-                        .onFailure { DebugLog.log("payroll-cost", "Αποτυχία index κόστους ${found.fileName}: ${it.stackTraceToString()}") }
-
+                    try {
+                        PayrollCostIndexer.index(app, accessToken, found)
+                    } catch (e: Exception) {
+                        DebugLog.log("payroll-cost", "Αποτυχία index κόστους ${found.fileName}: ${e.stackTraceToString()}")
+                    }
                     val pending = deferInstallments && found.installmentPlan != null
                     if (pending) {
                         if (pendingFiles.add(found.driveFileId)) {
@@ -64,10 +63,8 @@ object DriveSyncCoordinator {
                 },
             )
         }.onFailure { DebugLog.log("sync", "Debt scan απέτυχε: ${it.stackTraceToString()}") }.getOrNull()
-
         val sheetSummary = sheetJob?.await()
         if (report == null) return@coroutineScope Result(sheetSummary = sheetSummary)
-
         report.found.forEach { found ->
             if (found.afmMismatch || found.debts.isEmpty()) return@forEach
             val pending = deferInstallments && found.installmentPlan != null
@@ -83,7 +80,6 @@ object DriveSyncCoordinator {
                 }
             }
         }
-
         DebugLog.log("sync", "τέλος · scanned=${report.scanned}, skipped=${report.skipped}, saved=${savedDebts.size}, pendingInstallments=${pendingFiles.size}, notifications=${notifiedFiles.size}")
         Result(sheetSummary, savedDebts.distinctBy { it.id }, report.unreadable.size)
     }
