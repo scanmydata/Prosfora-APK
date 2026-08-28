@@ -3,6 +3,7 @@ package gr.prosfora.app.ui.debts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -16,9 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.notify.PendingDebtNotificationStore
@@ -35,20 +35,24 @@ fun DebtNotificationFocusDialog(
     val context = LocalContext.current
     val repository = remember { DebtRepository(context) }
     val debts by remember(repository) { repository.observeAll() }.collectAsState(initial = emptyList())
-    val pending = if (pendingInstallments) PendingDebtNotificationStore.peek(context) else null
     val debt: DebtEntity? = debtId?.let { id -> debts.firstOrNull { it.id == id } }
     val scope = rememberCoroutineScope()
-    var installmentsSelected by remember(pending?.driveFileId) { mutableStateOf(false) }
+    var pendingFound by remember(pendingInstallments) {
+        mutableStateOf(if (pendingInstallments) PendingDebtNotificationStore.peek(context) else null)
+    }
+    var installmentsSelected by remember(pendingFound?.driveFileId) { mutableStateOf(false) }
 
-    if (pendingInstallments && pending != null && pending.installmentPlan != null) {
-        val plan = pending.installmentPlan
+    if (pendingInstallments) {
+        val found = pendingFound ?: return
+        val plan = found.installmentPlan ?: return
+
         AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("Οφειλή σε δόσεις") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "Το «${pending.fileName}» περιέχει πλάνο δόσεων. Επίλεξε πώς θέλεις να αποθηκευτεί.",
+                        "Το «${found.fileName}» περιέχει πλάνο δόσεων. Επίλεξε πώς θέλεις να αποθηκευτεί.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
@@ -80,13 +84,15 @@ fun DebtNotificationFocusDialog(
             confirmButton = {
                 TextButton(onClick = {
                     val mode = if (installmentsSelected) "INSTALLMENTS" else "TOTAL"
-                    val materialized = pending.debts.flatMap { debt ->
+                    val materialized = found.debts.flatMap { debt ->
                         materializeInstallmentDebt(debt, plan, mode)
                     }
                     scope.launch {
                         repository.saveAll(materialized)
                         PendingDebtNotificationStore.consumeFirst(context)
-                        onDismiss()
+                        val next = PendingDebtNotificationStore.peek(context)
+                        pendingFound = next
+                        if (next == null) onDismiss()
                     }
                 }) {
                     Text("Αποθήκευση")
