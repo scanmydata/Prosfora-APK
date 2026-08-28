@@ -23,10 +23,7 @@ class DebtRepository(context: Context) {
 
     /**
      * Σβήνει έναν εργαζόμενο από το ευρετήριο.
-     *
-     * Οι οφειλές του **μένουν**: είναι πληρωμές που έγιναν, και το ιστορικό δεν
-     * ξαναγράφεται επειδή κάποιος έφυγε. Χάνεται μόνο το ψευδώνυμό του, οπότε
-     * οι παλιές γραμμές ξαναδείχνουν το τυπωμένο όνομα.
+     * Οι οφειλές του μένουν ώστε να διατηρείται το ιστορικό μισθοδοσίας.
      */
     suspend fun deleteEmployee(id: String) =
         employees.softDelete(id, System.currentTimeMillis())
@@ -38,11 +35,6 @@ class DebtRepository(context: Context) {
         ),
     )
 
-    /**
-     * Αποθηκεύει ό,τι διάβασε η σάρωση. Ό,τι υπάρχει ήδη κρατάει την κατάσταση
-     * πληρωμής του: ένα παραστατικό που ξαναδιαβάστηκε δεν σημαίνει ότι η
-     * οφειλή ξαναγεννήθηκε απλήρωτη.
-     */
     suspend fun saveAll(items: List<DebtEntity>) {
         val now = System.currentTimeMillis()
         val merged = items.map { incoming ->
@@ -65,11 +57,14 @@ class DebtRepository(context: Context) {
     }
 
     /**
-     * Καταχωρεί στο ευρετήριο όποιον εργαζόμενο πρωτοεμφανίζεται.
-     *
-     * Μόνο όσους λείπουν: αν ο χρήστης έχει βάλει ψευδώνυμο, μια νέα μισθοδοσία
-     * δεν πρέπει να το σβήσει.
+     * Συμπληρώνει το ευρετήριο από τις ήδη αποθηκευμένες μισθοδοτικές οφειλές.
+     * Χρειάζεται για συσκευές που είχαν εισάγει μισθοδοσία πριν δημιουργηθεί
+     * το ευρετήριο εργαζομένων.
      */
+    suspend fun ensureEmployeesFromExistingDebts() {
+        rememberPeople(debts.allForSync())
+    }
+
     private suspend fun rememberPeople(items: List<DebtEntity>) {
         val people = items
             .filter { it.personName.isNotBlank() }
@@ -99,18 +94,11 @@ class DebtRepository(context: Context) {
 
     suspend fun delete(id: String) = debts.softDelete(id, System.currentTimeMillis())
 
-    /** Μαζική διαγραφή — για ό,τι διάλεξε ο χρήστης στη λίστα. */
     suspend fun delete(ids: Collection<String>) {
         val now = System.currentTimeMillis()
         ids.forEach { debts.softDelete(it, now) }
     }
 
-    /**
-     * Σβήνει ό,τι ήρθε από ένα συγκεκριμένο αρχείο.
-     *
-     * Ο δρόμος επιστροφής όταν εισαχθεί λάθος παραστατικό: μια μισθοδοσία
-     * φτιάχνει δέκα γραμμές, και το να σβήνονται μία-μία είναι τιμωρία.
-     */
     suspend fun deleteFromFile(fileName: String, driveFileId: String): Int {
         val now = System.currentTimeMillis()
         val victims = debts.allForSync().filter {
@@ -123,6 +111,5 @@ class DebtRepository(context: Context) {
         return victims.size
     }
 
-    /** Ποια αρχεία του Drive έχουν ήδη διαβαστεί — η σάρωση τα προσπερνάει. */
     suspend fun importedFileIds(): Set<String> = debts.importedFileIds().toSet()
 }
