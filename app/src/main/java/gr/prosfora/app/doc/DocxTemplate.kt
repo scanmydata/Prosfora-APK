@@ -66,6 +66,7 @@ object DocxTemplate {
         result = repeatParagraph(result, PAYMENT_LINE, details.paymentLines)
         result = applyConditional(result, SCAFFOLDING_ONLY, details.scaffoldingCost > 0.0)
         result = applyConditional(result, PERMIT_ONLY, details.permitCost > 0.0)
+        result = normalizeTotalsLayout(result, details)
         result = applyConditional(result, VAT_ONLY, details.offer.vatIncluded)
         return fillSimpleFields(result, details)
     }
@@ -152,7 +153,7 @@ object DocxTemplate {
         return xml.substring(0, open) + expanded + xml.substring(close)
     }
 
-    private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {
+\n    /** Προσαρμόζει τον πίνακα τιμών χωρίς να καταστρέφει τη μορφοποίηση του template. */\n    private fun normalizeTotalsLayout(xml: String, details: OfferWithDetails): String {\n        val baseMarker = listOf(\n            "&lt;&lt;[Καθαρή Αξία]&gt;&gt;",\n            "&lt;&lt;[Σύνολο]&gt;&gt;",\n        ).mapNotNull { marker -> xml.indexOf(marker).takeIf { it >= 0 } }.minOrNull() ?: return xml\n\n        val (baseOpen, baseClose) = enclosingTag(xml, baseMarker, "w:tr")\n        var baseRow = xml.substring(baseOpen, baseClose)\n        baseRow = baseRow.replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο]&gt;&gt;")\n        baseRow = baseRow.replaceFirst("ΚΑΘΑΡΗ ΑΞΙΑ</w:t>", "ΣΥΝΟΛΟ</w:t>")\n        baseRow = baseRow.replaceFirst("Καθαρή Αξία</w:t>", "Σύνολο</w:t>")\n        var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)\n\n        fun cloneRow(label: String, marker: String): String {\n            var copy = baseRow\n            copy = copy.replace("&lt;&lt;[Σύνολο]&gt;&gt;", "&lt;&lt;[$marker]&gt;&gt;")\n            copy = copy.replaceFirst("ΣΥΝΟΛΟ</w:t>", "$label</w:t>")\n            copy = copy.replaceFirst("Σύνολο</w:t>", "$label</w:t>")\n            return copy\n        }\n\n        val extra = details.scaffoldingCost + details.permitCost\n        val hasSpecificExtra = result.contains("&lt;&lt;[Σκαλωσιά]&gt;&gt;") ||\n            result.contains("&lt;&lt;[Άδεια]&gt;&gt;") ||\n            result.contains("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;")\n        val additions = buildString {\n            if (extra > 0.0 && !hasSpecificExtra) {\n                append(cloneRow("ΠΡΟΣΘΕΤΟ ΚΟΣΤΟΣ", "Πρόσθετο Κόστος"))\n            }\n            if (details.offer.vatIncluded && !result.contains("&lt;&lt;[ΦΠΑ]&gt;&gt;")) {\n                append(cloneRow("ΦΠΑ", "ΦΠΑ"))\n            }\n        }\n\n        val grandMarkers = listOf("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;")\n        val grandMarker = grandMarkers.mapNotNull { m -> result.indexOf(m).takeIf { it >= 0 } }.minOrNull()\n        if (additions.isNotEmpty() && grandMarker != null) {\n            val (grandOpen, _) = enclosingTag(result, grandMarker, "w:tr")\n            result = result.substring(0, grandOpen) + additions + result.substring(grandOpen)\n        }\n\n        val currentGrandMarker = grandMarkers.mapNotNull { m -> result.indexOf(m).takeIf { it >= 0 } }.minOrNull()\n        if (currentGrandMarker != null) {\n            val (grandOpen, grandClose) = enclosingTag(result, currentGrandMarker, "w:tr")\n            var grandRow = result.substring(grandOpen, grandClose)\n            grandRow = grandRow.replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΓΕΝΙΚΟ ΣΥΝΟΛΟ</w:t>")\n            result = result.substring(0, grandOpen) + grandRow + result.substring(grandClose)\n        }\n        return result\n    }\n\n    private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {
         val offer = details.offer
         // Το «γενικό σύνολο» είναι ό,τι πληρώνει ο πελάτης: με ΦΠΑ όταν υπάρχει
         val total = details.grandTotal.asMoney()
@@ -168,7 +169,9 @@ object DocxTemplate {
                 "&lt;&lt;[Ισχύει έως]&gt;&gt;",
                 escape(offer.validUntilDay?.asOfferDate() ?: "—"),
             )
-            .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", escape(details.total.asMoney()))
+            .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", escape(details.linesTotal.asMoney()))
+            .replace("&lt;&lt;[Σύνολο]&gt;&gt;", escape(details.linesTotal.asMoney()))
+            .replace("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;", escape((details.scaffoldingCost + details.permitCost).asMoney()))
             .replace("&lt;&lt;[Σκαλωσιά]&gt;&gt;", escape(details.scaffoldingCost.asMoney()))
             .replace("&lt;&lt;[Άδεια]&gt;&gt;", escape(details.permitCost.asMoney()))
             .replace("&lt;&lt;[ΦΠΑ]&gt;&gt;", escape(details.vatAmount.asMoney()))

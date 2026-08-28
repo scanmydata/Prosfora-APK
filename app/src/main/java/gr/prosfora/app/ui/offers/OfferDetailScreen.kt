@@ -579,6 +579,9 @@ private fun ExtraCost(
     onEnabled: (Boolean) -> Unit,
     onAmount: (Double) -> Unit,
 ) {
+    var amountText by remember(label, enabled) {
+        mutableStateOf(if (amount > 0.0) amount.toString().removeSuffix(".0") else "")
+    }
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = enabled, onCheckedChange = onEnabled)
@@ -592,8 +595,11 @@ private fun ExtraCost(
         // μακρύ τίτλο, δίπλα στο checkbox δεν του μένει πλάτος
         if (enabled) {
             StableTextField(
-                value = if (amount > 0.0) amount.asNumber() else "",
-                onValueChange = { onAmount(it.parseDecimal() ?: 0.0) },
+                value = amountText,
+                onValueChange = { text ->
+                        amountText = text
+                        onAmount(text.parseDecimal() ?: 0.0)
+                    },
                 label = "Ποσό (€)",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth().padding(start = 48.dp, bottom = 4.dp),

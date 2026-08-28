@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -116,6 +117,9 @@ fun DebtsScreen(onMenu: () -> Unit) {
     var onlyUnpaid by remember { mutableStateOf(true) }
     var editing by remember { mutableStateOf<DebtEntity?>(null) }
     var pending by remember { mutableStateOf<DebtImporter.Report?>(null) }
+    var afmRejected by remember { mutableStateOf<DebtImporter.Found?>(null) }
+    var afmRejectedQueue by remember { mutableStateOf(emptyList<DebtImporter.Found>()) }
+    var pendingAfterAfm by remember { mutableStateOf<DebtImporter.Report?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var showPeople by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
@@ -128,6 +132,21 @@ fun DebtsScreen(onMenu: () -> Unit) {
     var year by remember(years) { mutableStateOf(years.first()) }
 
     fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+
+    fun advanceAfmReview() {
+        val remaining = afmRejectedQueue.drop(1)
+        afmRejectedQueue = remaining
+        if (remaining.isNotEmpty()) {
+            afmRejected = remaining.first()
+        } else {
+            val report = pendingAfterAfm
+            pendingAfterAfm = null
+            afmRejected = null
+            if (report != null) {
+                if (report.debts.isEmpty()) toast(report.summary) else pending = report
+            }
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -146,7 +165,13 @@ fun DebtsScreen(onMenu: () -> Unit) {
             }
             busy = null
             result.onSuccess { found ->
-                pending = DebtImporter.Report(scanned = 1, skipped = 0, found = listOf(found))
+                if (found.afmMismatch) {
+                    afmRejectedQueue = listOf(found)
+                    afmRejected = found
+                    pendingAfterAfm = null
+                } else {
+                    pending = DebtImporter.Report(scanned = 1, skipped = 0, found = listOf(found))
+                }
             }.onFailure { toast("Δεν έγινε η εισαγωγή: ${it.reason()}") }
         }
     }
@@ -162,7 +187,17 @@ fun DebtsScreen(onMenu: () -> Unit) {
             busy = null
             DriveWatch.acknowledge(context, DriveWatch.Area.DEBTS)
             result.onSuccess { report ->
-                if (report.debts.isEmpty()) toast(report.summary) else pending = report
+                val mismatches = report.found.filter { it.afmMismatch }
+                val valid = report.found.filterNot { it.afmMismatch }
+                if (mismatches.isNotEmpty()) {
+                    afmRejectedQueue = mismatches
+                    afmRejected = mismatches.first()
+                    pendingAfterAfm = report.copy(found = valid)
+                } else if (report.debts.isEmpty()) {
+                    toast(report.summary)
+                } else {
+                    pending = report
+                }
             }.onFailure { toast("Η σάρωση απέτυχε: ${it.reason()}") }
         }
     }
@@ -420,6 +455,35 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 }
             },
             onCopy = { copyToClipboard(context, it, debt.title) },
+        )
+    }
+
+
+    afmRejected?.let { found ->
+        AlertDialog(
+            onDismissRequest = { advanceAfmReview() },
+            title = { Text("Το αρχείο αφορά άλλο ΑΦΜ") },
+            text = {
+                Text(
+                    "Το «${found.fileName}» δεν αφορά το ΑΦΜ 802576637. " +
+                        "Θέλεις να διαγραφεί από το Google Drive;",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val fileId = found.driveFileId
+                    val fileName = found.fileName
+                    scope.launch {
+                        runCatching { DriveClient(authorizer.accessToken()).delete(fileId) }
+                            .onSuccess { toast("Το «$fileName» διαγράφηκε από το Drive.") }
+                            .onFailure { toast("Δεν ήταν δυνατή η διαγραφή από το Drive: ${it.reason()}") }
+                        advanceAfmReview()
+                    }
+                }) { Text("Διαγραφή από Drive", color = DeleteRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = { advanceAfmReview() }) { Text("Να παραμείνει") }
+            },
         )
     }
 

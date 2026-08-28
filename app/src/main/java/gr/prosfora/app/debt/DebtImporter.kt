@@ -50,6 +50,7 @@ class DebtImporter(
         val route: DocumentText.Route = DocumentText.Route.NONE,
         val note: String = "",
         val installmentPlan: AadeInstallmentParser.Info? = null,
+        val afmMismatch: Boolean = false,
     ) {
         val recognised: Boolean
             get() = debts.isNotEmpty()
@@ -225,16 +226,18 @@ class DebtImporter(
             DebtParser.parse(text, fileName, driveFileId).isNotEmpty()
         }
 
-        // Η ΑΑΔΕ είναι το μόνο κλαδί όπου ο λάθος ΑΦΜ πρέπει να μπλοκάρει
-        // ολόκληρη την εισαγωγή πριν δοθεί ευκαιρία στο LLM να μαντέψει.
+        // Μόνο όταν βρέθηκε ρητά διαφορετικό ΑΦΜ απορρίπτεται το αρχείο.
+        // Άγνωστο/χαμένο ΑΦΜ από OCR δεν αντιμετωπίζεται ως «άλλο ΑΦΜ».
+        val afmStatus = AadeInstallmentParser.afmStatus(result.text)
         if (AadeInstallmentParser.isAadeDocument(result.text) &&
-            !AadeInstallmentParser.afmMatches(result.text)) {
+            afmStatus == AadeInstallmentParser.AfmStatus.MISMATCH) {
             return Found(
                 fileName = fileName,
                 driveFileId = driveFileId,
                 debts = emptyList(),
                 route = result.route,
                 note = "Απορρίφθηκε: το αρχείο δεν αφορά το ΑΦΜ 802576637",
+                afmMismatch = true,
             )
         }
 
@@ -244,22 +247,36 @@ class DebtImporter(
             driveFileId,
         )
         val installmentPlan = AadeInstallmentParser.parse(result.text)
+        val rulesForImport = if (installmentPlan != null) {
+            byRules.map {
+                it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay)
+            }
+        } else {
+            byRules
+        }
         val model = llm
 
         if (byRules.isNotEmpty() || result.text.isBlank() || model == null) {
             return Found(
                 fileName = fileName,
                 driveFileId = driveFileId,
-                debts = byRules,
+                debts = rulesForImport,
                 route = result.route,
                 note = result.note,
                 installmentPlan = installmentPlan,
             )
         }
 
-        val byModel = runCatching {
+        val extractedByModel = runCatching {
             model.extract(result.text, fileName, driveFileId)
         }.getOrDefault(emptyList())
+        val byModel = if (installmentPlan != null) {
+            extractedByModel.map {
+                it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay)
+            }
+        } else {
+            extractedByModel
+        }
 
         return Found(
             fileName = fileName,

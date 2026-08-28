@@ -20,6 +20,8 @@ object AadeInstallmentParser {
         val firstDueDay: Long,
     )
 
+    enum class AfmStatus { MATCH, MISMATCH, UNKNOWN }
+
     fun isAadeDocument(text: String): Boolean {
         val n = normalize(text)
         return n.contains("ΤΑΥΤΟΤΗΤΑ ΟΦΕΙΛΗΣ") ||
@@ -28,31 +30,33 @@ object AadeInstallmentParser {
             n.contains("ΠΟΣΟ ΔΟΣΗΣ ΔΗΛΩΣΗΣ")
     }
 
-    /**
-     * Ελέγχει το ΑΦΜ χωρίς να απαιτεί συγκεκριμένη μορφοποίηση του OCR.
-     * Αν υπάρχει η ετικέτα ΑΦΜ/Αριθμός Φορολογικού Μητρώου, απαιτείται το σωστό ΑΦΜ.
-     * Ως εφεδρεία αναγνωρίζει και το 802576637 με κενά ανάμεσα στα ψηφία.
-     */
-    fun afmMatches(text: String): Boolean {
+    /** Επιστρέφει αν το έγγραφο αφορά το αναμενόμενο ΑΦΜ ή άλλο ΑΦΜ. */
+    fun afmStatus(text: String): AfmStatus {
         val n = normalize(text)
         val compactExpected = EXPECTED_AFM.toCharArray().joinToString("\\s*")
-        if (Regex("(?<!\\d)$compactExpected(?!\\d)").containsMatchIn(n)) return true
+        if (Regex("(?<!\\d)$compactExpected(?!\\d)").containsMatchIn(n)) return AfmStatus.MATCH
 
         val labelled = listOf(
-            Regex("\\bΑΦΜ\\b[\\s:.-]{0,40}([0-9][0-9\\s.-]{8,30})"),
-            Regex("ΑΡΙΘΜΟΣ\\s+ΦΟΡΟΛΟΓΙΚΟΥ\\s+ΜΗΤΡΩΟΥ[\\s:.-]{0,40}([0-9][0-9\\s.-]{8,30})"),
+            Regex("\\bΑΦΜ\\b[\\s:.-]{0,40}((?:[0-9][\\s.-]*){9,12})"),
+            Regex("ΑΡΙΘΜΟΣ\\s+ΦΟΡΟΛΟΓΙΚΟΥ\\s+ΜΗΤΡΩΟΥ[\\s:.-]{0,40}((?:[0-9][\\s.-]*){9,12})"),
         )
         val values = labelled.flatMap { regex ->
             regex.findAll(n).mapNotNull { match ->
-                match.groupValues[1].filter(Char::isDigit).takeIf { it.length in 9..12 }
+                match.groupValues[1].filter(Char::isDigit).takeIf { it.length == 9 }
             }.toList()
         }
-        return EXPECTED_AFM in values
+        return when {
+            EXPECTED_AFM in values -> AfmStatus.MATCH
+            values.isNotEmpty() -> AfmStatus.MISMATCH
+            else -> AfmStatus.UNKNOWN
+        }
     }
+
+    fun afmMatches(text: String): Boolean = afmStatus(text) == AfmStatus.MATCH
 
     /** Αναγνωρίζει συνολικό ποσό, ποσό δόσης και την ημερομηνία της πρώτης δόσης. */
     fun parse(text: String): Info? {
-        if (!isAadeDocument(text) || !afmMatches(text)) return null
+        if (!isAadeDocument(text) || afmStatus(text) == AfmStatus.MISMATCH) return null
         val n = normalize(text)
 
         val total = findAmountAfterLabel(
