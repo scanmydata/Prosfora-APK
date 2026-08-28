@@ -107,7 +107,6 @@ object DocxTemplate {
             SPACES_START.replace(rowTemplate, "")
                 .replace(LOOP_END, "")
                 .replace("&lt;&lt;[Περιγραφή Χώρου]&gt;&gt;", escape(space.description))
-                // Το πρότυπο γράφει την Επιφάνεια χωρίς αγκύλες — δεχόμαστε και τις δύο γραφές
                 .replace("&lt;&lt;[Επιφάνεια (τ.μ.)]&gt;&gt;", escape(space.area.asNumber()))
                 .replace("&lt;&lt;Επιφάνεια (τ.μ.)&gt;&gt;", escape(space.area.asNumber()))
                 .replace("&lt;&lt;[Τιμή Μονάδος]&gt;&gt;", escape(space.unitPrice.asMoney()))
@@ -116,10 +115,7 @@ object DocxTemplate {
         return xml.substring(0, rowStart) + rows + xml.substring(rowEnd)
     }
 
-    /**
-     * Οι τρεις παράγραφοι `<<Start:SELECT(…)>>` / `• <<[Κείμενο]>>` / `<<End>>`
-     * αντικαθίστανται από μία παράγραφο ανά σημείωση.
-     */
+    /** Οι παράγραφοι Start/σώμα/End των σημειώσεων γίνονται μία παράγραφος ανά σημείωση. */
     private fun expandNoteBullets(xml: String, details: OfferWithDetails): String {
         val match = NOTES_START.find(xml) ?: return xml
         val (startOpen, startClose) = enclosingTag(xml, match.range.first, "w:p")
@@ -136,14 +132,7 @@ object DocxTemplate {
         return xml.substring(0, startOpen) + bullets + xml.substring(endClose)
     }
 
-    /**
-     * Η παράγραφος που περιέχει το [marker] επαναλαμβάνεται μία φορά ανά γραμμή.
-     *
-     * Αντικαθιστά τη ροή Start/σώμα/End: στο πρότυπο μένει μία μόνο γραμμή, ενώ
-     * η μορφοποίησή της (κουκκίδα, στοίχιση, γραμματοσειρά) αντιγράφεται
-     * αυτούσια σε κάθε επανάληψη. Χωρίς γραμμές, η παράγραφος φεύγει εντελώς
-     * αντί να μείνει κενή και να τρώει χώρο στη σελίδα.
-     */
+    /** Επαναλαμβάνει την παράγραφο του marker μία φορά ανά γραμμή. */
     private fun repeatParagraph(xml: String, marker: String, lines: List<String>): String {
         val at = xml.indexOf(marker)
         if (at < 0) return xml
@@ -153,18 +142,84 @@ object DocxTemplate {
         return xml.substring(0, open) + expanded + xml.substring(close)
     }
 
-\n    /** Προσαρμόζει τον πίνακα τιμών χωρίς να καταστρέφει τη μορφοποίηση του template. */\n    private fun normalizeTotalsLayout(xml: String, details: OfferWithDetails): String {\n        val baseMarker = listOf(\n            "&lt;&lt;[Καθαρή Αξία]&gt;&gt;",\n            "&lt;&lt;[Σύνολο]&gt;&gt;",\n        ).mapNotNull { marker -> xml.indexOf(marker).takeIf { it >= 0 } }.minOrNull() ?: return xml\n\n        val (baseOpen, baseClose) = enclosingTag(xml, baseMarker, "w:tr")\n        var baseRow = xml.substring(baseOpen, baseClose)\n        baseRow = baseRow.replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο]&gt;&gt;")\n        baseRow = baseRow.replaceFirst("ΚΑΘΑΡΗ ΑΞΙΑ</w:t>", "ΣΥΝΟΛΟ</w:t>")\n        baseRow = baseRow.replaceFirst("Καθαρή Αξία</w:t>", "Σύνολο</w:t>")\n        var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)\n\n        fun cloneRow(label: String, marker: String): String {\n            var copy = baseRow\n            copy = copy.replace("&lt;&lt;[Σύνολο]&gt;&gt;", "&lt;&lt;[$marker]&gt;&gt;")\n            copy = copy.replaceFirst("ΣΥΝΟΛΟ</w:t>", "$label</w:t>")\n            copy = copy.replaceFirst("Σύνολο</w:t>", "$label</w:t>")\n            return copy\n        }\n\n        val extra = details.scaffoldingCost + details.permitCost\n        val hasSpecificExtra = result.contains("&lt;&lt;[Σκαλωσιά]&gt;&gt;") ||\n            result.contains("&lt;&lt;[Άδεια]&gt;&gt;") ||\n            result.contains("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;")\n        val additions = buildString {\n            if (extra > 0.0 && !hasSpecificExtra) {\n                append(cloneRow("ΠΡΟΣΘΕΤΟ ΚΟΣΤΟΣ", "Πρόσθετο Κόστος"))\n            }\n            if (details.offer.vatIncluded && !result.contains("&lt;&lt;[ΦΠΑ]&gt;&gt;")) {\n                append(cloneRow("ΦΠΑ", "ΦΠΑ"))\n            }\n        }\n\n        val grandMarkers = listOf("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;")\n        val grandMarker = grandMarkers.mapNotNull { m -> result.indexOf(m).takeIf { it >= 0 } }.minOrNull()\n        if (additions.isNotEmpty() && grandMarker != null) {\n            val (grandOpen, _) = enclosingTag(result, grandMarker, "w:tr")\n            result = result.substring(0, grandOpen) + additions + result.substring(grandOpen)\n        }\n\n        val currentGrandMarker = grandMarkers.mapNotNull { m -> result.indexOf(m).takeIf { it >= 0 } }.minOrNull()\n        if (currentGrandMarker != null) {\n            val (grandOpen, grandClose) = enclosingTag(result, currentGrandMarker, "w:tr")\n            var grandRow = result.substring(grandOpen, grandClose)\n            grandRow = grandRow.replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΓΕΝΙΚΟ ΣΥΝΟΛΟ</w:t>")\n            result = result.substring(0, grandOpen) + grandRow + result.substring(grandClose)\n        }\n        return result\n    }\n\n    private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {
+    /**
+     * Προσαρμόζει τη σύνοψη κόστους του template χωρίς να αλλοιώνει τη μορφοποίηση.
+     * Η γραμμή της καθαρής αξίας γίνεται ΣΥΝΟΛΟ και, όταν υπάρχουν, παρεμβάλλονται
+     * οι πρόσθετες χρεώσεις και ο ΦΠΑ πριν από το ΓΕΝΙΚΟ ΣΥΝΟΛΟ.
+     */
+    private fun normalizeTotalsLayout(xml: String, details: OfferWithDetails): String {
+        val baseMarker = listOf(
+            "&lt;&lt;[Καθαρή Αξία]&gt;&gt;",
+            "&lt;&lt;[Σύνολο]&gt;&gt;",
+        ).mapNotNull { marker ->
+            xml.indexOf(marker).takeIf { it >= 0 }
+        }.minOrNull() ?: return xml
+
+        val (baseOpen, baseClose) = enclosingTag(xml, baseMarker, "w:tr")
+        var baseRow = xml.substring(baseOpen, baseClose)
+        baseRow = baseRow
+            .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο]&gt;&gt;")
+            .replaceFirst("ΚΑΘΑΡΗ ΑΞΙΑ</w:t>", "ΣΥΝΟΛΟ</w:t>")
+            .replaceFirst("Καθαρή Αξία</w:t>", "Σύνολο</w:t>")
+
+        var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)
+
+        fun cloneRow(label: String, marker: String): String {
+            return baseRow
+                .replace("&lt;&lt;[Σύνολο]&gt;&gt;", "&lt;&lt;[$marker]&gt;&gt;")
+                .replaceFirst("ΣΥΝΟΛΟ</w:t>", "$label</w:t>")
+                .replaceFirst("Σύνολο</w:t>", "$label</w:t>")
+        }
+
+        val extra = details.scaffoldingCost + details.permitCost
+        val hasSpecificExtra = result.contains("&lt;&lt;[Σκαλωσιά]&gt;&gt;") ||
+            result.contains("&lt;&lt;[Άδεια]&gt;&gt;") ||
+            result.contains("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;")
+
+        val additions = buildString {
+            if (extra > 0.0 && !hasSpecificExtra) {
+                append(cloneRow("ΠΡΟΣΘΕΤΟ ΚΟΣΤΟΣ", "Πρόσθετο Κόστος"))
+            }
+            if (details.offer.vatIncluded && !result.contains("&lt;&lt;[ΦΠΑ]&gt;&gt;")) {
+                append(cloneRow("ΦΠΑ", "ΦΠΑ"))
+            }
+        }
+
+        val grandMarkers = listOf(
+            "&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;",
+            "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;",
+        )
+        val grandMarker = grandMarkers.mapNotNull { marker ->
+            result.indexOf(marker).takeIf { it >= 0 }
+        }.minOrNull()
+
+        if (additions.isNotEmpty() && grandMarker != null) {
+            val (grandOpen, _) = enclosingTag(result, grandMarker, "w:tr")
+            result = result.substring(0, grandOpen) + additions + result.substring(grandOpen)
+        }
+
+        val currentGrandMarker = grandMarkers.mapNotNull { marker ->
+            result.indexOf(marker).takeIf { it >= 0 }
+        }.minOrNull()
+
+        if (currentGrandMarker != null) {
+            val (grandOpen, grandClose) = enclosingTag(result, currentGrandMarker, "w:tr")
+            val grandRow = result.substring(grandOpen, grandClose)
+                .replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΓΕΝΙΚΟ ΣΥΝΟΛΟ</w:t>")
+                .replaceFirst("Σύνολο</w:t>", "Γενικό Σύνολο</w:t>")
+            result = result.substring(0, grandOpen) + grandRow + result.substring(grandClose)
+        }
+
+        return result
+    }
+
+    private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {
         val offer = details.offer
-        // Το «γενικό σύνολο» είναι ό,τι πληρώνει ο πελάτης: με ΦΠΑ όταν υπάρχει
         val total = details.grandTotal.asMoney()
         return xml
-            // Το «Χρωματισμός» φεύγει: ο τίτλος του εγγράφου λέει ήδη
-            // «ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ ΓΙΑ …»
             .replace("&lt;&lt;[Είδος]&gt;&gt;", escape(offer.kind.strippedKind()))
             .replace("&lt;&lt;[Οδός / Περιοχή]&gt;&gt;", escape(offer.address.upperGreek()))
             .replace("&lt;&lt;[Ημερομηνία]&gt;&gt;", escape(offer.dateEpochDay.asOfferDate()))
-            // Χωρίς ημερομηνία λήξης η φράση «ισχύει έως …» δεν έχει νόημα, οπότε
-            // μπαίνει παύλα αντί για κενό που θα έμοιαζε με λάθος του προτύπου.
             .replace(
                 "&lt;&lt;[Ισχύει έως]&gt;&gt;",
                 escape(offer.validUntilDay?.asOfferDate() ?: "—"),
@@ -188,11 +243,7 @@ object DocxTemplate {
         return open to close + tag.length + 3
     }
 
-    /**
-     * Τα όρια του **επόμενου** `<tag>` μετά τη θέση [index].
-     * Ξεχωριστό από το [enclosingTag]: ψάχνοντας προς τα πίσω από θέση που είναι
-     * ήδη μετά το κλείσιμο μιας παραγράφου, θα ξαναβρίσκαμε την ίδια παράγραφο.
-     */
+    /** Τα όρια του επόμενου `<tag>` μετά τη θέση [index]. */
     private fun nextTag(xml: String, index: Int, tag: String): Pair<Int, Int>? {
         val open = Regex("<$tag[ >]").find(xml, index)?.range?.first ?: return null
         val close = xml.indexOf("</$tag>", open)
@@ -208,13 +259,6 @@ object DocxTemplate {
 
     // ------------------------------------------------ επεξεργασία κειμένου ---
 
-    /**
-     * Μία επεξεργάσιμη παράγραφος του προτύπου.
-     *
-     * [hasPlaceholder] σημαίνει ότι το κείμενο περιέχει πεδίο ή δείκτη
-     * επανάληψης: τέτοιες παραγράφους μπορεί να τις αλλάξει ο χρήστης, αλλά αν
-     * σβήσει τα `<<…>>` το PDF θα βγει με κενά, οπότε προειδοποιείται.
-     */
     data class Paragraph(
         val index: Int,
         val text: String,
@@ -224,7 +268,6 @@ object DocxTemplate {
     private val PARAGRAPH = Regex("<w:p[ >].*?</w:p>", RegexOption.DOT_MATCHES_ALL)
     private val TEXT_RUN = Regex("(<w:t[^>]*>)([^<]*)(</w:t>)")
 
-    /** Το κείμενο κάθε μη κενής παραγράφου, με τη σειρά που εμφανίζεται. */
     fun extractParagraphs(templateDocx: ByteArray): List<Paragraph> {
         val xml = documentXml(templateDocx)
         var index = -1
@@ -242,13 +285,6 @@ object DocxTemplate {
         }.toList()
     }
 
-    /**
-     * Γράφει πίσω τα αλλαγμένα κείμενα.
-     *
-     * Όλο το κείμενο μπαίνει στο **πρώτο** run της παραγράφου και τα υπόλοιπα
-     * αδειάζουν· έτσι διατηρείται η μορφοποίηση του πρώτου run και δεν χάνονται
-     * εικόνες ή πίνακες, που ζουν εκτός `<w:t>`.
-     */
     fun applyParagraphEdits(templateDocx: ByteArray, edits: Map<Int, String>): ByteArray {
         if (edits.isEmpty()) return templateDocx
         val entries = readZip(templateDocx)
@@ -268,7 +304,6 @@ object DocxTemplate {
                 val close = run.groupValues[3]
                 if (first) {
                     first = false
-                    // Το xml:space="preserve" κρατάει τα κενά στην αρχή και το τέλος
                     val tag = if (open.contains("xml:space")) {
                         open
                     } else {
