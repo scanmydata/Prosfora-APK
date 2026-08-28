@@ -1,4 +1,3 @@
-```kotlin
 package gr.prosfora.app.google
 
 import gr.prosfora.app.debug.DebugLog
@@ -759,4 +758,3 @@ class DriveClient(private val accessToken: String) {
             "reader"
     }
 }
-```
