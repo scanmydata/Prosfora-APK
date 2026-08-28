@@ -3,9 +3,10 @@ package gr.prosfora.app.sync
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.OneTimeWorkRequest
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
@@ -18,10 +19,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
-/**
- * Background συγχρονισμός. Τρέχει ακόμη κι όταν το UI της εφαρμογής δεν είναι ανοικτό.
- * Αν έχει ήδη δοθεί η Google έγκριση, παίρνει access token χωρίς UI και ελέγχει Drive/Sheet.
- */
+/** Background συγχρονισμός που εκτελείται όταν χτυπήσει ο adaptive alarm. */
 class DriveAutoSyncWorker(
     appContext: Context,
     params: WorkerParameters,
@@ -29,7 +27,6 @@ class DriveAutoSyncWorker(
 
     override suspend fun doWork(): Result {
         DebugLog.log("auto-sync", "έναρξη background sync")
-
         val token = runCatching { accessTokenWithoutUi(applicationContext) }
             .onFailure { DebugLog.log("auto-sync", "δεν πήρα token: ${it.stackTraceToString()}") }
             .getOrNull()
@@ -54,11 +51,8 @@ class DriveAutoSyncWorker(
     private suspend fun accessTokenWithoutUi(context: Context): String? =
         suspendCancellableCoroutine { continuation ->
             val request = AuthorizationRequest.builder()
-                .setRequestedScopes(
-                    GoogleAuthorizer.SCOPES.map(::Scope),
-                )
+                .setRequestedScopes(GoogleAuthorizer.SCOPES.map(::Scope))
                 .build()
-
             Identity.getAuthorizationClient(context)
                 .authorize(request)
                 .addOnSuccessListener { result ->
@@ -79,27 +73,27 @@ class DriveAutoSyncWorker(
         }
 
     companion object {
-        private const val WORK_NAME = "prosfora-drive-auto-sync"
-        private const val INTERVAL_MINUTES = 15L
+        private const val WORK_NAME = "prosfora-drive-auto-sync-now"
 
-        fun schedule(context: Context) {
-            val request = PeriodicWorkRequestBuilder<DriveAutoSyncWorker>(
-                INTERVAL_MINUTES,
-                TimeUnit.MINUTES,
-            )
+        /** Διατηρεί μόνο ένα sync κάθε φορά, ακόμη κι αν χτυπήσουν πολλά alarms. */
+        fun enqueueNow(context: Context) {
+            val app = context.applicationContext
+            val request: OneTimeWorkRequest = OneTimeWorkRequestBuilder<DriveAutoSyncWorker>()
                 .setConstraints(
                     Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.CONNECTED)
                         .build(),
                 )
+                .setInitialDelay(0, TimeUnit.MILLISECONDS)
                 .build()
-
-            WorkManager.getInstance(context.applicationContext).enqueueUniquePeriodicWork(
+            WorkManager.getInstance(app).enqueueUniqueWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.UPDATE,
+                ExistingWorkPolicy.KEEP,
                 request,
             )
-            DebugLog.log("auto-sync", "προγραμματίστηκε ανά $INTERVAL_MINUTES λεπτά")
         }
+
+        /** Συμβατότητα με το παλιό startup call. */
+        fun schedule(context: Context) = DriveAutoSyncScheduler.schedule(context)
     }
 }
