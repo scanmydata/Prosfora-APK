@@ -18,6 +18,7 @@ import androidx.navigation.navArgument
 import gr.prosfora.app.notify.Channel
 import gr.prosfora.app.ui.debts.DebtNotificationFocusDialog
 import gr.prosfora.app.ui.debts.DebtsScreen
+import gr.prosfora.app.ui.employees.EmployeesScreen
 import gr.prosfora.app.ui.jobs.JobsScreen
 import gr.prosfora.app.ui.jobs.ReviewComposeScreen
 import gr.prosfora.app.ui.offers.EmailComposeScreen
@@ -38,6 +39,7 @@ internal const val ROUTE_ARCHIVE = "archive"
 internal const val ROUTE_JOBS = "jobs"
 internal const val ROUTE_STATS = "stats"
 internal const val ROUTE_DEBTS = "debts"
+internal const val ROUTE_EMPLOYEES = "employees"
 
 private const val ROUTE_DETAIL = "offer"
 private const val ROUTE_EMAIL = "offer/email"
@@ -60,7 +62,6 @@ fun ProsforaNavHost(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
     val onTopLevel = TopDestination.entries.any { it.route == route }
-
     val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
 
     EnsureGoogleAccess()
@@ -113,8 +114,7 @@ fun ProsforaNavHost(
                 route = "$ROUTE_MESSAGE/{channel}",
                 arguments = listOf(navArgument("channel") { type = NavType.StringType }),
             ) { entry ->
-                val channel = runCatching { Channel.valueOf(entry.arguments?.getString("channel").orEmpty()) }
-                    .getOrDefault(Channel.SMS)
+                val channel = runCatching { Channel.valueOf(entry.arguments?.getString("channel").orEmpty()) }.getOrDefault(Channel.SMS)
                 MessageComposeScreen(viewModel = viewModel, channel = channel, onBack = { navController.popBackStack() })
             }
             composable(ROUTE_ARCHIVE) { PdfArchiveScreen(viewModel = viewModel, onMenu = openDrawer) }
@@ -132,6 +132,7 @@ fun ProsforaNavHost(
                 )
             }
             composable(ROUTE_DEBTS) { DebtsScreen(onMenu = openDrawer) }
+            composable(ROUTE_EMPLOYEES) { EmployeesScreen(onMenu = openDrawer) }
             composable(ROUTE_SETTINGS) {
                 SettingsScreen(onMenu = openDrawer, onOpenTemplate = { navController.navigate(ROUTE_TEMPLATE) })
             }

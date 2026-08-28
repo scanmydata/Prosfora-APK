@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Handyman
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -37,31 +38,24 @@ import gr.prosfora.app.ui.offers.EditBlue
 import gr.prosfora.app.ui.offers.EmailAmber
 import gr.prosfora.app.ui.offers.SentGreen
 
-/**
- * Οι σελίδες που φτάνει κανείς από το πλαϊνό μενού.
- *
- * Πρώτα τα στατιστικά: είναι η αρχική οθόνη, η εικόνα της χρονιάς με μια ματιά.
- * Οι υπόλοιπες μπαίνουν με τη σειρά της ροής — προσφορά, εργασία, αρχείο.
- */
 enum class TopDestination(
     val route: String,
     val label: String,
     val icon: ImageVector,
     val tint: Color?,
-    /** Ποιον φάκελο του Drive αφορά — από εκεί βγαίνει το σηματάκι. */
     val watches: DriveWatch.Area? = null,
 ) {
     STATS(ROUTE_STATS, "Στατιστικά", Icons.Default.BarChart, EditBlue),
     OFFERS(ROUTE_LIST, "Προσφορές", Icons.Default.Description, EmailAmber),
     JOBS(ROUTE_JOBS, "Εργασίες", Icons.Default.Handyman, SentGreen),
     DEBTS(ROUTE_DEBTS, "Οφειλές", Icons.Default.AccountBalance, DeleteRed, DriveWatch.Area.DEBTS),
+    EMPLOYEES(ROUTE_EMPLOYEES, "Εργαζόμενοι", Icons.Default.Groups, Color(0xFF00E2A2)),
     ARCHIVE(ROUTE_ARCHIVE, "Αρχείο PDF", Icons.Default.PictureAsPdf, null, DriveWatch.Area.PDF),
     SETTINGS(ROUTE_SETTINGS, "Ρυθμίσεις", Icons.Default.Settings, null),
 }
 
 @Composable
 fun AppDrawer(current: String?, onSelect: (TopDestination) -> Unit) {
-    // Τι βρήκε η τελευταία ματιά στον κοινόχρηστο φάκελο του Drive
     val changes by DriveWatch.changes.collectAsState()
 
     ModalDrawerSheet {
@@ -69,17 +63,8 @@ fun AppDrawer(current: String?, onSelect: (TopDestination) -> Unit) {
             Modifier.padding(start = 24.dp, top = 28.dp, end = 24.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(
-                "ΠΡΟΣΦΟΡΕΣ",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                "tovapsimo.gr",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text("ΠΡΟΣΦΟΡΕΣ", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text("tovapsimo.gr", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         HorizontalDivider()
 
@@ -89,17 +74,11 @@ fun AppDrawer(current: String?, onSelect: (TopDestination) -> Unit) {
                 selected = current == destination.route,
                 onClick = { onSelect(destination) },
                 icon = {
-                    Icon(
-                        destination.icon,
-                        contentDescription = null,
-                        tint = destination.tint ?: androidx.compose.material3.LocalContentColor.current,
-                    )
+                    Icon(destination.icon, contentDescription = null, tint = destination.tint ?: androidx.compose.material3.LocalContentColor.current)
                 },
                 label = { Text(destination.label, maxLines = 1) },
                 badge = {
-                    val pending = destination.watches?.let { area ->
-                        changes.count { it.area == area }
-                    } ?: 0
+                    val pending = destination.watches?.let { area -> changes.count { it.area == area } } ?: 0
                     if (pending > 0) Badge { Text("+$pending") }
                 },
                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
@@ -115,7 +94,6 @@ fun AppDrawer(current: String?, onSelect: (TopDestination) -> Unit) {
     }
 }
 
-/** Το κουμπί που ανοίγει το μενού — μπαίνει σε κάθε σελίδα πρώτου επιπέδου. */
 @Composable
 fun MenuButton(onClick: () -> Unit) {
     IconButton(onClick = onClick) {
