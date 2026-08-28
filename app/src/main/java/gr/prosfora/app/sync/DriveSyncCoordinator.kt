@@ -50,16 +50,21 @@ object DriveSyncCoordinator {
             DebugLog.log("sync", "Debt scan απέτυχε: ${it.stackTraceToString()}")
         }.getOrNull() ?: return Result(sheetSummary = sheetSummary)
 
-        val pendingInstallments = report.found.filter {
-            !it.afmMismatch && it.debts.isNotEmpty() && it.installmentPlan != null
+        val deferInstallments = settings.notifyDriveChanges
+        val pendingInstallments = if (deferInstallments) {
+            report.found.filter {
+                !it.afmMismatch && it.debts.isNotEmpty() && it.installmentPlan != null
+            }
+        } else {
+            emptyList()
         }
         val immediateDebts = report.found
-            .filter { !it.afmMismatch && it.installmentPlan == null }
+            .filter { !it.afmMismatch && (it.installmentPlan == null || !deferInstallments) }
             .flatMap { it.debts }
 
         if (immediateDebts.isNotEmpty()) {
             repository.saveAll(immediateDebts)
-            DebugLog.log("sync", "αποθηκεύτηκαν ${immediateDebts.size} νέες οφειλές χωρίς πλάνο δόσεων")
+            DebugLog.log("sync", "αποθηκεύτηκαν ${immediateDebts.size} νέες οφειλές")
         }
 
         if (pendingInstallments.isNotEmpty()) {
