@@ -69,6 +69,7 @@ class DebtImporter(
         alreadyImported: Set<String>,
         onProgress: (String) -> Unit = {},
         includePdfArchive: Boolean = false,
+        onFound: suspend (Found) -> Unit = {},
     ): Report = withContext(Dispatchers.IO) {
         DebugLog.log("debt-scan", "Έναρξη scan · alreadyImported=${alreadyImported.size} · includePdfArchive=$includePdfArchive")
         var scanned = 0
@@ -108,7 +109,11 @@ class DebtImporter(
                 try {
                     read(file.name, file.id, bytes).also { result ->
                         found += result
-                        DebugLog.log("debt-scan", "parsed ${file.id}: afmMismatch=${result.afmMismatch}, debts=${result.debts.size}")
+                        DebugLog.log("debt-scan", "parsed ${file.id}: afmMismatch=${result.afmMismatch}, debts=${result.debts.size}, plan=${result.installmentPlan != null}")
+                        if (!result.afmMismatch && (result.debts.isNotEmpty() || result.installmentPlan != null)) {
+                            runCatching { onFound(result) }
+                                .onFailure { DebugLog.log("debt-scan", "onFound failed ${file.id}: ${it.stackTraceToString()}") }
+                        }
                         moveRecognised(file.id, file.name, result)
                     }
                 } catch (e: Exception) {
@@ -121,14 +126,18 @@ class DebtImporter(
     }
 
     private suspend fun moveRecognised(fileId: String, fileName: String, found: Found) {
-        found.debts.firstOrNull()?.agency?.let { agency ->
+        // ΑΑΔΕ: το PDF πρέπει να μετακινείται ακόμη κι αν ο downstream parser
+        // δεν δημιούργησε DebtEntity. Το installment plan είναι αρκετό για route.
+        val agency = found.debts.firstOrNull()?.agency
+            ?: found.installmentPlan?.let { DebtAgency.AADE }
+        agency?.let {
             runCatching {
-                drive.moveToFolder(fileId, workspace.debtsFolder(agency))
-                DebugLog.log("debt-drive", "Μετακινήθηκε $fileName ($fileId) -> ${agency.label}; αφαιρέθηκε από την αρχική θέση")
+                drive.moveToFolder(fileId, workspace.debtsFolder(it))
+                DebugLog.log("debt-drive", "Μετακινήθηκε $fileName ($fileId) -> ${it.label}; αφαιρέθηκε από την αρχική θέση")
             }.onFailure {
                 DebugLog.log("debt-drive", "ΑΠΟΤΥΧΙΑ move $fileName ($fileId): ${it.stackTraceToString()}")
             }
-        }
+        } ?: DebugLog.log("debt-drive", "Δεν βρέθηκε προορισμός για $fileName ($fileId)")
     }
 
     private suspend fun read(fileName: String, driveFileId: String, bytes: ByteArray?): Found {
