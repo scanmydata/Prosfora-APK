@@ -2,17 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Για την εγκατάσταση ενημερώσεων που κατεβαίνουν από τα GitHub Releases -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Για να φεύγει το SMS από την εφαρμογή και να επιβεβαιώνεται πραγματικά η
-         αποστολή. Ζητείται στην ώρα του· χωρίς αυτό πέφτουμε στην εφαρμογή μηνυμάτων. -->
     <uses-permission android:name="android.permission.SEND_SMS" />
-    <!-- Android 13+: για την ειδοποίηση όταν κάποιος συνεργάτης αλλάξει κάτι
-         στον κοινόχρηστο φάκελο του Drive. Ζητείται στην ώρα της. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Android 11+: χωρίς αυτά τα queries το app δεν «βλέπει» τις εφαρμογές
-         μηνυμάτων και το Viber, και τα intents αποτυγχάνουν σιωπηλά. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.SENDTO" />
@@ -44,11 +38,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
-            <!-- Ο σύνδεσμος πρόσκλησης συνεργάτη. Δικό μας scheme και όχι https:
-                 τα https links θέλουν επαλήθευση με assetlinks.json για να τα
-                 ανοίγει η εφαρμογή, οπότε το email δείχνει σε μια σελίδα που
-                 προωθεί εδώ. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -56,6 +45,20 @@
                 <data android:scheme="prosfora" android:host="connect" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".sync.DriveAutoSyncAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".sync.DriveAutoSyncBootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
