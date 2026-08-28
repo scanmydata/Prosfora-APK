@@ -229,8 +229,7 @@ class DebtImporter(
         // Μόνο όταν βρέθηκε ρητά διαφορετικό ΑΦΜ απορρίπτεται το αρχείο.
         // Άγνωστο/χαμένο ΑΦΜ από OCR δεν αντιμετωπίζεται ως «άλλο ΑΦΜ».
         val afmStatus = AadeInstallmentParser.afmStatus(result.text)
-        if (AadeInstallmentParser.isAadeDocument(result.text) &&
-            afmStatus == AadeInstallmentParser.AfmStatus.MISMATCH) {
+        if (afmStatus == AadeInstallmentParser.AfmStatus.MISMATCH) {
             return Found(
                 fileName = fileName,
                 driveFileId = driveFileId,

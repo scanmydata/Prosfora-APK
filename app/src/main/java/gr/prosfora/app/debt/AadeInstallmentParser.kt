@@ -37,7 +37,7 @@ object AadeInstallmentParser {
         if (Regex("(?<!\\d)$compactExpected(?!\\d)").containsMatchIn(n)) return AfmStatus.MATCH
 
         val labelled = listOf(
-            Regex("\\bΑΦΜ\\b[\\s:.-]{0,40}((?:[0-9][\\s.-]*){9,12})"),
+            Regex("Α\\s*[.:-]?\\s*Φ\\s*[.:-]?\\s*Μ\\s*[.:-]?\\s*((?:[0-9][\\s.-]*){9,12})"),
             Regex("ΑΡΙΘΜΟΣ\\s+ΦΟΡΟΛΟΓΙΚΟΥ\\s+ΜΗΤΡΩΟΥ[\\s:.-]{0,40}((?:[0-9][\\s.-]*){9,12})"),
         )
         val values = labelled.flatMap { regex ->
