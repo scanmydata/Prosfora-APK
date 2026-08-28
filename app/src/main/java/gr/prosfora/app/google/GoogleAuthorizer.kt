@@ -21,12 +21,20 @@ import kotlin.coroutines.resumeWithException
 /**
  * Παίρνει OAuth access token για τα Google APIs, με το consent window της Google.
  *
- * Ζητούνται τρία scopes σε ένα consent window: `drive.file` για το πρότυπο και
- * τα PDF, `spreadsheets` για την κοινόχρηστη βάση, και `gmail.send` για την
- * αποστολή — μόνο αποστολή, κανένα δικαίωμα ανάγνωσης αλληλογραφίας.
+ * Ζητούνται:
+ *
+ *  * drive.file      → αρχεία που δημιουργεί/διαχειρίζεται η εφαρμογή
+ *  * drive.readonly  → ανάγνωση αρχείων που ο χρήστης ανεβάζει χειροκίνητα
+ *                      στους φακέλους του Drive
+ *  * spreadsheets    → κοινόχρηστη βάση δεδομένων
+ *  * gmail.send      → αποστολή email
+ *  * email           → email του συνδεδεμένου λογαριασμού
+ *
+ * Το drive.readonly είναι απαραίτητο για να μπορεί η σάρωση Οφειλών να
+ * βρίσκει PDF/JPG/PNG που ανέβηκαν από υπολογιστή ή από άλλο client.
  *
  * Δεν χρειάζεται client ID στον κώδικα: ο Android OAuth client ταυτοποιείται
- * από το package name + το SHA-1 της υπογραφής — βλ. docs/google-cloud.md.
+ * από το package name + το SHA-1 της υπογραφής.
  */
 class GoogleAuthorizer internal constructor(
     private val context: Context,
@@ -44,13 +52,21 @@ class GoogleAuthorizer internal constructor(
             .authorize(request)
             .addOnSuccessListener { result ->
                 val resolution = result.pendingIntent
+
                 if (result.hasResolution() && resolution != null) {
-                    // Πρώτη φορά: ο χρήστης πρέπει να δώσει έγκριση
+                    // Πρώτη φορά ή προστέθηκε νέο scope:
+                    // ο χρήστης πρέπει να δώσει ξανά έγκριση.
                     pending = continuation
-                    launchConsent(IntentSenderRequest.Builder(resolution.intentSender).build())
+                    launchConsent(
+                        IntentSenderRequest.Builder(
+                            resolution.intentSender,
+                        ).build(),
+                    )
                 } else {
                     rememberAccount(result)
+
                     val token = result.accessToken
+
                     if (token.isNullOrBlank()) {
                         continuation.resumeWithException(
                             IllegalStateException("Η Google δεν επέστρεψε token"),
@@ -60,28 +76,37 @@ class GoogleAuthorizer internal constructor(
                     }
                 }
             }
-            .addOnFailureListener { continuation.resumeWithException(it) }
+            .addOnFailureListener {
+                continuation.resumeWithException(it)
+            }
 
-        continuation.invokeOnCancellation { pending = null }
+        continuation.invokeOnCancellation {
+            pending = null
+        }
     }
 
     /**
      * Κρατάει τη διεύθυνση του λογαριασμού από το αποτέλεσμα της έγκρισης.
-     * Το `gmail.send` δεν επιτρέπει να τη διαβάσουμε από το Gmail API, οπότε
-     * αυτή είναι η μόνη ευκαιρία να τη μάθουμε.
      */
     private fun rememberAccount(result: AuthorizationResult) {
         val settings = GoogleSettings(context)
+
         settings.googleConnected = true
-        runCatching { result.toGoogleSignInAccount()?.email }
+
+        runCatching {
+            result.toGoogleSignInAccount()?.email
+        }
             .getOrNull()
             ?.takeIf { it.isNotBlank() }
-            ?.let { settings.ownerEmail = it }
+            ?.let {
+                settings.ownerEmail = it
+            }
     }
 
     internal fun onConsentResult(result: ActivityResult) {
         val continuation = pending ?: return
         pending = null
+
         runCatching {
             Identity.getAuthorizationClient(context)
                 .getAuthorizationResultFromIntent(result.data)
@@ -89,46 +114,86 @@ class GoogleAuthorizer internal constructor(
                 .accessToken
         }.onSuccess { token ->
             if (token.isNullOrBlank()) {
-                continuation.resumeWithException(IllegalStateException("Η σύνδεση ακυρώθηκε"))
+                continuation.resumeWithException(
+                    IllegalStateException("Η σύνδεση ακυρώθηκε"),
+                )
             } else {
                 continuation.resume(token)
             }
-        }.onFailure(continuation::resumeWithException)
+        }.onFailure {
+            continuation.resumeWithException(it)
+        }
     }
 
     companion object {
-        /** Πρότυπο + παραγόμενα PDF. Non-sensitive: μόνο αρχεία του app. */
-        const val DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
-
-        /** Το κοινόχρηστο Sheet που παίζει τον ρόλο της βάσης. Sensitive. */
-        const val SPREADSHEETS = "https://www.googleapis.com/auth/spreadsheets"
-
-        /** Αποστολή email χωρίς app password. Sensitive — μόνο αποστολή, καμία ανάγνωση. */
-        const val GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 
         /**
-         * Η διεύθυνση του λογαριασμού. Μη ευαίσθητο scope· χωρίς αυτό η εφαρμογή
-         * δεν ξέρει πού να στείλει όταν ο χρήστης ζητά κάτι «στο email μου».
+         * Επιτρέπει στην εφαρμογή να διαχειρίζεται αρχεία που έχει δημιουργήσει
+         * η ίδια.
+         */
+        const val DRIVE_FILE =
+            "https://www.googleapis.com/auth/drive.file"
+
+        /**
+         * Επιτρέπει στην εφαρμογή να διαβάζει αρχεία που βρίσκονται στο Drive.
+         *
+         * Απαραίτητο ώστε η αυτόματη σάρωση των «Οφειλών» να βλέπει PDF/JPG/PNG
+         * που ο χρήστης ανέβασε από αλλού.
+         */
+        const val DRIVE_READONLY =
+            "https://www.googleapis.com/auth/drive.readonly"
+
+        /**
+         * Το κοινόχρηστο Sheet που παίζει τον ρόλο της βάσης.
+         */
+        const val SPREADSHEETS =
+            "https://www.googleapis.com/auth/spreadsheets"
+
+        /**
+         * Αποστολή email χωρίς app password.
+         */
+        const val GMAIL_SEND =
+            "https://www.googleapis.com/auth/gmail.send"
+
+        /**
+         * Email του συνδεδεμένου λογαριασμού.
          */
         val EMAIL = Scopes.EMAIL
 
-        /** Όλα σε ένα consent window — ο χρήστης εγκρίνει μία φορά. */
-        val SCOPES = listOf(DRIVE_FILE, SPREADSHEETS, GMAIL_SEND, EMAIL)
+        /**
+         * Όλα σε ένα consent window.
+         */
+        val SCOPES = listOf(
+            DRIVE_FILE,
+            DRIVE_READONLY,
+            SPREADSHEETS,
+            GMAIL_SEND,
+            EMAIL,
+        )
     }
 }
 
 @Composable
 fun rememberGoogleAuthorizer(): GoogleAuthorizer {
     val context = LocalContext.current
-    // Ο launcher χρειάζεται τον authorizer και ο authorizer τον launcher· ο
-    // holder σπάει τον κύκλο και επιβιώνει των recompositions.
-    val holder = remember { arrayOfNulls<GoogleAuthorizer>(1) }
+
+    // Ο launcher χρειάζεται τον authorizer και ο authorizer τον launcher.
+    // Ο holder σπάει τον κύκλο και επιβιώνει των recompositions.
+    val holder = remember {
+        arrayOfNulls<GoogleAuthorizer>(1)
+    }
+
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
-    ) { result -> holder[0]?.onConsentResult(result) }
+    ) { result ->
+        holder[0]?.onConsentResult(result)
+    }
 
     return remember(context) {
-        GoogleAuthorizer(context) { request -> launcher.launch(request) }
-            .also { holder[0] = it }
+        GoogleAuthorizer(context) { request ->
+            launcher.launch(request)
+        }.also {
+            holder[0] = it
+        }
     }
 }
