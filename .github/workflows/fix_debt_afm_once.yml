@@ -1,0 +1,44 @@
+name: Fix debt AFM once
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  fix:
+    if: github.actor == 'scanmydata'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Patch debt importer and AFM parser
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/gr/prosfora/app/debt/DebtImporter.kt')
+          s = p.read_text()
+          old = '''if (AadeInstallmentParser.isAadeDocument(result.text) &&\n            afmStatus == AadeInstallmentParser.AfmStatus.MISMATCH) {'''
+          new = '''if (afmStatus == AadeInstallmentParser.AfmStatus.MISMATCH) {'''
+          if old not in s:
+              raise SystemExit('DebtImporter mismatch gate not found')
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('app/src/main/java/gr/prosfora/app/debt/AadeInstallmentParser.kt')
+          s = p.read_text()
+          old = '''        val labelled = listOf(\n            Regex("\\\\bΑΦΜ\\\\b[\\\\s:.-]{0,40}((?:[0-9][\\\\s.-]*){9,12})"),\n            Regex("ΑΡΙΘΜΟΣ\\\\s+ΦΟΡΟΛΟΓΙΚΟΥ\\\\s+ΜΗΤΡΩΟΥ[\\\\s:.-]{0,40}((?:[0-9][\\\\s.-]*){9,12})"),\n        )'''
+          new = '''        val labelled = listOf(\n            Regex("Α\\\\s*[.:-]?\\\\s*Φ\\\\s*[.:-]?\\\\s*Μ\\\\s*[.:-]?\\\\s*((?:[0-9][\\\\s.-]*){9,12})"),\n            Regex("ΑΡΙΘΜΟΣ\\\\s+ΦΟΡΟΛΟΓΙΚΟΥ\\\\s+ΜΗΤΡΩΟΥ[\\\\s:.-]{0,40}((?:[0-9][\\\\s.-]*){9,12})"),\n        )'''
+          if old not in s:
+              raise SystemExit('AFM regex block not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+      - name: Commit fix and remove one-time workflow
+        run: |
+          git config user.name "scanmydata"
+          git config user.email "scanmydata@hotmail.com"
+          git add app/src/main/java/gr/prosfora/app/debt/DebtImporter.kt app/src/main/java/gr/prosfora/app/debt/AadeInstallmentParser.kt
+          git diff --cached --quiet && { echo 'No source changes'; exit 1; }
+          git commit -m "fix: validate AFM for external debt Drive files"
+          git rm .github/workflows/fix_debt_afm_once.yml
+          git commit -m "chore: remove one-time AFM fix workflow"
+          git push origin main
