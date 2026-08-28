@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import gr.prosfora.app.MainActivity
 import gr.prosfora.app.R
 import gr.prosfora.app.data.db.DebtEntity
+import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.util.asMoney
 
@@ -25,7 +26,11 @@ object DriveNotifier {
     private const val DEBTS_ID = 4712
 
     fun notify(context: Context, changes: List<DriveWatch.Change>) {
-        if (changes.isEmpty() || !allowed(context)) return
+        if (changes.isEmpty()) return
+        if (!allowed(context)) {
+            DebugLog.log("notify", "Drive notification ΔΕΝ στάλθηκε: Android notifications disabled/permission missing")
+            return
+        }
         ensureChannel(context)
         val added = changes.filterNot { it.removed }
         val removed = changes.filter { it.removed }
@@ -53,7 +58,12 @@ object DriveNotifier {
             .setAutoCancel(true)
             .setContentIntent(open)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-        runCatching { NotificationManagerCompat.from(context).notify(ID, builder.build()) }
+        runCatching {
+            NotificationManagerCompat.from(context).notify(ID, builder.build())
+            DebugLog.log("notify", "Drive notification στάλθηκε · changes=${changes.size}")
+        }.onFailure {
+            DebugLog.log("notify", "Drive notification ΑΠΕΤΥΧΕ: ${it.stackTraceToString().take(900)}")
+        }
     }
 
     fun notifyDebts(
@@ -61,7 +71,11 @@ object DriveNotifier {
         debts: List<DebtEntity>,
         openPendingInstallments: Boolean = false,
     ) {
-        if (debts.isEmpty() || !allowed(context)) return
+        if (debts.isEmpty()) return
+        if (!allowed(context)) {
+            DebugLog.log("notify", "Debt notification ΔΕΝ στάλθηκε: Android notifications disabled/permission missing; debts=${debts.size}")
+            return
+        }
         ensureChannel(context)
         val total = debts.sumOf { it.amount }
         val lines = debts.map { debt -> "${debt.title} — ${debt.amount.asMoney()} · ${debt.createdBy}" }
@@ -89,12 +103,21 @@ object DriveNotifier {
             .setAutoCancel(true)
             .setContentIntent(open)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-        runCatching { NotificationManagerCompat.from(context).notify(DEBTS_ID, builder.build()) }
+        runCatching {
+            NotificationManagerCompat.from(context).notify(DEBTS_ID, builder.build())
+            DebugLog.log(
+                "notify",
+                "Debt notification στάλθηκε · debts=${debts.size} · pendingInstallments=$openPendingInstallments · firstDebt=$firstDebtId",
+            )
+        }.onFailure {
+            DebugLog.log("notify", "Debt notification ΑΠΕΤΥΧΕ: ${it.stackTraceToString().take(900)}")
+        }
     }
 
     private fun allowed(context: Context): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
+            NotificationManagerCompat.from(context).areNotificationsEnabled()
 
     private fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
