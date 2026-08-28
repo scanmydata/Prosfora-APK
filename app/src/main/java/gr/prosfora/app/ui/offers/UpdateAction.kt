@@ -20,14 +20,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.BuildConfig
+import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.google.rememberGoogleAuthorizer
+import gr.prosfora.app.sync.DriveSyncCoordinator
 import gr.prosfora.app.update.UpdateChecker
 import gr.prosfora.app.util.reason
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
-/**
- * Διάλογος νέας έκδοσης. Ξεχωριστός από το κουμπί, γιατί τον χρησιμοποιεί και
- * το pull-to-refresh της λίστας.
- */
 @Composable
 fun UpdateDialog(release: UpdateChecker.Release, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -37,46 +37,33 @@ fun UpdateDialog(release: UpdateChecker.Release, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = { if (!downloading) onDismiss() },
         title = { Text("Νέα έκδοση ${release.tag}") },
-        text = {
-            Text(
-                if (downloading) "Γίνεται λήψη…"
-                else release.notes.take(400).ifBlank { "Διαθέσιμη ενημέρωση." },
-            )
-        },
+        text = { Text(if (downloading) "Γίνεται λήψη…" else release.notes.take(400).ifBlank { "Διαθέσιμη ενημέρωση." }) },
         confirmButton = {
-            TextButton(
-                enabled = !downloading,
-                onClick = {
-                    downloading = true
-                    scope.launch {
-                        val result = runCatching {
-                            val apk = UpdateChecker.download(context, release)
-                            UpdateChecker.install(context, apk)
-                        }
-                        downloading = false
-                        result.onFailure {
-                            Toast.makeText(
-                                context,
-                                "Αποτυχία λήψης: ${it.reason()}",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                        onDismiss()
+            TextButton(enabled = !downloading, onClick = {
+                downloading = true
+                scope.launch {
+                    runCatching {
+                        val apk = UpdateChecker.download(context, release)
+                        UpdateChecker.install(context, apk)
+                    }.onFailure {
+                        Toast.makeText(context, "Αποτυχία λήψης: ${it.reason()}", Toast.LENGTH_LONG).show()
                     }
-                },
-            ) { Text("Ενημέρωση") }
+                    downloading = false
+                    onDismiss()
+                }
+            }) { Text("Ενημέρωση") }
         },
-        dismissButton = {
-            TextButton(enabled = !downloading, onClick = onDismiss) { Text("Αργότερα") }
-        },
+        dismissButton = { TextButton(enabled = !downloading, onClick = onDismiss) { Text("Αργότερα") } },
     )
 }
 
-/** Κουμπί χειροκίνητου ελέγχου για ενημέρωση. */
+/** Το Refresh κάνει πλέον και συγχρονισμό και έλεγχο νέας έκδοσης. */
 @Composable
 fun UpdateAction() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val authorizer = rememberGoogleAuthorizer()
+    val settings = remember { GoogleSettings(context) }
 
     var busy by remember { mutableStateOf(false) }
     var available by remember { mutableStateOf<UpdateChecker.Release?>(null) }
@@ -86,30 +73,41 @@ fun UpdateAction() {
         onClick = {
             busy = true
             scope.launch {
-                val result = runCatching {
-                    UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
-                }
-                busy = false
-                result.onSuccess { release ->
-                    if (release == null) {
-                        Toast.makeText(context, "Έχεις την τελευταία έκδοση", Toast.LENGTH_SHORT).show()
-                    } else {
-                        available = release
+                val syncJob = async {
+                    runCatching {
+                        DriveSyncCoordinator.sync(
+                            context = context,
+                            accessToken = authorizer.accessToken(),
+                            syncSheet = settings.spreadsheetId?.isNotBlank() == true,
+                        )
                     }
-                }.onFailure {
-                    Toast.makeText(context, "Αποτυχία ελέγχου: ${it.reason()}", Toast.LENGTH_LONG).show()
                 }
+                val updateJob = async { runCatching { UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME) } }
+                val sync = syncJob.await()
+                val release = updateJob.await().getOrNull()
+                busy = false
+
+                sync.onSuccess { result ->
+                    val debtText = when (result.importedDebts.size) {
+                        0 -> ""
+                        1 -> " · 1 νέα οφειλή"
+                        else -> " · ${result.importedDebts.size} νέες οφειλές"
+                    }
+                    Toast.makeText(
+                        context,
+                        "Συγχρονισμός ολοκληρώθηκε$debtText",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }.onFailure {
+                    Toast.makeText(context, "Ο συγχρονισμός απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
+                }
+                if (release != null) available = release
             }
         },
     ) {
-        if (busy) {
-            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-        } else {
-            Icon(Icons.Default.Refresh, contentDescription = "Έλεγχος για ενημέρωση")
-        }
+        if (busy) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+        else Icon(Icons.Default.Refresh, contentDescription = "Συγχρονισμός και έλεγχος ενημέρωσης")
     }
 
-    available?.let { release ->
-        UpdateDialog(release = release, onDismiss = { available = null })
-    }
+    available?.let { release -> UpdateDialog(release = release, onDismiss = { available = null }) }
 }
