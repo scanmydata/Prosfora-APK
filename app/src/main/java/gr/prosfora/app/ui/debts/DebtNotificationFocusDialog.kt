@@ -8,14 +8,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
-import gr.prosfora.app.data.db.DebtRepository
+import gr.prosfora.app.data.db.DebtEntity
+import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
 
-/**
- * Η ειδοποίηση ανοίγει απευθείας τις Οφειλές και «μαρκάρει» την συγκεκριμένη
- * εγγραφή παρουσιάζοντάς την στο foreground πριν κλείσει ο χρήστης το dialog.
- */
 @Composable
 fun DebtNotificationFocusDialog(
     debtId: String,
@@ -24,7 +21,7 @@ fun DebtNotificationFocusDialog(
     val context = LocalContext.current
     val repository = remember { DebtRepository(context) }
     val debts by remember(repository) { repository.observeAll() }.collectAsState(initial = emptyList())
-    val debt = debts.firstOrNull { it.id == debtId }
+    val debt: DebtEntity? = debts.firstOrNull { it.id == debtId }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -43,8 +40,6 @@ fun DebtNotificationFocusDialog(
                 )
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Εντάξει") }
-        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Εντάξει") } },
     )
 }
