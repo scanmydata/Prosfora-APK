@@ -50,6 +50,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -63,6 +64,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,6 +77,7 @@ import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.ui.MenuButton
 import gr.prosfora.app.ui.components.ConfirmDialog
 import gr.prosfora.app.ui.offers.DeleteRed
@@ -85,16 +88,8 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-private val BrandGreen = androidx.compose.ui.graphics.Color(0xFF2E7D32)
+private val BrandGreen = Color(0xFF00E2A2)
 
-/**
- * Οι οφειλές της επιχείρησης, χωρισμένες ανά έτος, ανά φορέα και ανά μήνα.
- *
- * Δύο δρόμοι για να μπουν: με το χέρι από το «+», ή διαβασμένες από τα
- * παραστατικά που κάθονται στον φάκελο «Οφειλές» του Drive. Ό,τι διαβάζεται
- * περνάει πρώτα από επιβεβαίωση — μια λάθος ανάγνωση δεν πρέπει να μπει σιωπηλά
- * στη βάση.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DebtsScreen(onMenu: () -> Unit) {
@@ -104,13 +99,9 @@ fun DebtsScreen(onMenu: () -> Unit) {
     val settings = remember { GoogleSettings(context) }
     val authorizer = rememberGoogleAuthorizer()
 
-    val stream = remember(repository) { repository.observeAll() }
-    val debts by stream.collectAsState(initial = emptyList())
-    val peopleStream = remember(repository) { repository.observeEmployees() }
-    val people by peopleStream.collectAsState(initial = emptyList())
-    val aliases = remember(people) {
-        people.filter { it.alias.isNotBlank() }.associate { it.id to it.alias }
-    }
+    val debts by remember(repository) { repository.observeAll() }.collectAsState(initial = emptyList())
+    val people by remember(repository) { repository.observeEmployees() }.collectAsState(initial = emptyList())
+    val aliases = remember(people) { people.filter { it.alias.isNotBlank() }.associate { it.id to it.alias } }
     val changes by DriveWatch.changes.collectAsState()
     val newInDrive = remember(changes) { changes.filter { it.area == DriveWatch.Area.DEBTS } }
 
@@ -119,27 +110,26 @@ fun DebtsScreen(onMenu: () -> Unit) {
     var editing by remember { mutableStateOf<DebtEntity?>(null) }
     var pending by remember { mutableStateOf<DebtImporter.Report?>(null) }
     var afmRejected by remember { mutableStateOf<DebtImporter.Found?>(null) }
-    var afmRejectedQueue by remember { mutableStateOf(emptyList<DebtImporter.Found>()) }
+    var afmQueue by remember { mutableStateOf(emptyList<DebtImporter.Found>()) }
     var pendingAfterAfm by remember { mutableStateOf<DebtImporter.Report?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var showPeople by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var confirmBulk by remember { mutableStateOf(false) }
     var payingFor by remember { mutableStateOf<DebtEntity?>(null) }
+
     val years = remember(debts) {
-        debts.map { it.periodYear }.filter { it > 0 }.distinct().sortedDescending()
-            .ifEmpty { listOf(LocalDate.now().year) }
+        debts.map { it.periodYear }.filter { it > 0 }.distinct().sortedDescending().ifEmpty { listOf(LocalDate.now().year) }
     }
     var year by remember(years) { mutableStateOf(years.first()) }
 
     fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 
-    fun advanceAfmReview() {
-        val remaining = afmRejectedQueue.drop(1)
-        afmRejectedQueue = remaining
-        if (remaining.isNotEmpty()) {
-            afmRejected = remaining.first()
-        } else {
+    fun nextAfm() {
+        val rest = afmQueue.drop(1)
+        afmQueue = rest
+        if (rest.isNotEmpty()) afmRejected = rest.first()
+        else {
             val report = pendingAfterAfm
             pendingAfterAfm = null
             afmRejected = null
@@ -149,23 +139,19 @@ fun DebtsScreen(onMenu: () -> Unit) {
         }
     }
 
-    val picker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri: Uri? ->
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             busy = "Ανέβασμα και ανάγνωση…"
             val result = runCatching {
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: error("Δεν διαβάστηκε το αρχείο")
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Δεν διαβάστηκε το αρχείο")
                 val name = displayName(context, uri)
-                val drive = DriveClient(authorizer.accessToken())
-                DebtImporter(drive, settings).importFile(name, bytes)
+                DebtImporter(DriveClient(authorizer.accessToken()), settings).importFile(name, bytes)
             }
             busy = null
             result.onSuccess { found ->
                 if (found.afmMismatch) {
-                    afmRejectedQueue = listOf(found)
+                    afmQueue = listOf(found)
                     afmRejected = found
                     pendingAfterAfm = null
                 } else {
@@ -179,9 +165,11 @@ fun DebtsScreen(onMenu: () -> Unit) {
         scope.launch {
             busy = "Αναζήτηση στο Drive…"
             val result = runCatching {
-                val drive = DriveClient(authorizer.accessToken())
-                DebtImporter(drive, settings)
-                    .scan(repository.importedFileIds()) { name -> busy = "Ανάγνωση $name…" }
+                DebtImporter(DriveClient(authorizer.accessToken()), settings).scan(
+                    repository.importedFileIds(),
+                    { name -> busy = "Ανάγνωση $name…" },
+                    includePdfArchive = true,
+                )
             }
             busy = null
             DriveWatch.acknowledge(context, DriveWatch.Area.DEBTS)
@@ -189,102 +177,67 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 val mismatches = report.found.filter { it.afmMismatch }
                 val valid = report.found.filterNot { it.afmMismatch }
                 if (mismatches.isNotEmpty()) {
-                    afmRejectedQueue = mismatches
+                    afmQueue = mismatches
                     afmRejected = mismatches.first()
                     pendingAfterAfm = report.copy(found = valid)
-                } else if (report.debts.isEmpty()) {
-                    toast(report.summary)
-                } else {
-                    pending = report
-                }
+                } else if (report.debts.isEmpty()) toast(report.summary)
+                else pending = report
             }.onFailure { toast("Η σάρωση απέτυχε: ${it.reason()}") }
         }
     }
 
     fun openFolder() {
         scope.launch {
-            val url = runCatching {
-                DebtImporter(DriveClient(authorizer.accessToken()), settings).folderUrl()
-            }.getOrNull() ?: return@launch
-            runCatching {
-                context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-            }
+            val url = runCatching { DebtImporter(DriveClient(authorizer.accessToken()), settings).folderUrl() }.getOrNull() ?: return@launch
+            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         }
     }
 
     fun togglePaid(debt: DebtEntity) {
-        if (!debt.paid && settings.askPaidDate) {
-            payingFor = debt
-        } else {
-            scope.launch { repository.setPaid(debt.id, !debt.paid) }
-        }
+        if (!debt.paid && settings.askPaidDate) payingFor = debt
+        else scope.launch { repository.setPaid(debt.id, !debt.paid) }
     }
 
     val visible = remember(debts, agency, onlyUnpaid, year) {
-        debts.filter {
-            inYear(it, year) &&
-                (agency == null || it.agency == agency) &&
-                (!onlyUnpaid || !it.paid)
-        }
+        debts.filter { it.periodYear == year || it.periodYear <= 0 }
+            .filter { agency == null || it.agency == agency }
+            .filter { !onlyUnpaid || !it.paid }
     }
-    val groups = remember(visible) {
-        visible.groupBy { it.periodKey }.entries.sortedByDescending { it.key }
-    }
+    val groups = remember(visible) { visible.groupBy { it.periodKey }.entries.sortedByDescending { it.key } }
 
     Scaffold(
         topBar = {
-            if (selected.isEmpty()) {
-                TopAppBar(
-                    title = { Text("Οφειλές") },
-                    navigationIcon = { MenuButton(onMenu) },
-                    actions = {
-                        IconButton(onClick = { showPeople = true }) {
-                            Icon(Icons.Default.Groups, contentDescription = "Εργαζόμενοι")
-                        }
-                        IconButton(onClick = { openFolder() }) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = "Φάκελος στο Drive")
-                        }
+            TopAppBar(
+                title = { Text(if (selected.isEmpty()) "Οφειλές" else "${selected.size} επιλεγμένες") },
+                navigationIcon = {
+                    if (selected.isEmpty()) MenuButton(onMenu)
+                    else IconButton(onClick = { selected = emptySet() }) { Icon(Icons.Default.Close, contentDescription = "Ακύρωση επιλογής") }
+                },
+                actions = {
+                    if (selected.isEmpty()) {
+                        IconButton(onClick = { showPeople = true }) { Icon(Icons.Default.Groups, contentDescription = "Εργαζόμενοι") }
+                        IconButton(onClick = { openFolder() }) { Icon(Icons.Default.FolderOpen, contentDescription = "Φάκελος στο Drive") }
                         IconButton(onClick = { picker.launch(arrayOf("*/*")) }) {
-                            Icon(Icons.Default.UploadFile, contentDescription = "Εισαγωγή αρχείου")
+                            Icon(Icons.Default.UploadFile, contentDescription = "Εισαγωγή αρχείου", tint = BrandGreen)
                         }
-                        IconButton(onClick = { scanDrive() }) {
-                            Icon(Icons.Default.CloudSync, contentDescription = "Σάρωση Drive")
-                        }
-                    },
-                )
-            } else {
-                TopAppBar(
-                    title = { Text("${selected.size} επιλεγμένες") },
-                    navigationIcon = {
-                        IconButton(onClick = { selected = emptySet() }) {
-                            Icon(Icons.Default.Close, contentDescription = "Ακύρωση επιλογής")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { confirmBulk = true }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Διαγραφή", tint = DeleteRed)
-                        }
-                    },
-                )
-            }
+                        IconButton(onClick = { scanDrive() }) { Icon(Icons.Default.CloudSync, contentDescription = "Σάρωση Drive") }
+                    } else {
+                        IconButton(onClick = { confirmBulk = true }) { Icon(Icons.Default.Delete, contentDescription = "Διαγραφή", tint = DeleteRed) }
+                    }
+                },
+            )
         },
         floatingActionButtonPosition = FabPosition.Center,
         floatingActionButton = {
             if (selected.isEmpty()) {
-                FloatingActionButton(
-                    onClick = { editing = DebtEntity() },
-                    containerColor = BrandGreen,
-                    contentColor = androidx.compose.ui.graphics.Color.White,
-                ) {
+                FloatingActionButton(onClick = { editing = DebtEntity() }, containerColor = BrandGreen, contentColor = Color.White) {
                     Icon(Icons.Default.Add, contentDescription = "Νέα οφειλή")
                 }
             }
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 112.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -297,52 +250,34 @@ fun DebtsScreen(onMenu: () -> Unit) {
                     )
                 }
             }
-
-            item { TotalsCard(debts.filter { inYear(it, year) }) }
-
+            item { TotalsCard(debts.filter { it.periodYear == year || it.periodYear <= 0 }) }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(years) { candidate ->
-                        FilterChip(
-                            selected = year == candidate,
-                            onClick = { year = candidate },
-                            label = { Text(candidate.toString(), maxLines = 1) },
-                        )
-                    }
+                    items(years) { candidate -> FilterChip(selected = year == candidate, onClick = { year = candidate }, label = { Text(candidate.toString()) }) }
                 }
             }
-
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item {
-                        FilterChip(
-                            selected = agency == null,
-                            onClick = { agency = null },
-                            label = { Text("Όλες", maxLines = 1) },
-                        )
-                    }
+                    item { FilterChip(selected = agency == null, onClick = { agency = null }, label = { Text("Όλες") }) }
                     items(DebtAgency.entries) { candidate ->
-                        val count = debts.count { it.agency == candidate && inYear(it, year) && !it.paid }
-                        FilterChip(
-                            selected = agency == candidate,
-                            onClick = { agency = if (agency == candidate) null else candidate },
-                            label = { Text(if (count > 0) "${candidate.label} · $count" else candidate.label, maxLines = 1) },
-                        )
+                        val count = debts.count { it.agency == candidate && (it.periodYear == year || it.periodYear <= 0) && !it.paid }
+                        FilterChip(selected = agency == candidate, onClick = { agency = if (agency == candidate) null else candidate }, label = { Text(if (count > 0) "${candidate.label} · $count" else candidate.label) })
                     }
                 }
             }
-
             item {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Μόνο απλήρωτες", style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = onlyUnpaid, onCheckedChange = { onlyUnpaid = it })
+                    Switch(
+                        checked = onlyUnpaid,
+                        onCheckedChange = { onlyUnpaid = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = BrandGreen,
+                            checkedTrackColor = BrandGreen.copy(alpha = 0.42f),
+                        ),
+                    )
                 }
             }
-
             busy?.let { message ->
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -351,17 +286,11 @@ fun DebtsScreen(onMenu: () -> Unit) {
                     }
                 }
             }
-
-            if (visible.isEmpty() && busy == null) {
-                item { EmptyHint(hasAny = debts.isNotEmpty()) }
-            }
-
+            if (visible.isEmpty() && busy == null) item { EmptyHint(debts.isNotEmpty()) }
             groups.forEach { entry ->
                 val rows = entry.value
                 val first = rows.first()
-                item(key = "head-${first.periodKey}") {
-                    PeriodHeader(label = monthLabel(first.periodMonth, first.periodYear), total = rows.sumOf { it.amount })
-                }
+                item(key = "head-${first.periodKey}") { PeriodHeader(monthLabel(first.periodMonth, first.periodYear), rows.sumOf { it.amount }) }
                 items(rows.sortedBy { it.kind.ordinal }, key = { it.id }) { debt ->
                     DebtRow(
                         debt = debt,
@@ -370,9 +299,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
                         selecting = selected.isNotEmpty(),
                         onToggle = { togglePaid(debt) },
                         onOpen = { editing = debt },
-                        onSelect = {
-                            selected = if (debt.id in selected) selected - debt.id else selected + debt.id
-                        },
+                        onSelect = { selected = if (debt.id in selected) selected - debt.id else selected + debt.id },
                         onCopy = { copyToClipboard(context, it, debt.title) },
                     )
                 }
@@ -381,94 +308,57 @@ fun DebtsScreen(onMenu: () -> Unit) {
     }
 
     if (confirmBulk) {
-        val victims = selected
         ConfirmDialog(
-            title = "Διαγραφή ${victims.size} οφειλών",
+            title = "Διαγραφή ${selected.size} οφειλών",
             message = "Θα σβηστούν από τη βάση και από τις άλλες συσκευές.",
             confirmLabel = "Διαγραφή",
-            onConfirm = {
-                confirmBulk = false
-                selected = emptySet()
-                scope.launch { repository.delete(victims) }
-            },
+            onConfirm = { val victims = selected; confirmBulk = false; selected = emptySet(); scope.launch { repository.delete(victims) } },
             onDismiss = { confirmBulk = false },
         )
     }
-
-    if (showPeople) {
-        EmployeeIndexDialog(repository = repository, debts = debts, onDismiss = { showPeople = false })
-    }
-
+    if (showPeople) EmployeeIndexDialog(repository = repository, debts = debts, onDismiss = { showPeople = false })
     payingFor?.let { debt ->
         PaidDatePicker(
             onDismiss = { payingFor = null },
-            onPick = { day ->
-                payingFor = null
-                scope.launch { repository.setPaid(debt.id, paid = true, day = day) }
-            },
+            onPick = { day -> payingFor = null; scope.launch { repository.setPaid(debt.id, paid = true, day = day) } },
         )
     }
-
     editing?.let { debt ->
         DebtEditorDialog(
             debt = debt,
             onDismiss = { editing = null },
-            onSave = {
-                editing = null
-                scope.launch { repository.save(it) }
-            },
-            onDelete = {
-                editing = null
-                scope.launch { repository.delete(debt.id) }
-            },
-            onDeleteFile = {
-                editing = null
-                scope.launch {
-                    val removed = repository.deleteFromFile(debt.source, debt.driveFileId)
-                    toast("Διαγράφηκαν $removed οφειλές από «${debt.source}»")
-                }
-            },
+            onSave = { editing = null; scope.launch { repository.save(it) } },
+            onDelete = { editing = null; scope.launch { repository.delete(debt.id) } },
+            onDeleteFile = { editing = null; scope.launch { repository.deleteFromFile(debt.source, debt.driveFileId) } },
             onCopy = { copyToClipboard(context, it, debt.title) },
         )
     }
-
     afmRejected?.let { found ->
         AlertDialog(
-            onDismissRequest = { advanceAfmReview() },
+            onDismissRequest = { nextAfm() },
             title = { Text("Το αρχείο αφορά άλλο ΑΦΜ") },
             text = { Text("Το «${found.fileName}» δεν αφορά το ΑΦΜ 802576637. Θέλεις να διαγραφεί από το Google Drive;") },
             confirmButton = {
                 TextButton(onClick = {
-                    val fileId = found.driveFileId
-                    val fileName = found.fileName
                     scope.launch {
-                        runCatching { DriveClient(authorizer.accessToken()).delete(fileId) }
-                            .onSuccess { toast("Το «$fileName» διαγράφηκε από το Drive.") }
+                        runCatching { DriveClient(authorizer.accessToken()).delete(found.driveFileId) }
+                            .onSuccess { toast("Το «${found.fileName}» διαγράφηκε από το Drive.") }
                             .onFailure { toast("Δεν ήταν δυνατή η διαγραφή από το Drive: ${it.reason()}") }
-                        advanceAfmReview()
+                        nextAfm()
                     }
                 }) { Text("Διαγραφή από Drive", color = DeleteRed) }
             },
-            dismissButton = { TextButton(onClick = { advanceAfmReview() }) { Text("Να παραμείνει") } },
+            dismissButton = { TextButton(onClick = { nextAfm() }) { Text("Να παραμείνει") } },
         )
     }
-
     pending?.let { report ->
         DebtImportDialog(
             report = report,
             onDismiss = { pending = null },
-            onConfirm = { chosen ->
-                pending = null
-                scope.launch {
-                    repository.saveAll(chosen)
-                    toast("Αποθηκεύτηκαν ${chosen.size} οφειλές")
-                }
-            },
+            onConfirm = { chosen -> pending = null; scope.launch { repository.saveAll(chosen); toast("Αποθηκεύτηκαν ${chosen.size} οφειλές") } },
         )
     }
 }
-
-private fun inYear(debt: DebtEntity, year: Int): Boolean = debt.periodYear == year || debt.periodYear <= 0
 
 @Composable
 private fun DriveChangesCard(changes: List<DriveWatch.Change>, onRead: () -> Unit, onDismiss: () -> Unit) {
@@ -498,8 +388,8 @@ private fun TotalsCard(debts: List<DebtEntity>) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Απλήρωτες", style = MaterialTheme.typography.labelMedium)
             Text(unpaid.sumOf { it.amount }.asMoney(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            if (overdue.isNotEmpty()) Text("Ληξιπρόθεσμες: ${overdue.size} · ${overdue.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodyMedium, color = DeleteRed)
-            if (soon.isNotEmpty()) Text("Λήγουν μέσα σε 10 μέρες: ${soon.size} · ${soon.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (overdue.isNotEmpty()) Text("Ληξιπρόθεσμες: ${overdue.size} · ${overdue.sumOf { it.amount }.asMoney()}", color = DeleteRed)
+            if (soon.isNotEmpty()) Text("Λήγουν μέσα σε 10 μέρες: ${soon.size} · ${soon.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -529,46 +419,24 @@ private fun DebtRow(
 ) {
     val today = LocalDate.now()
     val installment = remember(debt.description) {
-        Regex("δόση\\s+(\\d+)\\s*/\\s*(\\d+)", RegexOption.IGNORE_CASE)
-            .find(debt.description)
-            ?.let { it.groupValues[1].toIntOrNull() to it.groupValues[2].toIntOrNull() }
+        Regex("δόση\\s+(\\d+)\\s*/\\s*(\\d+)", RegexOption.IGNORE_CASE).find(debt.description)?.let { it.groupValues[1].toIntOrNull() to it.groupValues[2].toIntOrNull() }
     }
     val installmentColor = installment?.first?.let { installmentBadgeColor(it) }
     Card(
-        modifier = Modifier.fillMaxWidth().combinedClickable(
-            onClick = { if (selecting) onSelect() else onOpen() },
-            onLongClick = onSelect,
-        ),
+        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { if (selecting) onSelect() else onOpen() }, onLongClick = onSelect),
         colors = CardDefaults.cardColors(if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface),
     ) {
         Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.padding(end = 12.dp).size(10.dp).background(debt.kind.color, CircleShape),
-            )
+            Box(Modifier.padding(end = 12.dp).size(10.dp).background(debt.kind.color, CircleShape))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     if (installment != null) {
-                        val number = installment.first
-                        val total = installment.second
-                        Text(
-                            "Δόση $number/$total",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = installmentColor ?: BrandGreen,
-                            modifier = Modifier
-                                .background((installmentColor ?: BrandGreen).copy(alpha = 0.14f), CircleShape)
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
+                        Text("Δόση ${installment.first}/${installment.second}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = installmentColor ?: BrandGreen,
+                            modifier = Modifier.background((installmentColor ?: BrandGreen).copy(alpha = 0.14f), CircleShape).padding(horizontal = 8.dp, vertical = 4.dp))
                     }
                 }
-                Text(
-                    subtitleFor(debt, today),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (debt.overdue(today)) DeleteRed else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Text(subtitleFor(debt, today), style = MaterialTheme.typography.bodySmall, color = if (debt.overdue(today)) DeleteRed else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(debt.amount.asMoney(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
@@ -584,12 +452,12 @@ private fun DebtRow(
     }
 }
 
-private fun installmentBadgeColor(number: Int): androidx.compose.ui.graphics.Color = when ((number - 1).mod(5)) {
+private fun installmentBadgeColor(number: Int): Color = when ((number - 1).mod(5)) {
     0 -> BrandGreen
-    1 -> IkaBlue
-    2 -> AadeAmber
-    3 -> AdvertisingTeal
-    else -> PayrollGreen
+    1 -> Color(0xFF1565C0)
+    2 -> Color(0xFFEF6C00)
+    3 -> Color(0xFF7B1FA2)
+    else -> Color(0xFF00897B)
 }
 
 private fun titleFor(debt: DebtEntity, aliases: Map<String, String>): String {
@@ -606,7 +474,8 @@ private fun subtitleFor(debt: DebtEntity, today: LocalDate): String = buildStrin
         return@buildString
     }
     debt.dueDay?.let { due ->
-        append(" · λήξη "); append(due.asOfferDate())
+        append(" · λήξη ")
+        append(due.asOfferDate())
         val left = debt.daysLeft(today)
         if (left != null && left < 0) append(" (πέρασε)")
     }
