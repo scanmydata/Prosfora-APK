@@ -18,6 +18,7 @@ import gr.prosfora.app.util.asMoney
 
 object DriveNotifier {
     const val EXTRA_OPEN_DEBT_ID = "open_debt_id"
+    const val EXTRA_OPEN_PENDING_INSTALLMENTS = "open_pending_installments"
 
     private const val CHANNEL = "drive_changes"
     private const val ID = 4711
@@ -55,7 +56,11 @@ object DriveNotifier {
         runCatching { NotificationManagerCompat.from(context).notify(ID, builder.build()) }
     }
 
-    fun notifyDebts(context: Context, debts: List<DebtEntity>) {
+    fun notifyDebts(
+        context: Context,
+        debts: List<DebtEntity>,
+        openPendingInstallments: Boolean = false,
+    ) {
         if (debts.isEmpty() || !allowed(context)) return
         ensureChannel(context)
         val total = debts.sumOf { it.amount }
@@ -66,12 +71,19 @@ object DriveNotifier {
             firstDebtId.hashCode(),
             Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(EXTRA_OPEN_DEBT_ID, firstDebtId),
+                .putExtra(EXTRA_OPEN_DEBT_ID, firstDebtId)
+                .putExtra(EXTRA_OPEN_PENDING_INSTALLMENTS, openPendingInstallments),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val title = when {
+            openPendingInstallments && debts.size == 1 -> "Νέα οφειλή — επιλογή δόσεων"
+            openPendingInstallments -> "${debts.size} νέες οφειλές — επιλογή δόσεων"
+            debts.size == 1 -> "Νέα οφειλή στην κοινόχρηστη βάση"
+            else -> "${debts.size} νέες οφειλές · ${total.asMoney()}"
+        }
         val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(if (debts.size == 1) "Νέα οφειλή στην κοινόχρηστη βάση" else "${debts.size} νέες οφειλές · ${total.asMoney()}")
+            .setContentTitle(title)
             .setContentText(lines.first())
             .setStyle(NotificationCompat.InboxStyle().also { style -> lines.take(6).forEach(style::addLine) })
             .setAutoCancel(true)
