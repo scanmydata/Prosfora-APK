@@ -8,7 +8,7 @@ import kotlin.math.round
 /** Ακριβής αναγνώριση ΑΑΔΕ οφειλών, ΑΦΜ και πλάνων δόσεων. */
 object AadeInstallmentParser {
     private const val EXPECTED_AFM = "802576637"
-    private const val GAP = "[\\s\\S]{0,120}?"
+    private const val GAP = "[\\s\\S]{0,160}?"
     private val AMOUNT = Regex("([0-9][0-9.]*,[0-9]{2})")
     private val ANY_AMOUNT = Regex("[0-9][0-9.]*,[0-9]{2}")
     private val DATE = Regex("(\\d{1,2}/\\d{1,2}/\\d{4})")
@@ -30,26 +30,50 @@ object AadeInstallmentParser {
             n.contains("ΠΟΣΟ ΔΟΣΗΣ ΔΗΛΩΣΗΣ")
     }
 
-    /** Επιστρέφει αν το έγγραφο αφορά το αναμενόμενο ΑΦΜ ή άλλο ΑΦΜ. */
+    /**
+     * Ελέγχει το ΑΦΜ ανεξάρτητα από το αν το υπόλοιπο κείμενο αναγνωρίστηκε
+     * ως συγκεκριμένος τύπος οφειλής. Αυτό είναι κρίσιμο και για εξωτερικά
+     * αρχεία Drive και για αρχεία που ανεβαίνουν από την εφαρμογή.
+     */
     fun afmStatus(text: String): AfmStatus {
         val n = normalize(text)
-        val compactExpected = EXPECTED_AFM.toCharArray().joinToString("\\s*")
-        if (Regex("(?<!\\d)$compactExpected(?!\\d)").containsMatchIn(n)) return AfmStatus.MATCH
 
+        // Ακριβές ΑΦΜ, με ή χωρίς OCR separators.
+        val compactExpected = EXPECTED_AFM.toCharArray().joinToString("[\\s.:-]*")
+        if (Regex("(?<!\\d)$compactExpected(?!\\d)").containsMatchIn(n)) {
+            return AfmStatus.MATCH
+        }
+
+        // Ρητές ετικέτες ΑΦΜ, ακόμη κι αν το OCR έσπασε το Α.Φ.Μ.
         val labelled = listOf(
             Regex("Α\\s*[.:-]?\\s*Φ\\s*[.:-]?\\s*Μ\\s*[.:-]?\\s*((?:[0-9][\\s.-]*){9,12})"),
-            Regex("ΑΡΙΘΜΟΣ\\s+ΦΟΡΟΛΟΓΙΚΟΥ\\s+ΜΗΤΡΩΟΥ[\\s:.-]{0,40}((?:[0-9][\\s.-]*){9,12})"),
+            Regex("ΑΡΙΘΜΟΣ\\s+ΦΟΡΟΛΟΓΙΚΟΥ\\s+ΜΗΤΡΩΟΥ[\\s:.-]{0,80}((?:[0-9][\\s.-]*){9,12})"),
+            Regex("ΑΡ\\.?(?:\\s*)Φ\\.?(?:\\s*)Μ\\.?(?:\\s*)[\\s:.-]{0,20}((?:[0-9][\\s.-]*){9,12})"),
         )
         val values = labelled.flatMap { regex ->
             regex.findAll(n).mapNotNull { match ->
-                match.groupValues[1].filter(Char::isDigit).takeIf { it.length == 9 }
+                match.groupValues[1]
+                    .filter(Char::isDigit)
+                    .takeIf { it.length == 9 }
             }.toList()
         }
-        return when {
-            EXPECTED_AFM in values -> AfmStatus.MATCH
-            values.isNotEmpty() -> AfmStatus.MISMATCH
-            else -> AfmStatus.UNKNOWN
-        }
+
+        if (EXPECTED_AFM in values) return AfmStatus.MATCH
+        if (values.isNotEmpty()) return AfmStatus.MISMATCH
+
+        // Τελικό OCR fallback: standalone 9ψήφιο token.
+        val nineDigitTokens = Regex("(?<!\\d)(?:[0-9][\\s.-]?){9,12}(?!\\d)")
+            .findAll(n)
+            .mapNotNull { match ->
+                match.value.filter(Char::isDigit).takeIf { it.length == 9 }
+            }
+            .distinct()
+            .toList()
+
+        if (EXPECTED_AFM in nineDigitTokens) return AfmStatus.MATCH
+        if (nineDigitTokens.isNotEmpty()) return AfmStatus.MISMATCH
+
+        return AfmStatus.UNKNOWN
     }
 
     fun afmMatches(text: String): Boolean = afmStatus(text) == AfmStatus.MATCH
@@ -61,7 +85,7 @@ object AadeInstallmentParser {
 
         val total = findAmountAfterLabel(
             n,
-            listOf("ΣΥΝΟΛΙΚΟ ΠΟΣΟ ΟΦΕΙΛΗΣ", "ΣΥΝΟΛΙΚΟ ΠΟΣΟ ΟΦΕΙΛΗΣ ΔΗΛΩΣΗΣ"),
+            listOf("ΣΥΝΟΛΙΚΟ ΠΟΣΟ ΟΦΕΙΛΗΣ ΔΗΛΩΣΗΣ", "ΣΥΝΟΛΙΚΟ ΠΟΣΟ ΟΦΕΙΛΗΣ"),
         ) ?: orderedAmount(n, 0)
 
         val installmentMatch = Regex(
@@ -70,9 +94,13 @@ object AadeInstallmentParser {
         ).find(n)
 
         val installmentDate = installmentMatch?.groupValues?.getOrNull(1)
-            ?: Regex("ΠΟΣΟ\\s+ΔΟΣΗΣ\\s+ΔΗΛΩΣΗΣ.*?" + DATE.pattern).find(n)?.groupValues?.getOrNull(1)
+            ?: Regex("ΠΟΣΟ\\s+ΔΟΣΗΣ\\s+ΔΗΛΩΣΗΣ.*?" + DATE.pattern)
+                .find(n)
+                ?.groupValues
+                ?.getOrNull(1)
+
         val installmentAmount = installmentMatch?.groupValues?.last()?.let(::money)
-            ?: findAmountAfterLabel(n, listOf("ΠΟΣΟ ΔΟΣΗΣ", "ΠΟΣΟ ΔΟΣΗΣ ΔΗΛΩΣΗΣ"))
+            ?: findAmountAfterLabel(n, listOf("ΠΟΣΟ ΔΟΣΗΣ ΔΗΛΩΣΗΣ", "ΠΟΣΟ ΔΟΣΗΣ"))
             ?: orderedAmount(n, 1)
 
         val totalValue = total ?: return null
@@ -95,15 +123,21 @@ object AadeInstallmentParser {
 
     private fun findAmountAfterLabel(text: String, labels: List<String>): Double? {
         for (label in labels) {
-            Regex(Regex.escape(label) + GAP + AMOUNT.pattern).find(text)?.groupValues?.last()?.let { raw ->
-                money(raw)?.let { return it }
-            }
+            Regex(Regex.escape(label) + GAP + AMOUNT.pattern).find(text)
+                ?.groupValues
+                ?.last()
+                ?.let { raw ->
+                    money(raw)?.let { return it }
+                }
         }
         return null
     }
 
     private fun orderedAmount(text: String, index: Int): Double? =
-        ANY_AMOUNT.findAll(text).mapNotNull { money(it.value) }.toList().getOrNull(index)
+        ANY_AMOUNT.findAll(text)
+            .mapNotNull { money(it.value) }
+            .toList()
+            .getOrNull(index)
 
     private fun normalize(text: String): String = buildString(text.length) {
         text.forEach { ch ->
