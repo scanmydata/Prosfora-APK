@@ -34,7 +34,7 @@ fun DebtNotificationFocusDialog(
                     buildString {
                         append(debt.title)
                         append("\n\nΠοσό: ${debt.amount.asMoney()}")
-                        append("\nΛήξη: ${debt.dueDay.asOfferDate()}")
+                        append("\nΛήξη: ${debt.dueDay?.asOfferDate() ?: "—"}")
                         if (debt.reference.isNotBlank()) append("\nΚωδικός: ${debt.reference}")
                     },
                 )
