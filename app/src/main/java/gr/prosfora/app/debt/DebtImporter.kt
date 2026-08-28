@@ -55,6 +55,16 @@ class DebtImporter(
         found
     }
 
+    /** Συμβατό overload για τα υφιστάμενα call sites του UI. */
+    suspend fun scan(
+        alreadyImported: Set<String>,
+        onProgress: (String) -> Unit,
+    ): Report = scan(
+        alreadyImported = alreadyImported,
+        onProgress = onProgress,
+        includePdfArchive = false,
+    )
+
     suspend fun scan(
         alreadyImported: Set<String>,
         onProgress: (String) -> Unit = {},
