@@ -16,6 +16,7 @@ import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.util.asMoney
+import kotlin.math.absoluteValue
 
 object DriveNotifier {
     const val EXTRA_OPEN_DEBT_ID = "open_debt_id"
@@ -80,9 +81,10 @@ object DriveNotifier {
         val total = debts.sumOf { it.amount }
         val lines = debts.map { debt -> "${debt.title} — ${debt.amount.asMoney()} · ${debt.createdBy}" }
         val firstDebtId = debts.first().id
+        val notificationId = DEBTS_ID + firstDebtId.hashCode().absoluteValue % 100_000
         val open = PendingIntent.getActivity(
             context,
-            firstDebtId.hashCode(),
+            notificationId,
             Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(EXTRA_OPEN_DEBT_ID, firstDebtId)
@@ -102,12 +104,12 @@ object DriveNotifier {
             .setStyle(NotificationCompat.InboxStyle().also { style -> lines.take(6).forEach(style::addLine) })
             .setAutoCancel(true)
             .setContentIntent(open)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
         runCatching {
-            NotificationManagerCompat.from(context).notify(DEBTS_ID, builder.build())
+            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
             DebugLog.log(
                 "notify",
-                "Debt notification στάλθηκε · debts=${debts.size} · pendingInstallments=$openPendingInstallments · firstDebt=$firstDebtId",
+                "Debt notification στάλθηκε ΑΜΕΣΑ · debts=${debts.size} · pendingInstallments=$openPendingInstallments · firstDebt=$firstDebtId · notificationId=$notificationId",
             )
         }.onFailure {
             DebugLog.log("notify", "Debt notification ΑΠΕΤΥΧΕ: ${it.stackTraceToString().take(900)}")
@@ -124,7 +126,7 @@ object DriveNotifier {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(CHANNEL) != null) return
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Αλλαγές στο Drive", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            NotificationChannel(CHANNEL, "Αλλαγές στο Drive", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Νέα ή διαγραμμένα αρχεία και οφειλές"
             },
         )
