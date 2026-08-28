@@ -43,13 +43,13 @@ class DebtImporter(
         settings.openRouterApiKey,
     ).takeIf { it.available }
 
-    /** Τι βρέθηκε σε ένα παραστατικό. */
     data class Found(
         val fileName: String,
         val driveFileId: String,
         val debts: List<DebtEntity>,
         val route: DocumentText.Route = DocumentText.Route.NONE,
         val note: String = "",
+        val installmentPlan: AadeInstallmentParser.Info? = null,
     ) {
         val recognised: Boolean
             get() = debts.isNotEmpty()
@@ -60,7 +60,6 @@ class DebtImporter(
         val skipped: Int,
         val found: List<Found>,
     ) {
-
         val debts: List<DebtEntity>
             get() = found.flatMap { it.debts }
 
@@ -94,24 +93,14 @@ class DebtImporter(
             }
     }
 
-    /**
-     * Ανεβάζει αντίγραφο του αρχείου, το διαβάζει, και το αρχειοθετεί μόνο του.
-     *
-     * Δεν ρωτάει τι είναι: το ίδιο το κείμενο λέει και τον φορέα και το είδος.
-     * Το αρχείο ανεβαίνει πρώτα στη ρίζα των «Οφειλών» και μετακινείται στον
-     * υποφάκελο που προκύπτει· αν δεν αναγνωριστεί τίποτα, μένει στη ρίζα,
-     * όπου ο χρήστης θα το βρει για να το χειριστεί με το χέρι.
-     */
     suspend fun importFile(
         fileName: String,
         bytes: ByteArray,
     ): Found = withContext(Dispatchers.IO) {
-
         val kind = DocumentBytes.kindOf(bytes)
             ?: error("Δέχεται PDF ή εικόνα (PNG / JPG)")
 
         val inbox = workspace.debtsFolder()
-
         val id = drive.upload(
             name = fileName,
             bytes = bytes,
@@ -119,8 +108,6 @@ class DebtImporter(
             parentId = inbox,
         )
 
-        // Καταγράφεται αμέσως ως δικό μας, ώστε να μη θεωρηθεί
-        // «ξένο» στη σάρωση.
         settings.rememberDriveFiles(listOf(id))
 
         val found = read(
@@ -141,92 +128,51 @@ class DebtImporter(
         found
     }
 
-    /**
-     * Σαρώνει τους φακέλους των οφειλών για παραστατικά που δεν έχουν διαβαστεί.
-     *
-     * Το [alreadyImported] έρχεται από τη βάση: ένα αρχείο διαβάζεται μία φορά,
-     * αλλιώς κάθε σάρωση θα ξαναπερνούσε δεκάδες αρχεία από το OCR χωρίς λόγο.
-     */
     suspend fun scan(
         alreadyImported: Set<String>,
         onProgress: (String) -> Unit = {},
     ): Report = withContext(Dispatchers.IO) {
-
         var scanned = 0
         var skipped = 0
         val found = mutableListOf<Found>()
 
-        /**
-         * Και η ρίζα: εκεί μένουν όσα δεν αναγνωρίστηκαν, κι εκεί ρίχνει
-         * συνήθως ο χρήστης ό,τι κατεβάζει από τον υπολογιστή.
-         */
         val folders = buildList {
-
-            runCatching {
-                workspace.debtsFolder()
-            }.getOrNull()?.let {
-                add(it)
-            }
-
+            runCatching { workspace.debtsFolder() }.getOrNull()?.let { add(it) }
             DebtAgency.entries.forEach { agency ->
-                runCatching {
-                    workspace.debtsFolder(agency)
-                }.getOrNull()?.let {
-                    add(it)
-                }
+                runCatching { workspace.debtsFolder(agency) }.getOrNull()?.let { add(it) }
             }
         }
 
         if (folders.isEmpty()) {
-            onProgress(
-                "Δεν ήταν δυνατή η πρόσβαση στον φάκελο «Οφειλές».",
-            )
-
-            return@withContext Report(
-                scanned = 0,
-                skipped = 0,
-                found = emptyList(),
-            )
+            onProgress("Δεν ήταν δυνατή η πρόσβαση στον φάκελο «Οφειλές».")
+            return@withContext Report(0, 0, emptyList())
         }
 
         folders.forEach { folder ->
-
             val files = try {
                 workspace.documentsIn(folder)
             } catch (e: Exception) {
                 onProgress(
-                    "Σφάλμα ανάγνωσης Drive: " +
-                        "${e.message ?: "άγνωστο σφάλμα"}",
+                    "Σφάλμα ανάγνωσης Drive: ${e.message ?: "άγνωστο σφάλμα"}",
                 )
-
                 emptyList()
             }
 
             files.forEach { file ->
-
                 if (file.id in alreadyImported) {
                     skipped++
                     return@forEach
                 }
 
                 onProgress(file.name)
-
                 scanned++
 
-                /**
-                 * Τα bytes χρειάζονται:
-                 *
-                 *  * για να κριθεί αν το PDF έχει ενσωματωμένο κείμενο
-                 *  * για το ocr.space αν δεν έχει
-                 */
                 val bytes = try {
                     drive.download(file.id)
                 } catch (e: Exception) {
                     onProgress(
-                        "Αποτυχία λήψης «${file.name}»: " +
-                            "${e.message ?: "άγνωστο σφάλμα"}",
+                        "Αποτυχία λήψης «${file.name}»: ${e.message ?: "άγνωστο σφάλμα"}",
                     )
-
                     null
                 }
 
@@ -235,23 +181,35 @@ class DebtImporter(
                         fileName = file.name,
                         driveFileId = file.id,
                         bytes = bytes,
-                    ).also {
-                        found += it
+                    ).also { result ->
+                        found += result
+
+                        // Αρχεία που μπήκαν απευθείας στο Drive μετακινούνται
+                        // μόνο αν αναγνωρίστηκε έγκυρη οφειλή. Λάθος ΑΦΜ/άγνωστα
+                        // αρχεία μένουν στη θέση τους για έλεγχο.
+                        result.debts.firstOrNull()?.agency?.let { agency ->
+                            runCatching {
+                                drive.moveToFolder(
+                                    file.id,
+                                    workspace.debtsFolder(agency),
+                                )
+                            }.onFailure { moveError ->
+                                onProgress(
+                                    "Δεν μετακινήθηκε «${file.name}»: " +
+                                        (moveError.message ?: "άγνωστο σφάλμα"),
+                                )
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     onProgress(
-                        "Αποτυχία ανάγνωσης «${file.name}»: " +
-                            "${e.message ?: "άγνωστο σφάλμα"}",
+                        "Αποτυχία ανάγνωσης «${file.name}»: ${e.message ?: "άγνωστο σφάλμα"}",
                     )
                 }
             }
         }
 
-        Report(
-            scanned = scanned,
-            skipped = skipped,
-            found = found,
-        )
+        Report(scanned = scanned, skipped = skipped, found = found)
     }
 
     private suspend fun read(
@@ -259,22 +217,25 @@ class DebtImporter(
         driveFileId: String,
         bytes: ByteArray?,
     ): Found {
-
-        /**
-         * Ένας δρόμος «έπιασε» μόνο αν βγάζει οφειλή.
-         * Σκέτο κείμενο δεν αρκεί: ένα χαλασμένο επίπεδο κειμένου διαβάζεται
-         * μια χαρά και δεν λέει τίποτα.
-         */
         val result = reader.read(
             bytes,
             driveFileId,
             fileName,
         ) { text ->
-            DebtParser.parse(
-                text,
-                fileName,
-                driveFileId,
-            ).isNotEmpty()
+            DebtParser.parse(text, fileName, driveFileId).isNotEmpty()
+        }
+
+        // Η ΑΑΔΕ είναι το μόνο κλαδί όπου ο λάθος ΑΦΜ πρέπει να μπλοκάρει
+        // ολόκληρη την εισαγωγή πριν δοθεί ευκαιρία στο LLM να μαντέψει.
+        if (AadeInstallmentParser.isAadeDocument(result.text) &&
+            !AadeInstallmentParser.afmMatches(result.text)) {
+            return Found(
+                fileName = fileName,
+                driveFileId = driveFileId,
+                debts = emptyList(),
+                route = result.route,
+                note = "Απορρίφθηκε: το αρχείο δεν αφορά το ΑΦΜ 802576637",
+            )
         }
 
         val byRules = DebtParser.parse(
@@ -282,58 +243,34 @@ class DebtImporter(
             fileName,
             driveFileId,
         )
-
-        /**
-         * Τοπική μεταβλητή: η ιδιότητα της κλάσης δεν κάνει smart-cast.
-         */
+        val installmentPlan = AadeInstallmentParser.parse(result.text)
         val model = llm
 
-        if (
-            byRules.isNotEmpty() ||
-            result.text.isBlank() ||
-            model == null
-        ) {
+        if (byRules.isNotEmpty() || result.text.isBlank() || model == null) {
             return Found(
                 fileName = fileName,
                 driveFileId = driveFileId,
                 debts = byRules,
                 route = result.route,
                 note = result.note,
+                installmentPlan = installmentPlan,
             )
         }
 
-        /**
-         * Οι κανόνες δεν το αναγνώρισαν αλλά κείμενο υπάρχει.
-         * Πριν πει «δεν βρέθηκε τίποτα», ας το διαβάσει ένα μοντέλο.
-         */
         val byModel = runCatching {
-            model.extract(
-                result.text,
-                fileName,
-                driveFileId,
-            )
+            model.extract(result.text, fileName, driveFileId)
         }.getOrDefault(emptyList())
 
         return Found(
             fileName = fileName,
             driveFileId = driveFileId,
             debts = byModel,
-            route = if (byModel.isEmpty()) {
-                result.route
-            } else {
-                DocumentText.Route.LLM
-            },
-            note = if (byModel.isEmpty()) {
-                result.note
-            } else {
-                "διαβάστηκε από μοντέλο"
-            },
+            route = if (byModel.isEmpty()) result.route else DocumentText.Route.LLM,
+            note = if (byModel.isEmpty()) result.note else "διαβάστηκε από μοντέλο",
+            installmentPlan = installmentPlan,
         )
     }
 
-    /** Ο σύνδεσμος του φακέλου, για να τον ανοίξει ο χρήστης και να ρίξει αρχεία. */
     suspend fun folderUrl(): String =
-        workspace.folderUrl(
-            workspace.debtsFolder(),
-        )
+        workspace.folderUrl(workspace.debtsFolder())
 }
