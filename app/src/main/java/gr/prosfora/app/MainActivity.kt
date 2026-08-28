@@ -20,6 +20,7 @@ import gr.prosfora.app.ui.theme.ProsforaTheme
 class MainActivity : ComponentActivity() {
     private val invite = mutableStateOf<ConnectLink.Invite?>(null)
     private val pendingDebtId = mutableStateOf<String?>(null)
+    private val openPendingInstallments = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -33,7 +34,11 @@ class MainActivity : ComponentActivity() {
                 if (splashDone) {
                     ProsforaNavHost(
                         openDebtId = pendingDebtId.value,
-                        onDebtNavigationConsumed = { pendingDebtId.value = null },
+                        openPendingInstallments = openPendingInstallments.value,
+                        onDebtNavigationConsumed = {
+                            pendingDebtId.value = null
+                            openPendingInstallments.value = false
+                        },
                     )
                     invite.value?.let { pending ->
                         ConnectInviteDialog(pending) { invite.value = null }
@@ -55,5 +60,7 @@ class MainActivity : ComponentActivity() {
         invite.value = ConnectLink.parse(intent?.data)
         pendingDebtId.value = intent?.getStringExtra(DriveNotifier.EXTRA_OPEN_DEBT_ID)
             ?.takeIf { it.isNotBlank() }
+        openPendingInstallments.value =
+            intent?.getBooleanExtra(DriveNotifier.EXTRA_OPEN_PENDING_INSTALLMENTS, false) == true
     }
 }
