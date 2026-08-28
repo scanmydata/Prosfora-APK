@@ -9,16 +9,9 @@ import gr.prosfora.app.google.GoogleSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Importer οφειλών: κοινή διαδρομή για εσωτερικά uploads και εξωτερικά Drive files. */
-class DebtImporter(
-    private val drive: DriveClient,
-    private val settings: GoogleSettings,
-) {
+class DebtImporter(private val drive: DriveClient, private val settings: GoogleSettings) {
     private val workspace = DriveWorkspace(drive, settings)
-    private val reader = DocumentText(
-        drive = drive,
-        ocr = settings.ocrApiKey.takeIf { it.isNotBlank() }?.let { OcrSpaceClient(it) },
-    )
+    private val reader = DocumentText(drive = drive, ocr = settings.ocrApiKey.takeIf { it.isNotBlank() }?.let { OcrSpaceClient(it) })
     private val llm = LlmExtractor(settings.groqApiKey, settings.openRouterApiKey).takeIf { it.available }
 
     data class Found(
@@ -29,6 +22,8 @@ class DebtImporter(
         val note: String = "",
         val installmentPlan: AadeInstallmentParser.Info? = null,
         val afmMismatch: Boolean = false,
+        /** Το OCR κείμενο που ήδη παρήχθη κατά την εισαγωγή — δεν ξαναγίνεται OCR. */
+        val ocrText: String = "",
     ) { val recognised: Boolean get() = debts.isNotEmpty() }
 
     data class Report(val scanned: Int, val skipped: Int, val found: List<Found>) {
@@ -55,15 +50,7 @@ class DebtImporter(
         found
     }
 
-    /** Συμβατό overload για τα υφιστάμενα call sites του UI. */
-    suspend fun scan(
-        alreadyImported: Set<String>,
-        onProgress: (String) -> Unit,
-    ): Report = scan(
-        alreadyImported = alreadyImported,
-        onProgress = onProgress,
-        includePdfArchive = false,
-    )
+    suspend fun scan(alreadyImported: Set<String>, onProgress: (String) -> Unit): Report = scan(alreadyImported, onProgress, false)
 
     suspend fun scan(
         alreadyImported: Set<String>,
@@ -76,7 +63,6 @@ class DebtImporter(
         var skipped = 0
         val found = mutableListOf<Found>()
         val processed = alreadyImported.toMutableSet()
-
         val rootFolder = runCatching { workspace.debtsFolder() }.getOrNull()
         val folders = buildList {
             rootFolder?.let(::add)
@@ -86,21 +72,18 @@ class DebtImporter(
                 runCatching { workspace.pdfYears() }.getOrNull().orEmpty().forEach { add(it.id) }
             }
         }.distinct()
-
         if (folders.isEmpty()) return@withContext Report(0, 0, emptyList())
 
         folders.forEach { folder ->
             val files = runCatching { workspace.documentsIn(folder) }
                 .onFailure { DebugLog.log("debt-scan", "list failed folder=$folder: ${it.stackTraceToString()}") }
                 .getOrDefault(emptyList())
-
             files.forEach { file ->
                 if (!processed.add(file.id)) {
                     skipped++
                     DebugLog.log("debt-scan", "SKIP ήδη επεξεργασμένο fileId=${file.id}, name=${file.name}")
                     return@forEach
                 }
-
                 onProgress(file.name)
                 scanned++
                 val bytes = runCatching { drive.download(file.id) }
@@ -111,8 +94,7 @@ class DebtImporter(
                         found += result
                         DebugLog.log("debt-scan", "parsed ${file.id}: afmMismatch=${result.afmMismatch}, debts=${result.debts.size}, plan=${result.installmentPlan != null}")
                         if (!result.afmMismatch && (result.debts.isNotEmpty() || result.installmentPlan != null)) {
-                            runCatching { onFound(result) }
-                                .onFailure { DebugLog.log("debt-scan", "onFound failed ${file.id}: ${it.stackTraceToString()}") }
+                            runCatching { onFound(result) }.onFailure { DebugLog.log("debt-scan", "onFound failed ${file.id}: ${it.stackTraceToString()}") }
                         }
                         moveRecognised(file.id, file.name, result)
                     }
@@ -126,17 +108,12 @@ class DebtImporter(
     }
 
     private suspend fun moveRecognised(fileId: String, fileName: String, found: Found) {
-        // ΑΑΔΕ: το PDF πρέπει να μετακινείται ακόμη κι αν ο downstream parser
-        // δεν δημιούργησε DebtEntity. Το installment plan είναι αρκετό για route.
-        val agency = found.debts.firstOrNull()?.agency
-            ?: found.installmentPlan?.let { DebtAgency.AADE }
+        val agency = found.debts.firstOrNull()?.agency ?: found.installmentPlan?.let { DebtAgency.AADE }
         agency?.let {
             runCatching {
                 drive.moveToFolder(fileId, workspace.debtsFolder(it))
                 DebugLog.log("debt-drive", "Μετακινήθηκε $fileName ($fileId) -> ${it.label}; αφαιρέθηκε από την αρχική θέση")
-            }.onFailure {
-                DebugLog.log("debt-drive", "ΑΠΟΤΥΧΙΑ move $fileName ($fileId): ${it.stackTraceToString()}")
-            }
+            }.onFailure { DebugLog.log("debt-drive", "ΑΠΟΤΥΧΙΑ move $fileName ($fileId): ${it.stackTraceToString()}") }
         } ?: DebugLog.log("debt-drive", "Δεν βρέθηκε προορισμός για $fileName ($fileId)")
     }
 
@@ -148,7 +125,6 @@ class DebtImporter(
         }
         DebugLog.log("debt-read", "route=${result.route} chars=${result.text.length} note=${result.note}")
         DebugLog.dump("debt-ocr", "OCR text για $fileName", result.text)
-
         val afmStatus = AadeInstallmentParser.afmStatus(result.text)
         DebugLog.log("debt-afm", "file=$fileName status=$afmStatus expected=802576637")
         if (afmStatus != AadeInstallmentParser.AfmStatus.MATCH) {
@@ -157,25 +133,17 @@ class DebtImporter(
                 AadeInstallmentParser.AfmStatus.UNKNOWN -> "Δεν κατέστη δυνατή η επιβεβαίωση ότι το αρχείο αφορά το ΑΦΜ 802576637."
                 AadeInstallmentParser.AfmStatus.MATCH -> ""
             }
-            return Found(fileName, driveFileId, emptyList(), result.route, note, afmMismatch = true)
+            return Found(fileName, driveFileId, emptyList(), result.route, note, afmMismatch = true, ocrText = result.text)
         }
-
         val byRules = DebtParser.parse(result.text, fileName, driveFileId)
         val installmentPlan = AadeInstallmentParser.parse(result.text)
-        val rulesForImport = if (installmentPlan != null) {
-            byRules.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) }
-        } else byRules
+        val rulesForImport = if (installmentPlan != null) byRules.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) } else byRules
         val model = llm
-        if (byRules.isNotEmpty() || result.text.isBlank() || model == null) {
-            return Found(fileName, driveFileId, rulesForImport, result.route, result.note, installmentPlan)
-        }
+        if (byRules.isNotEmpty() || result.text.isBlank() || model == null) return Found(fileName, driveFileId, rulesForImport, result.route, result.note, installmentPlan, ocrText = result.text)
         val extractedByModel = runCatching { model.extract(result.text, fileName, driveFileId) }
-            .onFailure { DebugLog.log("debt-llm", "failed $fileName: ${it.stackTraceToString()}") }
-            .getOrDefault(emptyList())
-        val byModel = if (installmentPlan != null) {
-            extractedByModel.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) }
-        } else extractedByModel
-        return Found(fileName, driveFileId, byModel, if (byModel.isEmpty()) result.route else DocumentText.Route.LLM, if (byModel.isEmpty()) result.note else "διαβάστηκε από μοντέλο", installmentPlan)
+            .onFailure { DebugLog.log("debt-llm", "failed $fileName: ${it.stackTraceToString()}") }.getOrDefault(emptyList())
+        val byModel = if (installmentPlan != null) extractedByModel.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) } else extractedByModel
+        return Found(fileName, driveFileId, byModel, if (byModel.isEmpty()) result.route else DocumentText.Route.LLM, if (byModel.isEmpty()) result.note else "διαβάστηκε από μοντέλο", installmentPlan, ocrText = result.text)
     }
 
     suspend fun folderUrl(): String = workspace.folderUrl(workspace.debtsFolder())
