@@ -1,3 +1,4 @@
+```kotlin
 package gr.prosfora.app.google
 
 import gr.prosfora.app.debug.DebugLog
@@ -46,24 +47,24 @@ class DriveClient(private val accessToken: String) {
         .header("Authorization", "Bearer $accessToken")
 
     suspend fun findOrCreateFolder(
-    name: String,
-    parentId: String? = null,
-): String = withContext(Dispatchers.IO) {
+        name: String,
+        parentId: String? = null,
+    ): String = withContext(Dispatchers.IO) {
 
-    val parentClause =
-        if (parentId != null) {
-            " and '$parentId' in parents"
-        } else {
-            ""
-        }
+        val parentClause =
+            if (parentId != null) {
+                " and '$parentId' in parents"
+            } else {
+                ""
+            }
 
-    val query =
-        "mimeType='$FOLDER_MIME' and name='${name.escapeQuery()}' " +
-            "and trashed=false$parentClause"
+        val query =
+            "mimeType='$FOLDER_MIME' and name='${name.escapeQuery()}' " +
+                "and trashed=false$parentClause"
 
-    list(query).firstOrNull()?.id
-        ?: createFolder(name, parentId)
-}
+        list(query).firstOrNull()?.id
+            ?: createFolder(name, parentId)
+    }
 
     private suspend fun createFolder(
         name: String,
@@ -130,14 +131,16 @@ class DriveClient(private val accessToken: String) {
                     }
                 }
 
+                val pageInfo =
+                    if (pageToken != null) {
+                        " · συνέχεια σελίδας"
+                    } else {
+                        ""
+                    }
+
                 DebugLog.log(
                     TAG,
-                    "Drive list query: $query" +
-                        if (pageToken != null) {
-                            " · συνέχεια σελίδας"
-                        } else {
-                            "",
-                        },
+                    "Drive list query: $query$pageInfo",
                 )
 
                 val page = execute(
@@ -320,7 +323,11 @@ class DriveClient(private val accessToken: String) {
             DebugLog.log(
                 TAG,
                 "διαγραφή προσωρινού $docId: " +
-                    if (wiped) "έγινε" else "ΑΠΕΤΥΧΕ",
+                    if (wiped) {
+                        "έγινε"
+                    } else {
+                        "ΑΠΕΤΥΧΕ"
+                    },
             )
         }
     }
@@ -405,7 +412,11 @@ class DriveClient(private val accessToken: String) {
             DebugLog.log(
                 TAG,
                 "διαγραφή προσωρινού $copyId: " +
-                    if (wiped) "έγινε" else "ΑΠΕΤΥΧΕ",
+                    if (wiped) {
+                        "έγινε"
+                    } else {
+                        "ΑΠΕΤΥΧΕ"
+                    },
             )
         }
     }
@@ -587,8 +598,7 @@ class DriveClient(private val accessToken: String) {
                             items.getJSONObject(i)
 
                         val email =
-                            item
-                                .optString("emailAddress")
+                            item.optString("emailAddress")
 
                         if (
                             item.optString("type") != "user" ||
@@ -684,20 +694,18 @@ class DriveClient(private val accessToken: String) {
     ): Exception {
 
         val detail = runCatching {
-            JSONObject(
-                body.orEmpty(),
-            )
+            JSONObject(body.orEmpty())
                 .getJSONObject("error")
                 .getString("message")
         }.getOrNull()
 
+        val message =
+            detail
+                ?: body?.take(200)
+                ?: "άγνωστο σφάλμα"
+
         return IllegalStateException(
-            "Drive API $code: " +
-                (
-                    detail
-                        ?: body?.take(200)
-                        ?: "άγνωστο σφάλμα"
-                    ),
+            "Drive API $code: $message",
         )
     }
 
@@ -751,3 +759,4 @@ class DriveClient(private val accessToken: String) {
             "reader"
     }
 }
+```
