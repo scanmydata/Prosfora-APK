@@ -8,7 +8,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -50,6 +49,7 @@ private const val ROUTE_TEMPLATE_EDIT = "settings/template/edit"
 @Composable
 fun ProsforaNavHost(
     openDebtId: String? = null,
+    openPendingInstallments: Boolean = false,
     onDebtNavigationConsumed: () -> Unit = {},
 ) {
     val navController = rememberNavController()
@@ -65,8 +65,8 @@ fun ProsforaNavHost(
 
     EnsureGoogleAccess()
 
-    LaunchedEffect(openDebtId) {
-        if (!openDebtId.isNullOrBlank()) {
+    LaunchedEffect(openDebtId, openPendingInstallments) {
+        if (openPendingInstallments || !openDebtId.isNullOrBlank()) {
             navController.navigate(ROUTE_DEBTS) {
                 popUpTo(ROUTE_STATS) { saveState = true }
                 launchSingleTop = true
@@ -141,11 +141,20 @@ fun ProsforaNavHost(
             composable(ROUTE_TEMPLATE_EDIT) { TemplateEditorScreen(onBack = { navController.popBackStack() }) }
         }
 
-        openDebtId?.takeIf { it.isNotBlank() }?.let { debtId ->
-            DebtNotificationFocusDialog(
-                debtId = debtId,
-                onDismiss = onDebtNavigationConsumed,
-            )
+        when {
+            openPendingInstallments -> {
+                DebtNotificationFocusDialog(
+                    debtId = null,
+                    pendingInstallments = true,
+                    onDismiss = onDebtNavigationConsumed,
+                )
+            }
+            !openDebtId.isNullOrBlank() -> {
+                DebtNotificationFocusDialog(
+                    debtId = openDebtId,
+                    onDismiss = onDebtNavigationConsumed,
+                )
+            }
         }
     }
 }
