@@ -1,0 +1,166 @@
+name: Apply requested fixes once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply_requested_fixes_once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply fixes and commit to main
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          ROOT = Path('.')
+
+          def read(rel):
+              return (ROOT / rel).read_text(encoding='utf-8')
+
+          def write(rel, text):
+              (ROOT / rel).write_text(text, encoding='utf-8')
+
+          def extract_function(text, signature):
+              start = text.find(signature)
+              if start < 0:
+                  raise SystemExit(f'Cannot find function: {signature}')
+              brace = text.find('{', start)
+              if brace < 0:
+                  raise SystemExit(f'Cannot find opening brace: {signature}')
+              depth = 0
+              i = brace
+              state = 'code'
+              while i < len(text):
+                  c = text[i]
+                  n = text[i+1] if i + 1 < len(text) else ''
+                  if state == 'code':
+                      if c == '"': state = 'string'
+                      elif c == '/' and n == '/': state = 'line'; i += 1
+                      elif c == '/' and n == '*': state = 'block'; i += 1
+                      elif c == '{': depth += 1
+                      elif c == '}':
+                          depth -= 1
+                          if depth == 0:
+                              return start, i + 1
+                  elif state == 'string':
+                      if c == '\\': i += 1
+                      elif c == '"': state = 'code'
+                  elif state == 'line':
+                      if c == '\n': state = 'code'
+                  else:
+                      if c == '*' and n == '/': state = 'code'; i += 1
+                  i += 1
+              raise SystemExit(f'Unclosed function: {signature}')
+
+          # 1) AADE parser: distinguish mismatch from missing AFM.
+          p = 'app/src/main/java/gr/prosfora/app/debt/AadeInstallmentParser.kt'
+          s = read(p)
+          marker = '    data class Info(\n        val totalAmount: Double,\n        val installmentAmount: Double,\n        val installmentCount: Int,\n        val firstDueDay: Long,\n    )\n'
+          if marker not in s:
+              raise SystemExit('AADE Info marker not found')
+          if 'enum class AfmStatus' not in s:
+              s = s.replace(marker, marker + '''\n    enum class AfmStatus { MATCH, MISMATCH, UNKNOWN }\n''', 1)
+          old_start = s.find('    /**\n     * Ελέγχει το ΑΦΜ')
+          old_end = s.find('    /** Αναγνωρίζει συνολικό ποσό', old_start)
+          if old_start < 0 or old_end < 0:
+              raise SystemExit('AADE AFM function block not found')
+          new_afm = '''    /** Επιστρέφει αν το έγγραφο αφορά το αναμενόμενο ΑΦΜ ή άλλο ΑΦΜ. */\n    fun afmStatus(text: String): AfmStatus {\n        val n = normalize(text)\n        val compactExpected = EXPECTED_AFM.toCharArray().joinToString("\\\\s*")\n        if (Regex("(?<!\\\\d)$compactExpected(?!\\\\d)").containsMatchIn(n)) return AfmStatus.MATCH\n\n        val labelled = listOf(\n            Regex("\\\\bΑΦΜ\\\\b[\\\\s:.-]{0,40}((?:[0-9][\\\\s.-]*){9,12})"),\n            Regex("ΑΡΙΘΜΟΣ\\\\s+ΦΟΡΟΛΟΓΙΚΟΥ\\\\s+ΜΗΤΡΩΟΥ[\\\\s:.-]{0,40}((?:[0-9][\\\\s.-]*){9,12})"),\n        )\n        val values = labelled.flatMap { regex ->\n            regex.findAll(n).mapNotNull { match ->\n                match.groupValues[1].filter(Char::isDigit).takeIf { it.length == 9 }\n            }.toList()\n        }\n        return when {\n            EXPECTED_AFM in values -> AfmStatus.MATCH\n            values.isNotEmpty() -> AfmStatus.MISMATCH\n            else -> AfmStatus.UNKNOWN\n        }\n    }\n\n    fun afmMatches(text: String): Boolean = afmStatus(text) == AfmStatus.MATCH\n\n'''
+          s = s[:old_start] + new_afm + s[old_end:]
+          s = s.replace('        if (!isAadeDocument(text) || !afmMatches(text)) return null', '        if (!isAadeDocument(text) || afmStatus(text) == AfmStatus.MISMATCH) return null', 1)
+          write(p, s)
+
+          # 2) Importer: expose mismatch and always normalize AADE import amount to total.
+          p = 'app/src/main/java/gr/prosfora/app/debt/DebtImporter.kt'
+          s = read(p)
+          s = s.replace('        val installmentPlan: AadeInstallmentParser.Info? = null,\n', '        val installmentPlan: AadeInstallmentParser.Info? = null,\n        val afmMismatch: Boolean = false,\n', 1)
+          old = '''        // Η ΑΑΔΕ είναι το μόνο κλαδί όπου ο λάθος ΑΦΜ πρέπει να μπλοκάρει\n        // ολόκληρη την εισαγωγή πριν δοθεί ευκαιρία στο LLM να μαντέψει.\n        if (AadeInstallmentParser.isAadeDocument(result.text) &&\n            !AadeInstallmentParser.afmMatches(result.text)) {\n            return Found(\n                fileName = fileName,\n                driveFileId = driveFileId,\n                debts = emptyList(),\n                route = result.route,\n                note = "Απορρίφθηκε: το αρχείο δεν αφορά το ΑΦΜ 802576637",\n            )\n        }\n\n        val byRules = DebtParser.parse(\n            result.text,\n            fileName,\n            driveFileId,\n        )\n        val installmentPlan = AadeInstallmentParser.parse(result.text)\n'''
+          new = '''        // Μόνο όταν βρέθηκε ρητά διαφορετικό ΑΦΜ απορρίπτεται το αρχείο.\n        // Άγνωστο/χαμένο ΑΦΜ από OCR δεν αντιμετωπίζεται ως «άλλο ΑΦΜ».\n        val afmStatus = AadeInstallmentParser.afmStatus(result.text)\n        if (AadeInstallmentParser.isAadeDocument(result.text) &&\n            afmStatus == AadeInstallmentParser.AfmStatus.MISMATCH) {\n            return Found(\n                fileName = fileName,\n                driveFileId = driveFileId,\n                debts = emptyList(),\n                route = result.route,\n                note = "Απορρίφθηκε: το αρχείο δεν αφορά το ΑΦΜ 802576637",\n                afmMismatch = true,\n            )\n        }\n\n        val byRules = DebtParser.parse(\n            result.text,\n            fileName,\n            driveFileId,\n        )\n        val installmentPlan = AadeInstallmentParser.parse(result.text)\n        val rulesForImport = if (installmentPlan != null) {\n            byRules.map {\n                it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay)\n            }\n        } else {\n            byRules\n        }\n'''
+          if old not in s: raise SystemExit('Importer read block not found')
+          s = s.replace(old, new, 1)
+          s = s.replace('                debts = byRules,\n', '                debts = rulesForImport,\n', 1)
+          old_model = '''        val byModel = runCatching {\n            model.extract(result.text, fileName, driveFileId)\n        }.getOrDefault(emptyList())\n\n        return Found(\n'''
+          new_model = '''        val extractedByModel = runCatching {\n            model.extract(result.text, fileName, driveFileId)\n        }.getOrDefault(emptyList())\n        val byModel = if (installmentPlan != null) {\n            extractedByModel.map {\n                it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay)\n            }\n        } else {\n            extractedByModel\n        }\n\n        return Found(\n'''
+          if old_model not in s: raise SystemExit('Importer model block not found')
+          s = s.replace(old_model, new_model, 1)
+          write(p, s)
+
+          # 3) Debts screen: wrong-AFM popup with optional Drive deletion.
+          p = 'app/src/main/java/gr/prosfora/app/ui/debts/DebtsScreen.kt'
+          s = read(p)
+          s = s.replace('import androidx.compose.material3.CardDefaults\n', 'import androidx.compose.material3.CardDefaults\nimport androidx.compose.material3.AlertDialog\n', 1)
+          state_marker = '    var pending by remember { mutableStateOf<DebtImporter.Report?>(null) }\n'
+          if state_marker not in s: raise SystemExit('Debts pending state not found')
+          s = s.replace(state_marker, state_marker + '''    var afmRejected by remember { mutableStateOf<DebtImporter.Found?>(null) }\n    var afmRejectedQueue by remember { mutableStateOf(emptyList<DebtImporter.Found>()) }\n    var pendingAfterAfm by remember { mutableStateOf<DebtImporter.Report?>(null) }\n''', 1)
+          toast = '    fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()\n'
+          if toast not in s: raise SystemExit('Debts toast marker not found')
+          helper = '''\n    fun advanceAfmReview() {\n        val remaining = afmRejectedQueue.drop(1)\n        afmRejectedQueue = remaining\n        if (remaining.isNotEmpty()) {\n            afmRejected = remaining.first()\n        } else {\n            val report = pendingAfterAfm\n            pendingAfterAfm = null\n            afmRejected = null\n            if (report != null) {\n                if (report.debts.isEmpty()) toast(report.summary) else pending = report\n            }\n        }\n    }\n'''
+          s = s.replace(toast, toast + helper, 1)
+          old_picker = '''            result.onSuccess { found ->\n                pending = DebtImporter.Report(scanned = 1, skipped = 0, found = listOf(found))\n            }.onFailure { toast("Δεν έγινε η εισαγωγή: ${it.reason()}") }\n'''
+          new_picker = '''            result.onSuccess { found ->\n                if (found.afmMismatch) {\n                    afmRejectedQueue = listOf(found)\n                    afmRejected = found\n                    pendingAfterAfm = null\n                } else {\n                    pending = DebtImporter.Report(scanned = 1, skipped = 0, found = listOf(found))\n                }\n            }.onFailure { toast("Δεν έγινε η εισαγωγή: ${it.reason()}") }\n'''
+          if old_picker not in s: raise SystemExit('Picker success block not found')
+          s = s.replace(old_picker, new_picker, 1)
+          old_scan = '''            result.onSuccess { report ->\n                if (report.debts.isEmpty()) toast(report.summary) else pending = report\n            }.onFailure { toast("Η σάρωση απέτυχε: ${it.reason()}") }\n'''
+          new_scan = '''            result.onSuccess { report ->\n                val mismatches = report.found.filter { it.afmMismatch }\n                val valid = report.found.filterNot { it.afmMismatch }\n                if (mismatches.isNotEmpty()) {\n                    afmRejectedQueue = mismatches\n                    afmRejected = mismatches.first()\n                    pendingAfterAfm = report.copy(found = valid)\n                } else if (report.debts.isEmpty()) {\n                    toast(report.summary)\n                } else {\n                    pending = report\n                }\n            }.onFailure { toast("Η σάρωση απέτυχε: ${it.reason()}") }\n'''
+          if old_scan not in s: raise SystemExit('Scan success block not found')
+          s = s.replace(old_scan, new_scan, 1)
+          popup = '''\n    afmRejected?.let { found ->\n        AlertDialog(\n            onDismissRequest = { advanceAfmReview() },\n            title = { Text("Το αρχείο αφορά άλλο ΑΦΜ") },\n            text = {\n                Text(\n                    "Το «${found.fileName}» δεν αφορά το ΑΦΜ 802576637. " +\n                        "Θέλεις να διαγραφεί από το Google Drive;",\n                )\n            },\n            confirmButton = {\n                TextButton(onClick = {\n                    val fileId = found.driveFileId\n                    val fileName = found.fileName\n                    scope.launch {\n                        runCatching { DriveClient(authorizer.accessToken()).delete(fileId) }\n                            .onSuccess { toast("Το «$fileName» διαγράφηκε από το Drive.") }\n                            .onFailure { toast("Δεν ήταν δυνατή η διαγραφή από το Drive: ${it.reason()}") }\n                        advanceAfmReview()\n                    }\n                }) { Text("Διαγραφή από Drive", color = DeleteRed) }\n            },\n            dismissButton = {\n                TextButton(onClick = { advanceAfmReview() }) { Text("Να παραμείνει") }\n            },\n        )\n    }\n'''
+          pending_marker = '    pending?.let { report ->\n'
+          if pending_marker not in s: raise SystemExit('Pending dialog marker not found')
+          s = s.replace(pending_marker, popup + '\n' + pending_marker, 1)
+          write(p, s)
+
+          # 4) Offer additional cost field: never reformat on every keystroke.
+          p = 'app/src/main/java/gr/prosfora/app/ui/offers/OfferDetailScreen.kt'
+          s = read(p)
+          start, end = extract_function(s, 'private fun ExtraCost(')
+          fn = s[start:end]
+          if 'amount.asNumber()' not in fn:
+              raise SystemExit('ExtraCost amount formatter not found')
+          fn = fn.replace(') {\n', ') {\n    var amountText by remember(label, enabled) {\n        mutableStateOf(if (amount > 0.0) amount.toString().removeSuffix(".0") else "")\n    }\n', 1)
+          fn = re.sub(r'value\s*=\s*if\s*\(amount\s*>\s*0\.0\)\s*amount\.asNumber\(\)\s*else\s*""', 'value = amountText', fn, count=1)
+          fn = re.sub(r'onValueChange\s*=\s*\{\s*onAmount\(it\.parseDecimal\(\)\s*\?\:\s*0\.0\)\s*\}', 'onValueChange = { text ->\n                        amountText = text\n                        onAmount(text.parseDecimal() ?: 0.0)\n                    }', fn, count=1)
+          if 'value = amountText' not in fn or 'amountText = text' not in fn:
+              raise SystemExit('ExtraCost patch did not apply')
+          s = s[:start] + fn + s[end:]
+          write(p, s)
+
+          # 5) PDF template: rename clean value to ΣΥΝΟΛΟ; add generic extra/VAT rows only if absent; grand total stays final.
+          p = 'app/src/main/java/gr/prosfora/app/doc/DocxTemplate.kt'
+          s = read(p)
+          needle = '        result = applyConditional(result, VAT_ONLY, details.offer.vatIncluded)\n        return fillSimpleFields(result, details)'
+          if needle not in s: raise SystemExit('Docx renderXml tail not found')
+          s = s.replace(needle, '        result = normalizeTotalsLayout(result, details)\n        result = applyConditional(result, VAT_ONLY, details.offer.vatIncluded)\n        return fillSimpleFields(result, details)', 1)
+          helper = r'''\n    /** Προσαρμόζει τον πίνακα τιμών χωρίς να καταστρέφει τη μορφοποίηση του template. */\n    private fun normalizeTotalsLayout(xml: String, details: OfferWithDetails): String {\n        val baseMarker = listOf(\n            "&lt;&lt;[Καθαρή Αξία]&gt;&gt;",\n            "&lt;&lt;[Σύνολο]&gt;&gt;",\n        ).mapNotNull { marker -> xml.indexOf(marker).takeIf { it >= 0 } }.minOrNull() ?: return xml\n\n        val (baseOpen, baseClose) = enclosingTag(xml, baseMarker, "w:tr")\n        var baseRow = xml.substring(baseOpen, baseClose)\n        baseRow = baseRow.replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο]&gt;&gt;")\n        baseRow = baseRow.replaceFirst("ΚΑΘΑΡΗ ΑΞΙΑ</w:t>", "ΣΥΝΟΛΟ</w:t>")\n        baseRow = baseRow.replaceFirst("Καθαρή Αξία</w:t>", "Σύνολο</w:t>")\n        var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)\n\n        fun cloneRow(label: String, marker: String): String {\n            var copy = baseRow\n            copy = copy.replace("&lt;&lt;[Σύνολο]&gt;&gt;", "&lt;&lt;[$marker]&gt;&gt;")\n            copy = copy.replaceFirst("ΣΥΝΟΛΟ</w:t>", "$label</w:t>")\n            copy = copy.replaceFirst("Σύνολο</w:t>", "$label</w:t>")\n            return copy\n        }\n\n        val extra = details.scaffoldingCost + details.permitCost\n        val hasSpecificExtra = result.contains("&lt;&lt;[Σκαλωσιά]&gt;&gt;") ||\n            result.contains("&lt;&lt;[Άδεια]&gt;&gt;") ||\n            result.contains("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;")\n        val additions = buildString {\n            if (extra > 0.0 && !hasSpecificExtra) {\n                append(cloneRow("ΠΡΟΣΘΕΤΟ ΚΟΣΤΟΣ", "Πρόσθετο Κόστος"))\n            }\n            if (details.offer.vatIncluded && !result.contains("&lt;&lt;[ΦΠΑ]&gt;&gt;")) {\n                append(cloneRow("ΦΠΑ", "ΦΠΑ"))\n            }\n        }\n\n        val grandMarkers = listOf("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;")\n        val grandMarker = grandMarkers.mapNotNull { m -> result.indexOf(m).takeIf { it >= 0 } }.minOrNull()\n        if (additions.isNotEmpty() && grandMarker != null) {\n            val (grandOpen, _) = enclosingTag(result, grandMarker, "w:tr")\n            result = result.substring(0, grandOpen) + additions + result.substring(grandOpen)\n        }\n\n        val currentGrandMarker = grandMarkers.mapNotNull { m -> result.indexOf(m).takeIf { it >= 0 } }.minOrNull()\n        if (currentGrandMarker != null) {\n            val (grandOpen, grandClose) = enclosingTag(result, currentGrandMarker, "w:tr")\n            var grandRow = result.substring(grandOpen, grandClose)\n            grandRow = grandRow.replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΓΕΝΙΚΟ ΣΥΝΟΛΟ</w:t>")\n            result = result.substring(0, grandOpen) + grandRow + result.substring(grandClose)\n        }\n        return result\n    }\n\n'''
+          fill_marker = '    private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {'
+          if fill_marker not in s: raise SystemExit('Docx fillSimpleFields marker not found')
+          s = s.replace(fill_marker, helper + fill_marker, 1)
+          s = s.replace('.replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", escape(details.total.asMoney()))', '.replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", escape(details.linesTotal.asMoney()))\n            .replace("&lt;&lt;[Σύνολο]&gt;&gt;", escape(details.linesTotal.asMoney()))\n            .replace("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;", escape((details.scaffoldingCost + details.permitCost).asMoney()))', 1)
+          write(p, s)
+
+          # Remove this one-shot workflow from the final commit.
+          Path('.github/workflows/apply_requested_fixes_once.yml').unlink()
+          print('All requested fixes applied.')
+          PY
+
+          git config user.name "scanmydata"
+          git config user.email "scanmydata@hotmail.com"
+          git add app/src/main/java/gr/prosfora/app/debt/AadeInstallmentParser.kt \
+                  app/src/main/java/gr/prosfora/app/debt/DebtImporter.kt \
+                  app/src/main/java/gr/prosfora/app/ui/debts/DebtsScreen.kt \
+                  app/src/main/java/gr/prosfora/app/ui/offers/OfferDetailScreen.kt \
+                  app/src/main/java/gr/prosfora/app/doc/DocxTemplate.kt \
+                  .github/workflows/apply_requested_fixes_once.yml
+          git commit -m "fix: AFM deletion prompt, extra costs input and PDF totals"
+          git push origin HEAD:main
