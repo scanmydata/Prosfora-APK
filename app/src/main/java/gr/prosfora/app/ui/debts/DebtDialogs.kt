@@ -55,15 +55,11 @@ import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
 import gr.prosfora.app.util.parseDecimal
 import kotlinx.coroutines.launch
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneOffset
 
-/**
- * Χειροκίνητη καταχώρηση ή διόρθωση μιας οφειλής.
- *
- * Είναι και ο δρόμος διόρθωσης για ό,τι διάβασε λάθος το OCR: όλα τα πεδία
- * μένουν ελεύθερα, τίποτα δεν κλειδώνει επειδή «ήρθε από αρχείο».
- */
 @Composable
 fun DebtEditorDialog(
     debt: DebtEntity,
@@ -185,7 +181,6 @@ fun DebtEditorDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    // Ένα λάθος αρχείο φτιάχνει δέκα γραμμές· να σβήνονται μαζί
                     TextButton(onClick = { confirmFile = true }) {
                         Text("Διαγραφή όλων από αυτό το αρχείο", color = DeleteRed)
                     }
@@ -199,7 +194,6 @@ fun DebtEditorDialog(
                     val parsed = DebtParser.parsePeriod(period)
                     val month = parsed?.month ?: 0
                     val year = parsed?.year ?: 0
-                    // Χωρίς ρητή λήξη μπαίνει η προθεσμία που ισχύει για το είδος
                     val dueDay = DebtParser.parseDay(due)
                         ?: DebtEntity.defaultDue(kind, year, month)
                     onSave(
@@ -255,6 +249,63 @@ fun DebtEditorDialog(
     }
 }
 
+private enum class InstallmentImportMode { TOTAL, INSTALLMENTS }
+
+private fun lastBusinessDay(year: Int, month: Int): LocalDate {
+    var date = YearMonth.of(year, month).atEndOfMonth()
+    while (date.dayOfWeek == DayOfWeek.SATURDAY || date.dayOfWeek == DayOfWeek.SUNDAY) {
+        date = date.minusDays(1)
+    }
+    return date
+}
+
+private fun roundMoney(value: Double): Double = Math.round(value * 100.0) / 100.0
+
+private fun materializeInstallmentDebt(
+    debt: DebtEntity,
+    plan: AadeInstallmentParser.Info,
+    mode: InstallmentImportMode,
+): List<DebtEntity> {
+    if (mode == InstallmentImportMode.TOTAL) {
+        return listOf(
+            debt.copy(
+                amount = plan.totalAmount,
+                dueDay = plan.firstDueDay,
+            ),
+        )
+    }
+
+    val firstDue = LocalDate.ofEpochDay(plan.firstDueDay)
+    return (0 until plan.installmentCount).map { index ->
+        val targetMonth = firstDue.plusMonths(index.toLong())
+        val due = if (index == 0) {
+            firstDue
+        } else {
+            lastBusinessDay(targetMonth.year, targetMonth.monthValue)
+        }
+        val amount = if (index == plan.installmentCount - 1) {
+            roundMoney(plan.totalAmount - plan.installmentAmount * (plan.installmentCount - 1))
+        } else {
+            plan.installmentAmount
+        }
+        debt.copy(
+            id = DebtEntity.idFor(
+                debt.kind,
+                debt.periodYear,
+                debt.periodMonth,
+                "${debt.reference}|dose:${index + 1}/${plan.installmentCount}",
+                debt.personName,
+            ),
+            amount = amount,
+            dueDay = due.toEpochDay(),
+            description = buildString {
+                append(debt.description.ifBlank { "Βεβαιωμένη οφειλή" })
+                append(" · δόση ${index + 1}/${plan.installmentCount}")
+            },
+        )
+    }
+}
+
 /**
  * Τι διαβάστηκε από τα παραστατικά, πριν μπει στη βάση.
  *
@@ -269,12 +320,31 @@ fun DebtImportDialog(
     onConfirm: (List<DebtEntity>) -> Unit,
 ) {
     val debts = report.debts
-    // Όλα προεπιλεγμένα· η αρχικοποίηση γίνεται μία φορά και όχι σε κάθε
-    // recomposition, αλλιώς το ξεμαρκάρισμα θα αναιρούνταν αμέσως
     val chosen = remember(report) {
         mutableStateMapOf<String, Boolean>().apply { debts.forEach { put(it.id, true) } }
     }
+    val installmentModes = remember(report) {
+        mutableStateMapOf<String, InstallmentImportMode>().apply {
+            report.found.forEach { found ->
+                if (found.installmentPlan != null) {
+                    put(found.driveFileId, InstallmentImportMode.TOTAL)
+                }
+            }
+        }
+    }
     val selected = debts.filter { chosen[it.id] == true }
+    val materializedSelected = selected.flatMap { debt ->
+        val plan = report.found.firstOrNull { it.driveFileId == debt.driveFileId }?.installmentPlan
+        if (plan == null) {
+            listOf(debt)
+        } else {
+            materializeInstallmentDebt(
+                debt,
+                plan,
+                installmentModes[debt.driveFileId] ?: InstallmentImportMode.TOTAL,
+            )
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -296,6 +366,43 @@ fun DebtImportDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = DeleteRed,
                     )
+                }
+                report.found.filter { it.installmentPlan != null }.forEach { found ->
+                    val plan = found.installmentPlan ?: return@forEach
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.secondaryContainer)
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            "ΑΑΔΕ σε δόσεις — ${found.fileName}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Συνολικό ${plan.totalAmount.asMoney()} · δόση ${plan.installmentAmount.asMoney()} · " +
+                                "${plan.installmentCount} δόσεις · πρώτη ${plan.firstDueDay.asOfferDate()}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = installmentModes[found.driveFileId] == InstallmentImportMode.TOTAL,
+                                onClick = {
+                                    installmentModes[found.driveFileId] = InstallmentImportMode.TOTAL
+                                },
+                                label = { Text("Συνολική οφειλή") },
+                            )
+                            FilterChip(
+                                selected = installmentModes[found.driveFileId] == InstallmentImportMode.INSTALLMENTS,
+                                onClick = {
+                                    installmentModes[found.driveFileId] = InstallmentImportMode.INSTALLMENTS
+                                },
+                                label = { Text("Δημιουργία δόσεων") },
+                            )
+                        }
+                    }
                 }
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 debts.forEach { debt ->
@@ -329,10 +436,11 @@ fun DebtImportDialog(
                         Text(debt.amount.asMoney(), fontWeight = FontWeight.Bold)
                     }
                 }
-                if (selected.isNotEmpty()) {
+                if (materializedSelected.isNotEmpty()) {
                     HorizontalDivider(Modifier.padding(vertical = 4.dp))
                     Text(
-                        "Σύνολο επιλεγμένων: ${selected.sumOf { it.amount }.asMoney()}",
+                        "Σύνολο επιλεγμένων: ${materializedSelected.sumOf { it.amount }.asMoney()} · " +
+                            "εγγραφές: ${materializedSelected.size}",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                     )
@@ -341,22 +449,14 @@ fun DebtImportDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = selected.isNotEmpty(),
-                onClick = { onConfirm(selected) },
+                enabled = materializedSelected.isNotEmpty(),
+                onClick = { onConfirm(materializedSelected) },
             ) { Text("Αποθήκευση") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Άκυρο") } },
     )
 }
 
-/**
- * Το ευρετήριο των εργαζομένων.
- *
- * Στις μισθοδοτικές καταστάσεις τα ονόματα γράφονται με λατινικά κεφαλαία και
- * ανάποδα («BUTT HURARA»). Το ψευδώνυμο είναι πώς τους ξέρει ο χρήστης· ο
- * σύνδεσμος με το τυπωμένο όνομα μένει, ώστε η επόμενη κατάσταση να ταιριάξει
- * στο ίδιο άτομο.
- */
 @Composable
 fun EmployeeIndexDialog(
     repository: DebtRepository,
@@ -390,8 +490,6 @@ fun EmployeeIndexDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                // Όσοι αποχώρησαν πέφτουν στο τέλος: δεν σβήνονται, αλλά ούτε
-                // στέκονται ανάμεσα σε αυτούς που πληρώνονται κάθε μήνα
                 people.sortedBy { it.gone() }.forEach { employee ->
                     Row(
                         Modifier
@@ -428,8 +526,6 @@ fun EmployeeIndexDialog(
                         totals[employee.id]?.takeIf { it > 0.0 }?.let {
                             Text(it.asMoney(), style = MaterialTheme.typography.bodyMedium)
                         }
-                        // Η γραμμή ανοίγει και με απλό πάτημα· το εικονίδιο
-                        // είναι εκεί για να φαίνεται ότι γίνεται
                         IconButton(onClick = { editing = employee }) {
                             Icon(Icons.Default.Edit, contentDescription = "Επεξεργασία")
                         }
@@ -457,12 +553,6 @@ fun EmployeeIndexDialog(
     }
 }
 
-/**
- * Ψευδώνυμο, ημερομηνία αποχώρησης, και διαγραφή.
- *
- * Η αποχώρηση είναι προαιρετική και δεν κρύβει τον εργαζόμενο: τον στέλνει στο
- * τέλος της λίστας. Οι περσινές του μισθοδοσίες μένουν και χρειάζονται όνομα.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EmployeeEditor(
@@ -520,8 +610,6 @@ private fun EmployeeEditor(
             onDismissRequest = { picking = false },
             confirmButton = {
                 TextButton(onClick = {
-                    // Ο DatePicker δουλεύει σε UTC· η μετατροπή γίνεται εκεί,
-                    // αλλιώς η τοπική ζώνη μετακινεί τη μέρα κατά μία
                     state.selectedDateMillis?.let { millis ->
                         left = java.time.Instant.ofEpochMilli(millis)
                             .atZone(ZoneOffset.UTC).toLocalDate().toEpochDay()
