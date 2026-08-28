@@ -15,7 +15,6 @@ import java.util.concurrent.TimeUnit
 
 /** Minimal Google Drive REST v3 client. */
 class DriveClient(private val accessToken: String) {
-
     data class DriveFile(
         val id: String,
         val name: String,
@@ -30,9 +29,7 @@ class DriveClient(private val accessToken: String) {
         .writeTimeout(120, TimeUnit.SECONDS)
         .build()
 
-    private fun builder(url: String) = Request.Builder()
-        .url(url)
-        .header("Authorization", "Bearer $accessToken")
+    private fun builder(url: String) = Request.Builder().url(url).header("Authorization", "Bearer $accessToken")
 
     suspend fun findOrCreateFolder(name: String, parentId: String? = null): String = withContext(Dispatchers.IO) {
         val parentClause = if (parentId != null) " and '$parentId' in parents" else ""
@@ -44,10 +41,7 @@ class DriveClient(private val accessToken: String) {
         val metadata = JSONObject().put("name", name).put("mimeType", FOLDER_MIME).apply {
             if (parentId != null) put("parents", JSONArray().put(parentId))
         }
-        val request = builder("$API/files?fields=id")
-            .post(metadata.toString().toRequestBody(JSON))
-            .build()
-        execute(request) { JSONObject(it).getString("id") }
+        execute(builder("$API/files?fields=id").post(metadata.toString().toRequestBody(JSON)).build()) { JSONObject(it).getString("id") }
     }
 
     suspend fun list(query: String): List<DriveFile> = withContext(Dispatchers.IO) {
@@ -107,18 +101,11 @@ class DriveClient(private val accessToken: String) {
         execute(builder(url).post(body).build()) { JSONObject(it).getString("id") }
     }
 
-    /**
-     * OCR μέσω προσωρινού Google Doc. Το προσωρινό αρχείο διαγράφεται πάντα.
-     * Αν το οριστικό DELETE αποτύχει, μεταφέρεται άμεσα στον κάδο ώστε να μη
-     * μένει ορατό στον φάκελο/Drive του χρήστη.
-     */
     suspend fun readTextOf(bytes: ByteArray, name: String, mimeType: String, ocrLanguage: String = "el"): String {
         DebugLog.log(TAG, "OCR upload «$name» ($mimeType, ${bytes.size} bytes)")
         val docId = upload("prosfora-ocr-$name", bytes, mimeType, convertToGoogleDoc = true, ocrLanguage = ocrLanguage)
         return try {
-            export(docId, TEXT_MIME).toString(Charsets.UTF_8).also {
-                DebugLog.log(TAG, "OCR export $docId: ${it.length} χαρακτήρες")
-            }
+            export(docId, TEXT_MIME).toString(Charsets.UTF_8)
         } finally {
             cleanupTemporaryFile(docId, "OCR upload $name")
         }
@@ -134,9 +121,7 @@ class DriveClient(private val accessToken: String) {
         DebugLog.log(TAG, "OCR copy $fileId")
         val copyId = copyAsGoogleDoc(fileId, ocrLanguage)
         return try {
-            export(copyId, TEXT_MIME).toString(Charsets.UTF_8).also {
-                DebugLog.log(TAG, "OCR export $copyId: ${it.length} χαρακτήρες")
-            }
+            export(copyId, TEXT_MIME).toString(Charsets.UTF_8)
         } finally {
             cleanupTemporaryFile(copyId, "OCR copy $fileId")
         }
@@ -234,9 +219,7 @@ class DriveClient(private val accessToken: String) {
         }
 
     private fun driveError(code: Int, body: String?): Exception {
-        val detail = runCatching {
-            JSONObject(body.orEmpty()).getJSONObject("error").getString("message")
-        }.getOrNull()
+        val detail = runCatching { JSONObject(body.orEmpty()).getJSONObject("error").getString("message") }.getOrNull()
         return IllegalStateException("Drive API $code: ${detail ?: body?.take(200) ?: "άγνωστο σφάλμα"}")
     }
 
@@ -247,10 +230,13 @@ class DriveClient(private val accessToken: String) {
         private const val TAG = "drive"
         private const val API = "https://www.googleapis.com/drive/v3"
         private const val UPLOAD = "https://www.googleapis.com/upload/drive/v3"
-        private const val FOLDER_MIME = "application/vnd.google-apps.folder"
-        private const val DOC_MIME = "application/vnd.google-apps.document"
-        private const val TEXT_MIME = "text/plain"
-        const val ROLE_READER = "reader"
+        private val JSON = "application/json; charset=utf-8".toMediaType()
+        const val FOLDER_MIME = "application/vnd.google-apps.folder"
+        const val DOC_MIME = "application/vnd.google-apps.document"
+        const val DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        const val PDF_MIME = "application/pdf"
+        const val TEXT_MIME = "text/plain"
         const val ROLE_WRITER = "writer"
+        const val ROLE_READER = "reader"
     }
 }
