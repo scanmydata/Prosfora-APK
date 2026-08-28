@@ -46,22 +46,24 @@ class DriveClient(private val accessToken: String) {
         .header("Authorization", "Bearer $accessToken")
 
     suspend fun findOrCreateFolder(
-        name: String,
-        parentId: String? = null,
-    ): String = withContext(Dispatchers.IO) {
-        val parentClause =
-            if (parentId != null) {
-                " and '$parentId' in parents"
-            } else {
-                ""
+    name: String,
+    parentId: String? = null,
+): String = withContext(Dispatchers.IO) {
 
-        val query =
-            "mimeType='$FOLDER_MIME' and name='${name.escapeQuery()}' " +
-                "and trashed=false$parentClause"
+    val parentClause =
+        if (parentId != null) {
+            " and '$parentId' in parents"
+        } else {
+            ""
+        }
 
-        list(query).firstOrNull()?.id
-            ?: createFolder(name, parentId)
-    }
+    val query =
+        "mimeType='$FOLDER_MIME' and name='${name.escapeQuery()}' " +
+            "and trashed=false$parentClause"
+
+    list(query).firstOrNull()?.id
+        ?: createFolder(name, parentId)
+}
 
     private suspend fun createFolder(
         name: String,
