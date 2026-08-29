@@ -86,7 +86,10 @@ fun EmployeesScreen(onMenu: () -> Unit) {
     val filtered = remember(people, query) {
         val q = query.trim().lowercase()
         people.filter { employee ->
-            q.isBlank() || employee.name.lowercase().contains(q) || employee.alias.lowercase().contains(q)
+            q.isBlank() ||
+                employee.name.lowercase().contains(q) ||
+                employee.alias.lowercase().contains(q) ||
+                employee.amIka.contains(q)
         }
     }
 
@@ -109,12 +112,12 @@ fun EmployeesScreen(onMenu: () -> Unit) {
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Αναζήτηση ονοματεπωνύμου ή ψευδωνύμου") },
-                    placeholder = { Text("π.χ. BUTT HURARA ή το ψευδώνυμο") },
+                    label = { Text("Αναζήτηση ονοματεπωνύμου, ψευδωνύμου ή ΑΜ ΙΚΑ") },
+                    placeholder = { Text("π.χ. BUTT HURARA ή 305389566") },
                 )
             }
             items(filtered, key = { it.id }) { employee ->
-                val rows = debts.filter { it.kind.perPerson && EmployeeEntity.idFor(it.personName) == employee.id }
+                val rows = debts.filter { it.kind.perPerson && it.amIka == employee.amIka }
                 Card(
                     onClick = { selected = employee },
                     modifier = Modifier.fillMaxWidth(),
@@ -128,6 +131,7 @@ fun EmployeesScreen(onMenu: () -> Unit) {
                                     Text(employee.alias, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = BrandGreen)
                                 }
                                 Text(employee.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                Text("ΑΜ ΙΚΑ: ${employee.amIka.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                                 Text("Κωδικός: ${employee.code.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = { selected = employee }) {
@@ -188,7 +192,7 @@ private fun EmployeeDetailScreen(
     val authorizer = rememberGoogleAuthorizer()
     val settings = remember { GoogleSettings(context) }
     var sheetsClient by remember(employee.id) { mutableStateOf<SheetsClient?>(null) }
-    val rows = remember(debts, employee.id) { debts.filter { it.kind.perPerson && EmployeeEntity.idFor(it.personName) == employee.id } }
+    val rows = remember(debts, employee.id) { debts.filter { it.kind.perPerson && it.amIka == employee.amIka } }
     val years = remember(rows) { rows.map { it.periodYear }.filter { it > 0 }.distinct().sortedDescending().ifEmpty { listOf(java.time.LocalDate.now().year) } }
     var year by remember(years) { mutableStateOf(years.first()) }
     var showEdit by remember { mutableStateOf(false) }
@@ -273,6 +277,7 @@ private fun EmployeeDetailScreen(
                     Column {
                         Text(if (employee.alias.isNotBlank()) employee.alias else employee.name, fontWeight = FontWeight.Bold)
                         if (employee.alias.isNotBlank()) Text(employee.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("ΑΜ ΙΚΑ ${employee.amIka}", style = MaterialTheme.typography.labelSmall, color = BrandGreen)
                     }
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Πίσω") } },
@@ -350,6 +355,7 @@ private fun EmployeeDetailScreen(
             title = { Text("Επεξεργασία εργαζομένου") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("ΑΜ ΙΚΑ: ${employee.amIka}", style = MaterialTheme.typography.bodySmall, color = BrandGreen, fontWeight = FontWeight.Bold)
                     Text(employee.name, style = MaterialTheme.typography.bodyMedium)
                     OutlinedTextField(value = alias, onValueChange = { alias = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Ψευδώνυμο") })
                 }
