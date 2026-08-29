@@ -35,7 +35,7 @@ object PayrollEmployeeSnapshotStore {
                 val period = JSONObject().apply {
                     put("payable", periodRows.sumOf { it.amount })
                     put("insuranceCost", PayrollInsuranceCostExtractor.find(ocrText, periodRows.first()))
-                    put("insuranceDays", PayrollInsuranceDaysStore.daysFor(context, ika, year, month))
+                    put("insuranceDays", PayrollInsuranceDaysExtractor.find(ocrText, periodRows))
                 }
                 current.put(jsonKey, period)
             }
@@ -66,20 +66,89 @@ object PayrollEmployeeSnapshotStore {
         val insuranceDays: Int = 0,
     )
 
-    fun totals(employee: EmployeeEntity, year: Int? = null): Totals {
+    data class Monthly(
+        val year: Int,
+        val month: Int,
+        val payable: Double,
+        val insuranceCost: Double,
+        val insuranceDays: Int,
+    )
+
+    fun history(employee: EmployeeEntity): List<Monthly> {
         val root = runCatching { JSONObject(employee.payrollSummaryJson) }.getOrElse { JSONObject() }
-        var payable = 0.0
-        var cost = 0.0
-        var days = 0
-        root.keys().forEach { key ->
-            val y = key.substringBefore('-').toIntOrNull() ?: return@forEach
-            if (year != null && y != year) return@forEach
-            val row = root.optJSONObject(key) ?: return@forEach
-            payable += row.optDouble("payable", 0.0)
-            cost += row.optDouble("insuranceCost", 0.0)
-            days += row.optInt("insuranceDays", 0)
+        return buildList {
+            root.keys().forEach { key ->
+                val parts = key.split('-')
+                if (parts.size != 2) return@forEach
+                val year = parts[0].toIntOrNull() ?: return@forEach
+                val month = parts[1].toIntOrNull() ?: return@forEach
+                if (month !in 1..12 || year <= 0) return@forEach
+                val row = root.optJSONObject(key) ?: return@forEach
+                add(
+                    Monthly(
+                        year = year,
+                        month = month,
+                        payable = row.optDouble("payable", 0.0),
+                        insuranceCost = row.optDouble("insuranceCost", 0.0),
+                        insuranceDays = row.optInt("insuranceDays", 0),
+                    ),
+                )
+            }
+        }.sortedWith(compareByDescending<Monthly> { it.year }.thenByDescending { it.month })
+    }
+
+    fun totals(employee: EmployeeEntity, year: Int? = null): Totals {
+        val history = history(employee).filter { year == null || it.year == year }
+        return Totals(
+            payable = history.sumOf { it.payable },
+            insuranceCost = history.sumOf { it.insuranceCost },
+            insuranceDays = history.sumOf { it.insuranceDays },
+        )
+    }
+
+    private object PayrollInsuranceDaysExtractor {
+        private val header = Regex("""^\\s*\\d{1,3}\\s+[A-ZΑ-Ω0-9]{2,6}\\s+(.+)$""")
+        private val paymentCode = Regex("""\\b(ΤΑ|ΔΧ|ΕΑ|ΑΛ|ΜΛ)\\s+(\\d+(?:,\\d+)?)\\s+\\d+(?:,\\d+)?\\s+""")
+        private val genericAfterCode = Regex("""\\b[A-ZΑ-Ω0-9-]{2,6}\\s+(\\d+(?:,\\d+)?)\\s+\\d+(?:,\\d+)?\\s+""")
+
+        fun find(text: String, debts: List<DebtEntity>): Int {
+            if (text.isBlank() || debts.isEmpty()) return 0
+            val name = debts.firstOrNull { it.personName.isNotBlank() }?.personName?.trim().orEmpty()
+            val code = debts.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim().orEmpty()
+            if (name.isBlank() && code.isBlank()) return 0
+
+            val wanted = name.split(Regex("\\s+")).filter { it.length >= 2 }.map { it.uppercase() }
+            val lines = text.lines()
+            val candidates = mutableListOf<Pair<String, Int>>()
+
+            lines.forEachIndexed { index, raw ->
+                val line = raw.trim()
+                if (line.isBlank()) return@forEachIndexed
+                val compact = line.uppercase()
+                val codeMatches = code.isNotBlank() && compact.contains(" $code ")
+                val nameMatches = wanted.isNotEmpty() && wanted.all { compact.contains(it) }
+                if (!codeMatches && !nameMatches) return@forEachIndexed
+                if (!header.matches(line)) return@forEachIndexed
+
+                val regular = paymentCode.find(line)
+                val generic = genericAfterCode.find(line)
+                val match = regular ?: generic
+                if (match != null) {
+                    val marker = regular?.groupValues?.getOrNull(1).orEmpty()
+                    val rawDays = match.groupValues[match.groupValues.lastIndex]
+                    val days = rawDays.replace(',', '.').toDoubleOrNull()?.toInt() ?: 0
+                    candidates += marker to days
+                    if (marker == "ΤΑ") return@forEachIndexed
+                }
+
+                // Keep searching later lines in case the employee has multiple payroll rows.
+                if (index > lines.size) return@forEachIndexed
+            }
+
+            candidates.firstOrNull { it.first == "ΤΑ" }?.second
+                ?: candidates.maxOfOrNull { it.second }
+                ?: 0
         }
-        return Totals(payable, cost, days)
     }
 
     private object PayrollInsuranceCostExtractor {
@@ -108,7 +177,9 @@ object PayrollEmployeeSnapshotStore {
                         ?.replace(',', '.')
                         ?.toDoubleOrNull()
                 }
-                if (numbers.size >= 10) return numbers[9]
+                // Payroll totals row: [gross, employee contributions, employer contributions,
+                // total insurance cost, ... , net payable, total employer cost, ...].
+                if (numbers.size >= 4) return numbers[3]
             }
             return 0.0
         }
