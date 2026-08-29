@@ -12,6 +12,7 @@ import gr.prosfora.app.sync.PayrollEmployeeSnapshotStore
 import gr.prosfora.app.sync.PayrollInsuranceDaysStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
+import org.json.JSONObject
 
 class DebtRepository(context: Context) {
     private val settings = GoogleSettings(context)
@@ -118,9 +119,8 @@ class DebtRepository(context: Context) {
         debts.upsertAll(merged)
         rebuildEmployeeIndex()
 
-        // Direct/manual import is staged by DebtImporter. Consume that OCR once,
-        // immediately after the debts are persisted, so employee card totals are
-        // stored without another Drive download or OCR pass.
+        // Direct/manual payroll import stages its OCR until saveAll(). Consume it
+        // exactly once and persist the employee snapshot without another scan.
         PayrollImportSession.consume()?.let { (ocrText, stagedDebts) ->
             val effective = merged.filter { mergedDebt ->
                 stagedDebts.any { staged -> staged.id == mergedDebt.id }
@@ -144,31 +144,43 @@ class DebtRepository(context: Context) {
             }
             .groupBy({ it.first }, { it.second })
 
-        val payroll = debts.allForSync()
+        val payrollByIka = debts.allForSync()
             .asSequence()
             .filter { !it.deleted && it.kind.perPerson }
             .mapNotNull { debt ->
                 val ika = EmployeeEntity.normalizeIka(debt.amIka)
                 if (ika.isBlank()) null else ika to debt
             }
-            .toList()
+            .groupBy({ it.first }, { it.second })
 
-        val grouped = payroll.groupBy({ it.first }, { it.second })
-        val activeIka = grouped.keys
-        var deleted = 0
-
-        stored.forEach { employee ->
-            val ika = EmployeeEntity.normalizeIka(employee.amIka)
-            if (ika.isBlank() || ika !in activeIka || employee.id != ika) {
-                employees.hardDelete(employee.id)
-                deleted++
+        // Canonicalize IDs and remove only true duplicate/non-canonical rows.
+        var hardDeletedDuplicates = 0
+        storedByIka.forEach { (ika, rows) ->
+            val survivor = rows.firstOrNull { it.id == ika }
+                ?: rows.maxByOrNull { it.updatedAt }
+                ?: return@forEach
+            rows.filter { it.id != survivor.id }.forEach {
+                employees.hardDelete(it.id)
+                hardDeletedDuplicates++
+            }
+            if (survivor.id != ika) {
+                employees.hardDelete(survivor.id)
+                employees.upsert(survivor.copy(id = ika, amIka = ika))
             }
         }
 
-        val canonical = grouped.map { (ika, rows) ->
+        // Existing employees NEVER disappear because a debt was deleted.
+        // Active payroll is used only to create missing employees/update identity.
+        val updates = payrollByIka.map { (ika, rows) ->
             val existing = storedByIka[ika]
                 ?.firstOrNull { it.id == ika }
                 ?: storedByIka[ika]?.maxByOrNull { it.updatedAt }
+            val latest = rows.maxByOrNull { it.updatedAt } ?: rows.first()
+            val summary = ensureSnapshotPeriods(
+                existing?.payrollSummaryJson ?: "{}",
+                rows,
+                ika,
+            )
 
             EmployeeEntity(
                 id = ika,
@@ -179,19 +191,44 @@ class DebtRepository(context: Context) {
                 code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim()
                     ?: existing?.code.orEmpty(),
                 leftDay = existing?.leftDay,
-                updatedAt = rows.maxOfOrNull { it.updatedAt } ?: existing?.updatedAt ?: System.currentTimeMillis(),
+                updatedAt = latest.updatedAt,
                 deleted = false,
-                payrollSummaryJson = existing?.payrollSummaryJson ?: "{}",
+                payrollSummaryJson = summary,
             )
         }.sortedBy { it.name.uppercase() }
 
-        if (canonical.isNotEmpty()) employees.upsertAll(canonical)
+        if (updates.isNotEmpty()) employees.upsertAll(updates)
         EmployeeAliasRegistry.refresh(employees.allForSync())
 
         DebugLog.log(
             "employees",
-            "employee DB rebuild complete · active payroll AM IKA=${canonical.size} · preserved employees=${employees.allForSync().size} · hard-deleted stale/duplicates=$deleted",
+            "employee DB rebuild complete · active payroll AM IKA=${updates.size} · preserved employees=${employees.allForSync().size} · hard-deleted duplicates=$hardDeletedDuplicates",
         )
+    }
+
+    /**
+     * Backfills payable/days for already imported payroll rows without OCR.
+     * Existing snapshot periods are never overwritten, so stored cost is not
+     * recalculated on every sync or card open.
+     */
+    private fun ensureSnapshotPeriods(json: String, rows: List<DebtEntity>, ika: String): String {
+        val root = runCatching { JSONObject(json) }.getOrElse { JSONObject() }
+        rows.groupBy { it.periodYear to it.periodMonth }.forEach { (period, periodRows) ->
+            val year = period.first
+            val month = period.second
+            if (year <= 0 || month !in 1..12) return@forEach
+            val key = "%04d-%02d".format(year, month)
+            if (root.has(key)) return@forEach
+            root.put(
+                key,
+                JSONObject().apply {
+                    put("payable", periodRows.sumOf { it.amount })
+                    put("insuranceCost", 0.0)
+                    put("insuranceDays", PayrollInsuranceDaysStore.daysFor(appContext, ika, year, month))
+                },
+            )
+        }
+        return root.toString()
     }
 
     suspend fun setPaid(id: String, paid: Boolean, day: Long? = null) {
@@ -203,7 +240,7 @@ class DebtRepository(context: Context) {
     suspend fun delete(ids: Collection<String>) {
         val now = System.currentTimeMillis()
         ids.forEach { debts.softDelete(it, now) }
-        // Employee payroll snapshot intentionally survives debt deletion.
+        // Employee cards and their payroll snapshots intentionally survive debt deletion.
     }
 
     suspend fun deleteFromFile(source: String, driveFileId: String) {
