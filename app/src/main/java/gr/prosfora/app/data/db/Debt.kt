@@ -85,6 +85,7 @@ data class DebtEntity(
 /**
  * Canonical employee identity is the normalized AM IKA itself.
  * One AM IKA = one employee card, regardless of name, payroll code or month.
+ * payrollSummaryJson stores a persistent monthly payroll snapshot.
  */
 @Entity(tableName = "employees", indices = [Index(value = ["amIka"])])
 data class EmployeeEntity(
@@ -96,20 +97,16 @@ data class EmployeeEntity(
     val leftDay: Long? = null,
     val updatedAt: Long = System.currentTimeMillis(),
     val deleted: Boolean = false,
+    val payrollSummaryJson: String = "{}",
 ) {
     val display: String get() = alias.ifBlank { name }
     fun gone(today: LocalDate = LocalDate.now()): Boolean = leftDay != null && leftDay <= today.toEpochDay()
 
     companion object {
         fun normalizeIka(raw: String): String = raw.filter(Char::isDigit)
-
-        /** Canonical primary key: exactly the normalized AM IKA. */
         fun idForAmIka(amIka: String): String = normalizeIka(amIka)
-
-        /** Compatibility helper for legacy UI call-sites. */
         @Deprecated("Use idForAmIka(amIka) for employee identity")
         fun idFor(name: String): String = legacyIdFor(name)
-
         fun legacyIdFor(name: String): String =
             name.trim().uppercase().replace(Regex("""\s+"""), " ")
     }
