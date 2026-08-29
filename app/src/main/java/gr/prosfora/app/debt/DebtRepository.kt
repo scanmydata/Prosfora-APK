@@ -6,6 +6,7 @@ import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.google.GoogleSettings
 import kotlinx.coroutines.flow.Flow
+import java.time.LocalDate
 
 class DebtRepository(context: Context) {
 
@@ -28,23 +29,72 @@ class DebtRepository(context: Context) {
     suspend fun deleteEmployee(id: String) =
         employees.softDelete(id, System.currentTimeMillis())
 
-    suspend fun save(debt: DebtEntity) = debts.upsert(
-        debt.copy(
-            updatedAt = System.currentTimeMillis(),
-            createdBy = debt.createdBy.ifBlank { settings.ownerEmail },
-        ),
-    )
+    suspend fun save(debt: DebtEntity) {
+        val normalized = normalizeByDueDate(debt)
+        debts.upsert(
+            normalized.copy(
+                updatedAt = System.currentTimeMillis(),
+                createdBy = normalized.createdBy.ifBlank { settings.ownerEmail },
+            ),
+        )
+    }
 
     suspend fun saveAll(items: List<DebtEntity>) {
         val now = System.currentTimeMillis()
-        val merged = items.map { incoming ->
-            val existing = debts.getById(incoming.id)
+        val merged = items.map { rawIncoming ->
+            // Ο μήνας που εμφανίζεται στην εφαρμογή είναι πάντα ο μήνας της
+            // λήξης πληρωμής όταν υπάρχει λήξη. Π.χ. περίοδος 7/2026 με λήξη
+            // 31/08/2026 ανήκει στις οφειλές Αυγούστου 2026.
+            var incoming = normalizeByDueDate(rawIncoming)
+            var existing = debts.getById(incoming.id)
+
+            // Αν το parser είχε δημιουργήσει το id με τον παλιό μήνα αναφοράς
+            // και υπάρχει ήδη εγγραφή με αυτό το id από διαφορετικό αρχείο,
+            // μην κληρονομήσουμε κατά λάθος την κατάστασή της. Δημιούργησε
+            // canonical id με βάση τον μήνα λήξης.
+            if (
+                existing != null &&
+                incoming.source.isNotBlank() &&
+                existing.driveFileId.isNotBlank() &&
+                existing.driveFileId != incoming.driveFileId
+            ) {
+                incoming = incoming.copy(
+                    id = DebtEntity.idFor(
+                        incoming.kind,
+                        incoming.periodYear,
+                        incoming.periodMonth,
+                        incoming.reference,
+                        incoming.personName,
+                    ),
+                )
+                existing = debts.getById(incoming.id)
+            }
+
             if (existing == null) {
-                incoming.copy(updatedAt = now, createdBy = settings.ownerEmail)
-            } else {
+                // Νέα εισαγωγή ξεκινά ΠΑΝΤΑ ως απλήρωτη. Η κατάσταση πληρωμής
+                // δεν πρέπει να έρχεται από OCR/parser ή από άσχετη εγγραφή.
                 incoming.copy(
-                    paid = existing.paid,
-                    paidAt = existing.paidAt,
+                    paid = false,
+                    paidAt = null,
+                    paidDay = null,
+                    updatedAt = now,
+                    createdBy = settings.ownerEmail,
+                )
+            } else {
+                // Κρατάμε την πραγματική κατάσταση πληρωμής μόνο όταν πρόκειται
+                // για την ίδια καταχώρηση/ίδιο αρχείο. Έτσι ένα νέο PDF που
+                // συμπίπτει σε reference δεν εμφανίζεται κατά λάθος εξοφλημένο.
+                val sameImportedFile =
+                    incoming.driveFileId.isNotBlank() &&
+                        existing.driveFileId.isNotBlank() &&
+                        incoming.driveFileId == existing.driveFileId
+                val sameManualRecord =
+                    incoming.driveFileId.isBlank() && existing.driveFileId.isBlank()
+
+                incoming.copy(
+                    paid = if (sameImportedFile || sameManualRecord) existing.paid else false,
+                    paidAt = if (sameImportedFile || sameManualRecord) existing.paidAt else null,
+                    paidDay = if (sameImportedFile || sameManualRecord) existing.paidDay else null,
                     createdBy = existing.createdBy.ifBlank { settings.ownerEmail },
                     createdAt = existing.createdAt,
                     updatedAt = now,
@@ -112,4 +162,17 @@ class DebtRepository(context: Context) {
     }
 
     suspend fun importedFileIds(): Set<String> = debts.importedFileIds().toSet()
+
+    /**
+     * Ομαδοποίηση οφειλών με βάση τη λήξη πληρωμής. Η περίοδος που τυπώνει το
+     * έγγραφο είναι πληροφορία αναφοράς, όχι ο μήνας στον οποίο εμφανίζεται η
+     * οφειλή στην εφαρμογή.
+     */
+    private fun normalizeByDueDate(debt: DebtEntity): DebtEntity {
+        val due = debt.dueDay?.let(LocalDate::ofEpochDay) ?: return debt
+        return debt.copy(
+            periodMonth = due.monthValue,
+            periodYear = due.year,
+        )
+    }
 }
