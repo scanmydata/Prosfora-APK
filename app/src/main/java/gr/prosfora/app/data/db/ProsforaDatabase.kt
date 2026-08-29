@@ -24,7 +24,7 @@ class Converters {
 
 @Database(
     entities = [OfferEntity::class, SpaceEntity::class, NoteEntity::class, NotePresetEntity::class, DebtEntity::class, EmployeeEntity::class],
-    version = 12,
+    version = 13,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -107,6 +107,14 @@ abstract class ProsforaDatabase : RoomDatabase() {
                 connection.execSQL("ALTER TABLE offers ADD COLUMN customExtraCost REAL NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                connection.execSQL("ALTER TABLE debts ADD COLUMN amIka TEXT NOT NULL DEFAULT ''")
+                connection.execSQL("ALTER TABLE employees ADD COLUMN amIka TEXT NOT NULL DEFAULT ''")
+                connection.execSQL("CREATE INDEX IF NOT EXISTS index_debts_amIka ON debts(amIka)")
+                connection.execSQL("CREATE INDEX IF NOT EXISTS index_employees_amIka ON employees(amIka)")
+            }
+        }
 
         val DEFAULT_PRESETS = listOf(
             "Στην προσφορά δεν περιλαμβάνεται ο ΦΠΑ τιμολογίου.",
@@ -121,7 +129,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
         private fun build(context: Context): ProsforaDatabase {
             lateinit var db: ProsforaDatabase
             db = Room.databaseBuilder(context.applicationContext, ProsforaDatabase::class.java, "prosfora.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {
                         super.onCreate(connection)
