@@ -24,7 +24,7 @@ class Converters {
 
 @Database(
     entities = [OfferEntity::class, SpaceEntity::class, NoteEntity::class, NotePresetEntity::class, DebtEntity::class, EmployeeEntity::class],
-    version = 13,
+    version = 14,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -115,6 +115,20 @@ abstract class ProsforaDatabase : RoomDatabase() {
                 connection.execSQL("CREATE INDEX IF NOT EXISTS index_employees_amIka ON employees(amIka)")
             }
         }
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                // periodMonth/periodYear now mean the calendar month/year of payment due date.
+                // Existing rows are migrated from their stored dueDay (epoch day).
+                connection.execSQL(
+                    """
+                    UPDATE debts
+                    SET periodMonth = CAST(strftime('%m', dueDay * 86400, 'unixepoch') AS INTEGER),
+                        periodYear = CAST(strftime('%Y', dueDay * 86400, 'unixepoch') AS INTEGER)
+                    WHERE dueDay IS NOT NULL
+                    """.trimIndent(),
+                )
+            }
+        }
 
         val DEFAULT_PRESETS = listOf(
             "Στην προσφορά δεν περιλαμβάνεται ο ΦΠΑ τιμολογίου.",
@@ -129,7 +143,12 @@ abstract class ProsforaDatabase : RoomDatabase() {
         private fun build(context: Context): ProsforaDatabase {
             lateinit var db: ProsforaDatabase
             db = Room.databaseBuilder(context.applicationContext, ProsforaDatabase::class.java, "prosfora.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(
+                    MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+                    MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+                    MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
+                    MIGRATION_13_14,
+                )
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {
                         super.onCreate(connection)
