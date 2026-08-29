@@ -69,6 +69,7 @@ object EmployeeIndexReconciler {
                 leftDay = existing?.leftDay,
                 updatedAt = latest.updatedAt,
                 deleted = false,
+                payrollSummaryJson = existing?.payrollSummaryJson ?: "{}",
             )
         }
 
