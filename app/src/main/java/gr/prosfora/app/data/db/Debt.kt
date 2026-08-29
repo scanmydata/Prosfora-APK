@@ -81,9 +81,8 @@ data class DebtEntity(
 }
 
 /**
- * Ο εργαζόμενος ταυτοποιείται αποκλειστικά από το ΑΜ ΙΚΑ. Δεν χρησιμοποιείται
- * μοναδικό database index στο πεδίο επειδή παλιές εγκαταστάσεις έχουν legacy
- * rows με κενό ΑΜ ΙΚΑ· το canonical upsert γίνεται από το repository.
+ * Canonical employee identity is the normalized AM IKA itself.
+ * One AM IKA = one employee card, regardless of name, payroll code or month.
  */
 @Entity(tableName = "employees", indices = [Index(value = ["amIka"])])
 data class EmployeeEntity(
@@ -101,10 +100,15 @@ data class EmployeeEntity(
 
     companion object {
         fun normalizeIka(raw: String): String = raw.filter(Char::isDigit)
-        fun idForAmIka(amIka: String): String = "employee-ika-${normalizeIka(amIka)}"
-        /** Compatibility helper for legacy UI call-sites; canonical identity remains AM IKA. */
+
+        /** Canonical primary key: exactly the normalized AM IKA. */
+        fun idForAmIka(amIka: String): String = normalizeIka(amIka)
+
+        /** Compatibility helper for legacy UI call-sites. */
         @Deprecated("Use idForAmIka(amIka) for employee identity")
         fun idFor(name: String): String = legacyIdFor(name)
-        fun legacyIdFor(name: String): String = name.trim().uppercase().replace(Regex("""\s+"""), " ")
+
+        fun legacyIdFor(name: String): String =
+            name.trim().uppercase().replace(Regex("""\s+"""), " ")
     }
 }
