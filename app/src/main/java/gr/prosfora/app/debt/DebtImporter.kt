@@ -165,22 +165,53 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
         )
     }
 
-    /** Ο πρώτος καθαρά αριθμητικός token μετά το όνομα είναι η στήλη ΑΜ Ι.Κ.Α. */
+    /**
+     * Εξάγει το πρώτο μεγάλο αριθμητικό token που εμφανίζεται μετά τον κωδικό
+     * εργαζομένου. Στη μισθοδοτική κατάσταση αυτή είναι η στήλη ΑΜ Ι.Κ.Α.
+     * και όχι τα ποσά ή οι ώρες της γραμμής.
+     *
+     * Δεν εξαρτόμαστε από το πλήθος των τελευταίων στηλών του πίνακα, επειδή
+     * το OCR αλλάζει συχνά τη στοίχιση και μπορεί να προσθέσει/χάσει στήλες.
+     */
     private fun payrollAmIkaByCode(text: String): Map<String, String> {
-        val row = Regex("""^\\s*\\d{1,3}\\s+(\\d{2,6})\\s+(.+?)\\s+(\\d{7,12})(?:\\s+\\d{7,12})?\\s+\\d{1,3}(?:[,.]\\d{2}).*$""")
-        return text.lines().mapNotNull { line ->
-            val match = row.find(line) ?: return@mapNotNull null
+        val header = Regex("""^\\s*\\d{1,3}\\s+([0-9]{2,6})\\s+(.+)$""")
+        val longNumber = Regex("""(?<!\\d)\\d{7,12}(?!\\d)""")
+        val result = linkedMapOf<String, String>()
+
+        text.lines().forEach { line ->
+            val match = header.find(line) ?: return@forEach
             val code = match.groupValues[1]
-            val amIka = EmployeeEntity.normalizeIka(match.groupValues[3])
-            if (amIka.isBlank()) null else code to amIka
-        }.toMap()
+            val rest = match.groupValues[2]
+            val amIka = longNumber.find(rest)?.value
+                ?.let(EmployeeEntity::normalizeIka)
+                .orEmpty()
+            if (amIka.isNotBlank()) {
+                result[code] = amIka
+            }
+        }
+
+        if (result.isNotEmpty()) {
+            DebugLog.log("employees", "payroll ΑΜ ΙΚΑ mapping · unique=${result.values.toSet().size} · codes=${result.size}")
+        } else {
+            DebugLog.log("employees", "payroll ΑΜ ΙΚΑ mapping EMPTY · no payroll header row matched")
+        }
+        return result
     }
 
     private fun enrichPayrollAmIka(text: String, rows: List<DebtEntity>): List<DebtEntity> {
+        if (rows.isEmpty()) return rows
         val mapping = payrollAmIkaByCode(text)
         if (mapping.isEmpty()) return rows
-        DebugLog.log("employees", "payroll ΑΜ ΙΚΑ mapping · unique=${mapping.values.toSet().size} · codes=${mapping.size}")
-        return rows.map { row -> if (row.kind.perPerson) row.copy(amIka = mapping[row.personCode].orEmpty()) else row }
+        return rows.map { row ->
+            if (!row.kind.perPerson) {
+                row
+            } else {
+                val ika = mapping[row.personCode]
+                    ?: mapping.entries.firstOrNull { it.key.trimStart('0') == row.personCode.trimStart('0') }?.value
+                    ?: ""
+                row.copy(amIka = EmployeeEntity.normalizeIka(ika))
+            }
+        }
     }
 
     suspend fun folderUrl(): String = workspace.folderUrl(workspace.debtsFolder())
