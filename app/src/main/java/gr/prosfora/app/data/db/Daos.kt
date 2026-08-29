@@ -72,6 +72,7 @@ interface DebtDao {
     @Query("UPDATE debts SET deleted = 1, updatedAt = :at WHERE id = :id") suspend fun softDelete(id: String, at: Long)
     @Query("UPDATE debts SET paid = :paid, paidAt = :paidAt, updatedAt = :at WHERE id = :id") suspend fun markPaid(id: String, paid: Boolean, paidAt: Long?, at: Long)
     @Query("SELECT * FROM debts") suspend fun allForSync(): List<DebtEntity>
+    @Query("SELECT * FROM debts WHERE deleted = 0 AND paid = 0 ORDER BY periodYear DESC, periodMonth DESC, dueDay, kind") suspend fun unpaid(): List<DebtEntity>
     /** Payroll files imported before AM IKA existed must be scanned again. */
     @Query("SELECT DISTINCT driveFileId FROM debts WHERE driveFileId != '' AND NOT ((kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = '')")
     suspend fun importedFileIds(): List<String>
