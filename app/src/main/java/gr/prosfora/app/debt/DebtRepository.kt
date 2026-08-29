@@ -86,13 +86,7 @@ class DebtRepository(context: Context) {
             }
         }
         debts.upsertAll(merged)
-
-        // Οι εργαζόμενοι πρέπει να δημιουργούνται αμέσως μετά την εισαγωγή.
-        // Δεν εξαρτάται πλέον η δημιουργία τους από το να έχει βρεθεί ΑΜ ΙΚΑ.
         rememberPeople(merged)
-
-        // Κρατάμε το index πλήρες ώστε παλιές μισθοδοσίες να δημιουργούν επίσης
-        // εργαζόμενους, ακόμη κι αν το αρχικό import δεν είχε index.
         rememberPeople(debts.allForSync())
     }
 
@@ -101,10 +95,13 @@ class DebtRepository(context: Context) {
     }
 
     /**
-     * Ο εργαζόμενος ταυτοποιείται από ΑΜ ΙΚΑ όταν υπάρχει.
-     * Όταν παλιό/προβληματικό import έχει κενό ΑΜ ΙΚΑ, χρησιμοποιείται
-     * deterministic fallback από κωδικό + όνομα ώστε να δημιουργείται
-     * κανονικά εργαζόμενος και να μη χάνεται η μισθοδοσία του.
+     * Κανόνας ταυτοποίησης εργαζομένου:
+     *
+     * 1. Αν υπάρχει ΑΜ ΙΚΑ, αυτό είναι το ΜΟΝΑΔΙΚΟ canonical key.
+     * 2. Το όνομα και ο κωδικός χρησιμοποιούνται μόνο για να βρεθεί τυχόν
+     *    παλιό/legacy employee record και να μεταφερθούν alias/στοιχεία.
+     * 3. Δεν επιτρέπεται δεύτερη ενεργή καρτέλα με το ίδιο ΑΜ ΙΚΑ.
+     * 4. Μόνο παλιές γραμμές χωρίς ΑΜ ΙΚΑ χρησιμοποιούν προσωρινό fallback key.
      */
     private suspend fun rememberPeople(items: List<DebtEntity>) {
         val payroll = items.filter {
@@ -117,37 +114,58 @@ class DebtRepository(context: Context) {
         if (payroll.isEmpty()) return
 
         val existing = employees.allForSync()
-        val byIka = existing
+        val existingByIka = existing
             .filter { EmployeeEntity.normalizeIka(it.amIka).isNotBlank() }
-            .associateBy { EmployeeEntity.normalizeIka(it.amIka) }
-        val byName = existing
+            .groupBy { EmployeeEntity.normalizeIka(it.amIka) }
+        val existingByFallback = existing
+            .associateBy { employeeFallbackKey(it.code, it.name) }
+        val existingByName = existing
             .filter { it.name.isNotBlank() }
             .groupBy { canonicalPersonName(it.name) }
-        val byCodeAndName = existing
-            .associateBy { employeeFallbackKey(it.code, it.name) }
+
+        val duplicateIdsToHide = linkedSetOf<String>()
 
         val people = payroll
             .groupBy { employeeKey(it.amIka, it.personCode, it.personName) }
-            .mapNotNull { (key, rows) ->
+            .mapNotNull { (_, rows) ->
                 val first = rows.firstOrNull() ?: return@mapNotNull null
                 val ika = EmployeeEntity.normalizeIka(first.amIka)
-                val name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim().orEmpty()
-                val code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim().orEmpty()
+                val name = rows.firstOrNull { it.personName.isNotBlank() }
+                    ?.personName
+                    ?.trim()
+                    .orEmpty()
+                val code = rows.firstOrNull { it.personCode.isNotBlank() }
+                    ?.personCode
+                    ?.trim()
+                    .orEmpty()
 
                 if (ika.isBlank() && name.isBlank() && code.isBlank()) return@mapNotNull null
 
-                val old = byIka[ika].takeIf { ika.isNotBlank() }
-                    ?: byCodeAndName[employeeFallbackKey(code, name)]
-                    ?: byName[canonicalPersonName(name)]?.firstOrNull()
+                val canonicalCandidates = if (ika.isNotBlank()) {
+                    existingByIka[ika].orEmpty()
+                } else {
+                    emptyList()
+                }
+                val old = canonicalCandidates.firstOrNull()
+                    ?: existingByFallback[employeeFallbackKey(code, name)]
+                    ?: existingByName[canonicalPersonName(name)]?.firstOrNull()
 
-                val id = if (ika.isNotBlank()) {
+                val canonicalId = if (ika.isNotBlank()) {
                     EmployeeEntity.idForAmIka(ika)
                 } else {
                     old?.id ?: fallbackEmployeeId(code, name)
                 }
 
+                // Αν υπήρχε legacy/fallback record για το ίδιο άτομο και τώρα
+                // έχουμε ΑΜ ΙΚΑ, κρατάμε τα στοιχεία του αλλά κρύβουμε το παλιό
+                // record ώστε η οθόνη να έχει ΜΙΑ μόνο καρτέλα.
+                if (old != null && old.id != canonicalId) {
+                    duplicateIdsToHide += old.id
+                }
+                canonicalCandidates.drop(1).forEach { duplicateIdsToHide += it.id }
+
                 EmployeeEntity(
-                    id = id,
+                    id = canonicalId,
                     amIka = ika.ifBlank { old?.amIka.orEmpty() },
                     name = name.ifBlank { old?.name.orEmpty() },
                     alias = old?.alias.orEmpty(),
@@ -160,13 +178,14 @@ class DebtRepository(context: Context) {
 
         if (people.isEmpty()) return
 
-        // ΜΗΝ κάνεις softDeleteAll εδώ. Το rememberPeople() καλείται και με μία
-        // μόνο νέα/τροποποιημένη οφειλή. Το παλιό softDeleteAll έκρυβε όλους
-        // τους υπόλοιπους εργαζόμενους μέχρι να ξαναγίνει rebuild.
         employees.upsertAll(people)
+        duplicateIdsToHide
+            .filter { id -> people.none { it.id == id } }
+            .forEach { id -> employees.softDelete(id, System.currentTimeMillis()) }
+
         DebugLog.log(
             "employees",
-            "employee index updated · employees=${people.size} · with AM IKA=${people.count { it.amIka.isNotBlank() }}",
+            "canonical employee index updated · cards=${people.size} · by AM IKA=${people.count { it.amIka.isNotBlank() }} · hidden duplicates=${duplicateIdsToHide.size}",
         )
     }
 
