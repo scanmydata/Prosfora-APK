@@ -2,11 +2,13 @@ package gr.prosfora.app.debt
 
 import android.content.Context
 import gr.prosfora.app.data.db.DebtEntity
+import gr.prosfora.app.data.db.EmployeeAliasRegistry
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.GoogleSettings
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.onEach
 
 class DebtRepository(context: Context) {
     private val settings = GoogleSettings(context)
@@ -15,7 +17,8 @@ class DebtRepository(context: Context) {
     private val employees = database.employeeDao()
 
     fun observeAll(): Flow<List<DebtEntity>> = debts.observeAll()
-    fun observeEmployees(): Flow<List<EmployeeEntity>> = employees.observeAll()
+    fun observeEmployees(): Flow<List<EmployeeEntity>> =
+        employees.observeAll().onEach(EmployeeAliasRegistry::refresh)
 
     suspend fun importedFileIds(): Set<String> = debts.importedFileIds().toSet()
 
@@ -26,15 +29,20 @@ class DebtRepository(context: Context) {
         debts.deleteLegacyPayrollRows(fileIds.toList())
     }
 
+    suspend fun unpaidDebts(): List<DebtEntity> {
+        EmployeeAliasRegistry.refresh(employees.allForSync())
+        return debts.unpaid()
+    }
+
     suspend fun saveEmployee(employee: EmployeeEntity) {
         val ika = EmployeeEntity.normalizeIka(employee.amIka)
-        employees.upsert(
-            employee.copy(
-                id = if (ika.isNotBlank()) ika else employee.id,
-                amIka = ika,
-                updatedAt = System.currentTimeMillis(),
-            ),
+        val saved = employee.copy(
+            id = if (ika.isNotBlank()) ika else employee.id,
+            amIka = ika,
+            updatedAt = System.currentTimeMillis(),
         )
+        employees.upsert(saved)
+        EmployeeAliasRegistry.refresh(employees.allForSync())
     }
 
     suspend fun deleteEmployee(id: String) =
@@ -130,22 +138,31 @@ class DebtRepository(context: Context) {
             }
             .toList()
 
-        val grouped = payroll.groupBy({ it.first }, { it.second })
-        val activeIka = grouped.keys
-        var deleted = 0
+        // Employees are independent records: removing their last debt must NOT
+        // remove the employee. Only duplicate/non-canonical employee rows are cleaned.
+        var hardDeletedDuplicates = 0
+        storedByIka.forEach { (ika, rows) ->
+            val canonical = rows.firstOrNull { it.id == ika }
+                ?: rows.maxByOrNull { it.updatedAt }
+                ?: return@forEach
 
-        stored.forEach { employee ->
-            val ika = EmployeeEntity.normalizeIka(employee.amIka)
-            if (ika.isBlank() || ika !in activeIka || employee.id != ika) {
-                employees.hardDelete(employee.id)
-                deleted++
+            rows.filter { it.id != canonical.id }.forEach { duplicate ->
+                employees.hardDelete(duplicate.id)
+                hardDeletedDuplicates++
+            }
+
+            if (canonical.id != ika) {
+                employees.hardDelete(canonical.id)
+                employees.upsert(canonical.copy(id = ika, amIka = ika))
             }
         }
 
-        val canonical = grouped.map { (ika, rows) ->
+        val grouped = payroll.groupBy({ it.first }, { it.second })
+        val updates = grouped.map { (ika, rows) ->
             val existing = storedByIka[ika]
                 ?.firstOrNull { it.id == ika }
                 ?: storedByIka[ika]?.maxByOrNull { it.updatedAt }
+            val latest = rows.maxByOrNull { it.updatedAt } ?: rows.first()
 
             EmployeeEntity(
                 id = ika,
@@ -156,16 +173,17 @@ class DebtRepository(context: Context) {
                 code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim()
                     ?: existing?.code.orEmpty(),
                 leftDay = existing?.leftDay,
-                updatedAt = rows.maxOfOrNull { it.updatedAt } ?: existing?.updatedAt ?: System.currentTimeMillis(),
+                updatedAt = latest.updatedAt,
                 deleted = false,
             )
         }.sortedBy { it.name.uppercase() }
 
-        if (canonical.isNotEmpty()) employees.upsertAll(canonical)
+        if (updates.isNotEmpty()) employees.upsertAll(updates)
+        EmployeeAliasRegistry.refresh(employees.allForSync())
 
         DebugLog.log(
             "employees",
-            "employee DB rebuild complete · unique AM IKA=${canonical.size} · hard-deleted stale/duplicates=$deleted",
+            "employee DB rebuild complete · active payroll AM IKA=${updates.size} · preserved employees=${employees.allForSync().size} · hard-deleted duplicates=$hardDeletedDuplicates",
         )
     }
 
@@ -178,7 +196,8 @@ class DebtRepository(context: Context) {
     suspend fun delete(ids: Collection<String>) {
         val now = System.currentTimeMillis()
         ids.forEach { debts.softDelete(it, now) }
-        rebuildEmployeeIndex()
+        // Do not rebuild/delete the employee index here. Employees must survive
+        // deletion of their debts and remain editable/searchable.
     }
 
     suspend fun deleteFromFile(source: String, driveFileId: String) {
@@ -190,7 +209,13 @@ class DebtRepository(context: Context) {
     }
 
     private fun normalizeByDueDate(debt: DebtEntity): DebtEntity {
-        if (debt.dueDay != null) return debt
-        return debt.copy(dueDay = DebtEntity.defaultDue(debt.kind, debt.periodYear, debt.periodMonth))
+        val resolvedDue = debt.dueDay ?: DebtEntity.defaultDue(debt.kind, debt.periodYear, debt.periodMonth)
+            ?: return debt
+        val dueDate = java.time.LocalDate.ofEpochDay(resolvedDue)
+        return debt.copy(
+            periodMonth = dueDate.monthValue,
+            periodYear = dueDate.year,
+            dueDay = resolvedDue,
+        )
     }
 }
