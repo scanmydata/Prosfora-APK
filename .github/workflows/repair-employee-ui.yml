@@ -1,0 +1,86 @@
+name: Repair employee UI
+
+on:
+  push:
+    paths:
+      - '.github/workflows/repair-employee-ui.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch employee screen
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('app/src/main/java/gr/prosfora/app/ui/employees/EmployeesScreen.kt')
+          text = path.read_text(encoding='utf-8')
+
+          text = text.replace(
+              'import gr.prosfora.app.google.rememberGoogleAuthorizer\nimport gr.prosfora.app.sync.SheetSync',
+              'import gr.prosfora.app.google.rememberGoogleAuthorizer\nimport gr.prosfora.app.sync.EmployeeIndexReconciler\nimport gr.prosfora.app.sync.PayrollInsuranceDaysStore\nimport gr.prosfora.app.sync.SheetSync',
+          )
+
+          text = text.replace(
+              '    LaunchedEffect(debts) {\n        repository.ensureEmployeesFromExistingDebts()\n    }',
+              '    LaunchedEffect(Unit) {\n        EmployeeIndexReconciler.rebuild(context)\n    }',
+          )
+
+          text = text.replace(
+              '                val rows = debts.filter { it.kind.perPerson && it.amIka == employee.amIka }\n                Card(',
+              '                val rows = debts.filter { it.kind.perPerson && it.amIka == employee.amIka }\n                val insuranceDays = PayrollInsuranceDaysStore.total(context, employee.amIka)\n                Card(',
+          )
+
+          text = text.replace(
+              '                        Text("Συνολικά πληρωτέα: ${rows.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)',
+              '                        Text("Σύνολο ενσήμων: $insuranceDays", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)\n                        Text("Συνολικά πληρωτέα: ${rows.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)',
+          )
+
+          text = text.replace(
+              '    val loading = months.any { (month, _) -> loadingMonths[keyFor(year, month)] == true }\n\n    Scaffold(',
+              '    val loading = months.any { (month, _) -> loadingMonths[keyFor(year, month)] == true }\n    val totalInsuranceDays = PayrollInsuranceDaysStore.total(context, employee.amIka)\n\n    Scaffold(',
+          )
+
+          text = text.replace(
+              '        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {\n            item {',
+              '        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {\n            item {\n                Row(verticalAlignment = Alignment.CenterVertically) {\n                    Text("Σύνολο ενσήμων", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 8.dp))\n                    Text(totalInsuranceDays.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = BrandGreen)\n                }\n            }\n            item {',
+          )
+
+          text = text.replace(
+              '                            Text(annualPayroll.asMoney(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = Color.Black)\n                            Text("Κόστος ενσήμων: ${annualCost.asMoney()}", style = MaterialTheme.typography.bodyMedium, color = Color.Black)',
+              '                            Text(annualPayroll.asMoney(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = Color.Black)\n                            Text("Σύνολο ενσήμων: $totalInsuranceDays", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = Color.Black)\n                            Text("Κόστος ενσήμων: ${annualCost.asMoney()}", style = MaterialTheme.typography.bodyMedium, color = Color.Black)',
+          )
+
+          required = [
+              'import gr.prosfora.app.sync.EmployeeIndexReconciler',
+              'import gr.prosfora.app.sync.PayrollInsuranceDaysStore',
+              'LaunchedEffect(Unit) {',
+              'val insuranceDays = PayrollInsuranceDaysStore.total(context, employee.amIka)',
+              'val totalInsuranceDays = PayrollInsuranceDaysStore.total(context, employee.amIka)',
+              'Σύνολο ενσήμων',
+          ]
+          missing = [x for x in required if x not in text]
+          if missing:
+              raise SystemExit('Patch validation failed: ' + repr(missing))
+
+          path.write_text(text, encoding='utf-8')
+
+      - name: Commit repair and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/repair-employee-ui.yml
+          git add app/src/main/java/gr/prosfora/app/ui/employees/EmployeesScreen.kt .github/workflows/repair-employee-ui.yml
+          if git diff --cached --quiet; then
+            echo "No changes needed."
+            exit 0
+          fi
+          git commit -m "Show employee insurance days and repair index on open"
+          git push
