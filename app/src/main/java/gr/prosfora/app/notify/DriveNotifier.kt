@@ -16,6 +16,8 @@ import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.util.asMoney
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlin.math.absoluteValue
 
 object DriveNotifier {
@@ -25,6 +27,9 @@ object DriveNotifier {
     private const val CHANNEL = "drive_changes"
     private const val ID = 4711
     private const val DEBTS_ID = 4712
+    private const val DAILY_UNPAID_ID = 4713
+    private const val PREFS = "debt_notifications"
+    private const val LAST_UNPAID_NOTIFICATION_DATE = "last_unpaid_notification_date"
 
     fun notify(context: Context, changes: List<DriveWatch.Change>) {
         if (changes.isEmpty()) return
@@ -113,6 +118,57 @@ object DriveNotifier {
             )
         }.onFailure {
             DebugLog.log("notify", "Debt notification ΑΠΕΤΥΧΕ: ${it.stackTraceToString().take(900)}")
+        }
+    }
+
+    /** Sends at most one reminder per Europe/Athens calendar day while unpaid debts exist. */
+    fun notifyUnpaidDebtsDaily(context: Context, debts: List<DebtEntity>) {
+        if (debts.isEmpty()) return
+        if (!allowed(context)) {
+            DebugLog.log("notify", "Daily unpaid notification ΔΕΝ στάλθηκε: Android notifications disabled/permission missing")
+            return
+        }
+
+        val today = LocalDate.now(ZoneId.of("Europe/Athens")).toString()
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getString(LAST_UNPAID_NOTIFICATION_DATE, "") == today) {
+            DebugLog.log("notify", "Daily unpaid notification SKIP · already sent today=$today")
+            return
+        }
+
+        ensureChannel(context)
+        val ordered = debts.sortedWith(compareBy<DebtEntity>({ it.dueDay ?: Long.MAX_VALUE }, { it.periodYear }, { it.periodMonth }, { it.kind.ordinal }))
+        val total = ordered.sumOf { it.amount }
+        val lines = ordered.map { debt -> "${debt.title} — ${debt.amount.asMoney()}" }
+        val firstDebtId = ordered.first().id
+        val open = PendingIntent.getActivity(
+            context,
+            DAILY_UNPAID_ID,
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(EXTRA_OPEN_DEBT_ID, firstDebtId)
+                .putExtra(EXTRA_OPEN_PENDING_INSTALLMENTS, false),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val title = if (ordered.size == 1) {
+            "Υπάρχει 1 απλήρωτη οφειλή"
+        } else {
+            "Υπάρχουν ${ordered.size} απλήρωτες οφειλές"
+        }
+        val builder = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText("Σύνολο: ${total.asMoney()}")
+            .setStyle(NotificationCompat.InboxStyle().also { style -> lines.take(8).forEach(style::addLine) })
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+        runCatching {
+            NotificationManagerCompat.from(context).notify(DAILY_UNPAID_ID, builder.build())
+            prefs.edit().putString(LAST_UNPAID_NOTIFICATION_DATE, today).apply()
+            DebugLog.log("notify", "Daily unpaid notification στάλθηκε · debts=${ordered.size} · total=${total.asMoney()} · date=$today")
+        }.onFailure {
+            DebugLog.log("notify", "Daily unpaid notification ΑΠΕΤΥΧΕ: ${it.stackTraceToString().take(900)}")
         }
     }
 
