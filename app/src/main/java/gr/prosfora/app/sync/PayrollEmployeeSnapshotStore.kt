@@ -1,9 +1,9 @@
 package gr.prosfora.app.sync
 
 import android.content.Context
+import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.ProsforaDatabase
-import gr.prosfora.app.data.db.DebtEntity
 import org.json.JSONObject
 
 /**
@@ -32,7 +32,7 @@ object PayrollEmployeeSnapshotStore {
             val period = JSONObject().apply {
                 put("payable", rows.sumOf { it.amount })
                 put("insuranceCost", PayrollInsuranceCostExtractor.find(ocrText, rows.first()))
-                put("insuranceDays", PayrollInsuranceDaysStore.total(context, ika).coerceAtLeast(0))
+                put("insuranceDays", PayrollInsuranceDaysStore.daysFor(context, ika, year, month))
             }
             current.put(periodKey, period)
 
