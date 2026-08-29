@@ -87,9 +87,12 @@ class DebtRepository(context: Context) {
         }
         debts.upsertAll(merged)
 
-        // Η δημιουργία του index γίνεται αμέσως μετά την εισαγωγή και δεν
-        // περιμένει να ανοίξει ο χρήστης το menu «Εργαζόμενοι».
+        // Οι εργαζόμενοι πρέπει να δημιουργούνται αμέσως μετά την εισαγωγή.
+        // Δεν εξαρτάται πλέον η δημιουργία τους από το να έχει βρεθεί ΑΜ ΙΚΑ.
         rememberPeople(merged)
+
+        // Κρατάμε το index πλήρες ώστε παλιές μισθοδοσίες να δημιουργούν επίσης
+        // εργαζόμενους, ακόμη κι αν το αρχικό import δεν είχε index.
         rememberPeople(debts.allForSync())
     }
 
@@ -98,43 +101,92 @@ class DebtRepository(context: Context) {
     }
 
     /**
-     * Ο εργαζόμενος είναι μοναδικός αποκλειστικά με βάση το ΑΜ Ι.Κ.Α.
-     * Όλες οι γραμμές μισθοδοσίας με το ίδιο ΑΜ ΙΚΑ μπαίνουν στην ίδια καρτέλα.
+     * Ο εργαζόμενος ταυτοποιείται από ΑΜ ΙΚΑ όταν υπάρχει.
+     * Όταν παλιό/προβληματικό import έχει κενό ΑΜ ΙΚΑ, χρησιμοποιείται
+     * deterministic fallback από κωδικό + όνομα ώστε να δημιουργείται
+     * κανονικά εργαζόμενος και να μη χάνεται η μισθοδοσία του.
      */
     private suspend fun rememberPeople(items: List<DebtEntity>) {
-        val payroll = items.filter { it.kind.perPerson && it.amIka.isNotBlank() }
+        val payroll = items.filter {
+            it.kind.perPerson && (
+                it.personName.isNotBlank() ||
+                    it.personCode.isNotBlank() ||
+                    it.amIka.isNotBlank()
+                )
+        }
         if (payroll.isEmpty()) return
 
         val existing = employees.allForSync()
-        val aliasByIka = existing.filter { it.amIka.isNotBlank() && it.alias.isNotBlank() }
+        val byIka = existing
+            .filter { EmployeeEntity.normalizeIka(it.amIka).isNotBlank() }
             .associateBy { EmployeeEntity.normalizeIka(it.amIka) }
-        val aliasByName = existing.filter { it.alias.isNotBlank() }
-            .associateBy { it.name.trim().uppercase().replace(Regex("\\s+"), " ") }
+        val byName = existing
+            .filter { it.name.isNotBlank() }
+            .groupBy { canonicalPersonName(it.name) }
+        val byCodeAndName = existing
+            .associateBy { employeeFallbackKey(it.code, it.name) }
 
         val people = payroll
-            .groupBy { EmployeeEntity.normalizeIka(it.amIka) }
-            .mapNotNull { (ika, rows) ->
-                if (ika.isBlank()) return@mapNotNull null
-                val old = aliasByIka[ika]
-                val firstName = rows.firstOrNull { it.personName.isNotBlank() }?.personName.orEmpty()
-                val oldByName = aliasByName[firstName.trim().uppercase().replace(Regex("\\s+"), " ")]
+            .groupBy { employeeKey(it.amIka, it.personCode, it.personName) }
+            .mapNotNull { (key, rows) ->
+                val first = rows.firstOrNull() ?: return@mapNotNull null
+                val ika = EmployeeEntity.normalizeIka(first.amIka)
+                val name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim().orEmpty()
+                val code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim().orEmpty()
+
+                if (ika.isBlank() && name.isBlank() && code.isBlank()) return@mapNotNull null
+
+                val old = byIka[ika].takeIf { ika.isNotBlank() }
+                    ?: byCodeAndName[employeeFallbackKey(code, name)]
+                    ?: byName[canonicalPersonName(name)]?.firstOrNull()
+
+                val id = if (ika.isNotBlank()) {
+                    EmployeeEntity.idForAmIka(ika)
+                } else {
+                    old?.id ?: fallbackEmployeeId(code, name)
+                }
+
                 EmployeeEntity(
-                    id = EmployeeEntity.idForAmIka(ika),
-                    amIka = ika,
-                    name = firstName,
-                    alias = old?.alias ?: oldByName?.alias.orEmpty(),
-                    code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode.orEmpty(),
-                    leftDay = old?.leftDay ?: oldByName?.leftDay,
+                    id = id,
+                    amIka = ika.ifBlank { old?.amIka.orEmpty() },
+                    name = name.ifBlank { old?.name.orEmpty() },
+                    alias = old?.alias.orEmpty(),
+                    code = code.ifBlank { old?.code.orEmpty() },
+                    leftDay = old?.leftDay,
                     updatedAt = System.currentTimeMillis(),
                     deleted = false,
                 )
             }
 
         if (people.isEmpty()) return
-        employees.softDeleteAll(System.currentTimeMillis())
+
+        // ΜΗΝ κάνεις softDeleteAll εδώ. Το rememberPeople() καλείται και με μία
+        // μόνο νέα/τροποποιημένη οφειλή. Το παλιό softDeleteAll έκρυβε όλους
+        // τους υπόλοιπους εργαζόμενους μέχρι να ξαναγίνει rebuild.
         employees.upsertAll(people)
-        DebugLog.log("employees", "canonical index updated · unique AM IKA=${people.size}")
+        DebugLog.log(
+            "employees",
+            "employee index updated · employees=${people.size} · with AM IKA=${people.count { it.amIka.isNotBlank() }}",
+        )
     }
+
+    private fun employeeKey(amIka: String, code: String, name: String): String {
+        val ika = EmployeeEntity.normalizeIka(amIka)
+        return if (ika.isNotBlank()) {
+            "ika:$ika"
+        } else {
+            employeeFallbackKey(code, name)
+        }
+    }
+
+    private fun employeeFallbackKey(code: String, name: String): String =
+        "fallback:${code.trim()}|${canonicalPersonName(name)}"
+
+    private fun canonicalPersonName(name: String): String =
+        name.trim().uppercase().replace(Regex("\\s+"), " ")
+
+    private fun fallbackEmployeeId(code: String, name: String): String =
+        "employee-fallback-${java.util.UUID.nameUUIDFromBytes(employeeFallbackKey(code, name).toByteArray(Charsets.UTF_8))}"
 
     suspend fun setPaid(id: String, paid: Boolean, day: Long? = null) {
         val now = System.currentTimeMillis()
