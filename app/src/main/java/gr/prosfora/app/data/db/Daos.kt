@@ -37,7 +37,7 @@ interface SpaceDao {
     @Upsert suspend fun upsertAll(items: List<SpaceEntity>)
     @Query("UPDATE spaces SET deleted = 1, updatedAt = :at WHERE id = :id") suspend fun softDelete(id: String, at: Long)
     @Query("UPDATE spaces SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND deleted = 0") suspend fun softDeleteForOffer(offerId: String, at: Long)
-    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM spaces WHERE offerId = :offerId AND deleted = 0") suspend fun nextPosition(): Int
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM spaces WHERE offerId = :offerId AND deleted = 0") suspend fun nextPosition(offerId: String): Int
 }
 
 @Dao
@@ -49,7 +49,7 @@ interface NoteDao {
     @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE id = :id") suspend fun softDelete(id: String, at: Long)
     @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND deleted = 0") suspend fun softDeleteForOffer(offerId: String, at: Long)
     @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND text = :text AND deleted = 0") suspend fun softDeleteByText(offerId: String, text: String, at: Long)
-    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM notes WHERE offerId = :offerId AND deleted = 0") suspend fun nextPosition(): Int
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM notes WHERE offerId = :offerId AND deleted = 0") suspend fun nextPosition(offerId: String): Int
 }
 
 @Dao
