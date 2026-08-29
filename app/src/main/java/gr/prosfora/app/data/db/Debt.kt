@@ -33,6 +33,7 @@ enum class DebtKind(val label: String, val agency: DebtAgency) {
 data class DebtEntity(
     @PrimaryKey val id: String = java.util.UUID.randomUUID().toString(),
     val kind: DebtKind = DebtKind.AADE,
+    /** Calendar month/year in which the payment is due. */
     val periodMonth: Int = 0,
     val periodYear: Int = 0,
     val dueDay: Long? = null,
@@ -58,7 +59,8 @@ data class DebtEntity(
     val periodLabel: String get() = if (periodMonth in 1..12 && periodYear > 0) "$periodMonth/$periodYear" else "—"
     val periodKey: Int get() = periodYear * 100 + periodMonth
     val title: String get() = when {
-        kind.perPerson && personName.isNotBlank() -> personName
+        kind.perPerson && personName.isNotBlank() ->
+            EmployeeAliasRegistry.aliasFor(amIka).ifBlank { personName }
         description.isNotBlank() -> description
         else -> kind.label
     }
