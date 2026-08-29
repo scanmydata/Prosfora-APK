@@ -5,7 +5,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.time.LocalDate
 import java.time.YearMonth
-import java.util.UUID
+
 
 enum class DebtAgency(val label: String, val folder: String) {
     EFKA("ΙΚΑ & ΤΕΚΑ", "ΙΚΑ-ΤΕΚΑ"),
@@ -31,7 +31,7 @@ enum class DebtKind(val label: String, val agency: DebtAgency) {
     indices = [Index("periodYear", "periodMonth"), Index("kind"), Index("amIka")],
 )
 data class DebtEntity(
-    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    @PrimaryKey val id: String = java.util.UUID.randomUUID().toString(),
     val kind: DebtKind = DebtKind.AADE,
     val periodMonth: Int = 0,
     val periodYear: Int = 0,
@@ -102,6 +102,9 @@ data class EmployeeEntity(
     companion object {
         fun normalizeIka(raw: String): String = raw.filter(Char::isDigit)
         fun idForAmIka(amIka: String): String = "employee-ika-${normalizeIka(amIka)}"
+        /** Compatibility helper for legacy UI call-sites; canonical identity remains AM IKA. */
+        @Deprecated("Use idForAmIka(amIka) for employee identity")
+        fun idFor(name: String): String = legacyIdFor(name)
         fun legacyIdFor(name: String): String = name.trim().uppercase().replace(Regex("""\s+"""), " ")
     }
 }
