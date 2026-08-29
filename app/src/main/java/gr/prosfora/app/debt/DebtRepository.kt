@@ -17,7 +17,7 @@ class DebtRepository(context: Context) {
     fun observeAll(): Flow<List<DebtEntity>> = debts.observeAll()
     fun observeEmployees(): Flow<List<EmployeeEntity>> = employees.observeAll()
 
-    suspend fun importedFileIds(): List<String> = debts.importedFileIds()
+    suspend fun importedFileIds(): Set<String> = debts.importedFileIds().toSet()
 
     suspend fun legacyPayrollFileIdsMissingIka(): List<String> = debts.legacyPayrollFileIdsMissingIka()
 
@@ -26,30 +26,36 @@ class DebtRepository(context: Context) {
         debts.deleteLegacyPayrollRows(fileIds.toList())
     }
 
-    suspend fun saveEmployee(employee: EmployeeEntity) =
-        employees.upsert(employee.copy(updatedAt = System.currentTimeMillis()))
+    suspend fun saveEmployee(employee: EmployeeEntity) {
+        val ika = EmployeeEntity.normalizeIka(employee.amIka)
+        employees.upsert(
+            employee.copy(
+                id = if (ika.isNotBlank()) ika else employee.id,
+                amIka = ika,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
 
     suspend fun deleteEmployee(id: String) =
         employees.softDelete(id, System.currentTimeMillis())
 
     suspend fun save(debt: DebtEntity) {
-        val normalized = normalizeByDueDate(debt)
+        val normalized = normalizeByDueDate(debt.copy(amIka = EmployeeEntity.normalizeIka(debt.amIka)))
         debts.upsert(
             normalized.copy(
                 updatedAt = System.currentTimeMillis(),
                 createdBy = normalized.createdBy.ifBlank { settings.ownerEmail },
             ),
         )
-        repairEmployeeIndex()
-        rememberPeople(listOf(normalized), reviveDeleted = true)
-        repairEmployeeIndex()
+        rebuildEmployeeIndex()
     }
 
     suspend fun saveAll(items: List<DebtEntity>) {
         if (items.isEmpty()) return
         val now = System.currentTimeMillis()
         val merged = items.map { rawIncoming ->
-            var incoming = normalizeByDueDate(rawIncoming)
+            var incoming = normalizeByDueDate(rawIncoming.copy(amIka = EmployeeEntity.normalizeIka(rawIncoming.amIka)))
             var existing = debts.getById(incoming.id)
 
             if (
@@ -77,6 +83,7 @@ class DebtRepository(context: Context) {
                     paidDay = null,
                     updatedAt = now,
                     createdBy = settings.ownerEmail,
+                    deleted = false,
                 )
             } else {
                 val sameImportedFile = incoming.driveFileId.isNotBlank() &&
@@ -95,98 +102,92 @@ class DebtRepository(context: Context) {
                 )
             }
         }
+
         debts.upsertAll(merged)
-
-        repairEmployeeIndex()
-        rememberPeople(merged, reviveDeleted = true)
-        rememberPeople(debts.allForSync(), reviveDeleted = true)
-        repairEmployeeIndex()
+        rebuildEmployeeIndex()
     }
 
-    suspend fun ensureEmployeesFromExistingDebts() {
-        rememberPeople(debts.allForSync(), reviveDeleted = false)
-        repairEmployeeIndex()
-    }
+    suspend fun ensureEmployeesFromExistingDebts() = rebuildEmployeeIndex()
 
-    suspend fun repairEmployeeIndex() {
-        val existing = employees.allForSync()
-        if (existing.isEmpty()) return
+    /** Compatibility entry point used by the sync layer. */
+    suspend fun repairEmployeeIndex() = rebuildEmployeeIndex()
 
-        val byIka = existing
+    private suspend fun rebuildEmployeeIndex() {
+        val stored = employees.allForSync()
+        val storedByIka = stored
             .mapNotNull { employee ->
                 val ika = EmployeeEntity.normalizeIka(employee.amIka)
                 if (ika.isBlank()) null else ika to employee
             }
             .groupBy({ it.first }, { it.second })
 
-        var removed = 0
-        byIka.forEach { (ika, rows) ->
-            val survivor = rows.firstOrNull { it.id == ika }
-                ?: rows.filter { !it.deleted }.maxByOrNull { it.updatedAt }
-                ?: rows.maxByOrNull { it.updatedAt }
-                ?: return@forEach
+        val payroll = debts.allForSync()
+            .asSequence()
+            .filter { !it.deleted && it.kind.perPerson }
+            .mapNotNull { debt ->
+                val ika = EmployeeEntity.normalizeIka(debt.amIka)
+                if (ika.isBlank()) null else ika to debt
+            }
+            .toList()
 
-            val canonical = survivor.copy(id = ika, amIka = ika)
-            employees.upsert(canonical)
-            rows.forEach { row ->
-                if (row.id != ika) {
-                    employees.hardDelete(row.id)
-                    removed++
-                }
+        val grouped = payroll.groupBy({ it.first }, { it.second })
+        val activeIka = grouped.keys
+        var deleted = 0
+
+        stored.forEach { employee ->
+            val ika = EmployeeEntity.normalizeIka(employee.amIka)
+            if (ika.isBlank() || ika !in activeIka || employee.id != ika) {
+                employees.hardDelete(employee.id)
+                deleted++
             }
         }
+
+        val canonical = grouped.map { (ika, rows) ->
+            val existing = storedByIka[ika]
+                ?.firstOrNull { it.id == ika }
+                ?: storedByIka[ika]?.maxByOrNull { it.updatedAt }
+
+            EmployeeEntity(
+                id = ika,
+                amIka = ika,
+                name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim()
+                    ?: existing?.name.orEmpty(),
+                alias = existing?.alias.orEmpty(),
+                code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim()
+                    ?: existing?.code.orEmpty(),
+                leftDay = existing?.leftDay,
+                updatedAt = rows.maxOfOrNull { it.updatedAt } ?: existing?.updatedAt ?: System.currentTimeMillis(),
+                deleted = false,
+            )
+        }.sortedBy { it.name.uppercase() }
+
+        if (canonical.isNotEmpty()) employees.upsertAll(canonical)
 
         DebugLog.log(
             "employees",
-            "employee DB repair complete · unique AM IKA=${byIka.size} · hard-deleted duplicates=$removed",
+            "employee DB rebuild complete · unique AM IKA=${canonical.size} · hard-deleted stale/duplicates=$deleted",
         )
     }
 
-    private suspend fun rememberPeople(items: List<DebtEntity>, reviveDeleted: Boolean) {
-        val payroll = items.filter {
-            it.kind.perPerson && (
-                it.personName.isNotBlank() || it.personCode.isNotBlank() || it.amIka.isNotBlank()
-            )
-        }
-        if (payroll.isEmpty()) return
-
-        val inferredIkaByFallback = payroll
-            .groupBy { employeeFallbackKey(it.personCode, it.personName) }
-            .mapValues { (_, rows) ->
-                rows.map { EmployeeEntity.normalizeIka(it.amIka) }
-                    .firstOrNull { it.isNotBlank() }
-                    .orEmpty()
-            }
-
-        payroll
-            .groupBy { employeeFallbackKey(it.personCode, it.personName) }
-            .values
-            .forEach { rows ->
-                val representative = rows.maxByOrNull { it.updatedAt } ?: rows.first()
-                val ika = EmployeeEntity.normalizeIka(representative.amIka)
-                    .ifBlank { inferredIkaByFallback[employeeFallbackKey(representative.personCode, representative.personName)].orEmpty() }
-
-                if (ika.isBlank()) return@forEach
-
-                val existing = employees.findByAmIka(ika)
-                val merged = EmployeeEntity(
-                    id = ika,
-                    amIka = ika,
-                    name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim()
-                        ?: existing?.name.orEmpty(),
-                    alias = existing?.alias.orEmpty(),
-                    code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim()
-                        ?: existing?.code.orEmpty(),
-                    leftDay = existing?.leftDay,
-                    updatedAt = representative.updatedAt,
-                    deleted = if (reviveDeleted) false else (existing?.deleted ?: false),
-                )
-                employees.upsert(merged)
-            }
+    suspend fun setPaid(id: String, paid: Boolean, day: Long? = null) {
+        debts.markPaid(id, paid, if (paid) (day ?: System.currentTimeMillis()) else null, System.currentTimeMillis())
     }
 
-    private fun employeeFallbackKey(code: String, name: String): String =
-        listOf(code.trim(), name.trim().uppercase().replace(Regex("\\s+"), " ")).joinToString("|")
+    suspend fun delete(id: String) = delete(listOf(id))
+
+    suspend fun delete(ids: Collection<String>) {
+        val now = System.currentTimeMillis()
+        ids.forEach { debts.softDelete(it, now) }
+        rebuildEmployeeIndex()
+    }
+
+    suspend fun deleteFromFile(source: String, driveFileId: String) {
+        if (driveFileId.isBlank()) return
+        val ids = debts.allForSync()
+            .filter { it.driveFileId == driveFileId && (source.isBlank() || it.source == source) }
+            .map { it.id }
+        delete(ids)
+    }
 
     private fun normalizeByDueDate(debt: DebtEntity): DebtEntity {
         if (debt.dueDay != null) return debt
