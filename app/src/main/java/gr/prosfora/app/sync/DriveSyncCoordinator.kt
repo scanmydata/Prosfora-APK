@@ -28,9 +28,6 @@ object DriveSyncCoordinator {
                 .onFailure { DebugLog.log("sync", "Sheet sync απέτυχε: ${it.stackTraceToString()}") }.getOrNull()
         } else null
 
-        // Payroll files that were imported before AM IKA enrichment must be
-        // scanned once more. Only those specific files are released from the
-        // known-id cache; every other imported file remains skipped.
         val legacyPayrollFileIds = repository.legacyPayrollFileIdsMissingIka().toSet()
         if (legacyPayrollFileIds.isNotEmpty()) {
             repository.deleteLegacyPayrollRows(legacyPayrollFileIds)
@@ -56,8 +53,6 @@ object DriveSyncCoordinator {
                 onFound = { found ->
                     if (found.afmMismatch || found.debts.isEmpty()) return@scan
 
-                    // Use the OCR text that the importer has already produced.
-                    // No second Drive download and no second OCR pass.
                     val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
                     PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
 
@@ -91,8 +86,8 @@ object DriveSyncCoordinator {
             return@coroutineScope Result(sheetSummary = sheetSummary)
         }
 
-        report.found.forEach { found ->
-            if (found.afmMismatch || found.debts.isEmpty()) return@forEach
+        for (found in report.found) {
+            if (found.afmMismatch || found.debts.isEmpty()) continue
             val pending = deferInstallments && found.installmentPlan != null
             if (pending) {
                 if (pendingFiles.add(found.driveFileId)) PendingDebtNotificationStore.enqueue(app, listOf(found))
@@ -108,7 +103,6 @@ object DriveSyncCoordinator {
             }
         }
 
-        // The employee table is rebuilt only from canonical payroll debts.
         runCatching { EmployeeIndexReconciler.rebuild(app) }
             .onFailure { DebugLog.log("employees", "rebuild failed: ${it.stackTraceToString()}") }
 
