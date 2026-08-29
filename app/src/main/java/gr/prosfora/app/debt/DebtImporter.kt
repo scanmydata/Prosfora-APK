@@ -2,6 +2,7 @@ package gr.prosfora.app.debt
 
 import gr.prosfora.app.data.db.DebtAgency
 import gr.prosfora.app.data.db.DebtEntity
+import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.DriveWorkspace
@@ -135,10 +136,7 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
             return Found(fileName, driveFileId, emptyList(), result.route, note, afmMismatch = true, ocrText = result.text)
         }
 
-        val byRules = enrichPayrollAmIka(
-            result.text,
-            DebtParser.parse(result.text, fileName, driveFileId),
-        )
+        val byRules = enrichPayrollAmIka(result.text, DebtParser.parse(result.text, fileName, driveFileId))
         val installmentPlan = AadeInstallmentParser.parse(result.text)
         val rulesForImport = if (installmentPlan != null) {
             byRules.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) }
@@ -167,11 +165,7 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
         )
     }
 
-    /**
-     * Η μισθοδοτική κατάσταση έχει Α/Α, Κωδικό και μετά τα στοιχεία του ατόμου.
-     * Ο πρώτος καθαρά αριθμητικός token μετά το όνομα είναι η στήλη «ΑΜ Ι.Κ.Α.».
-     * Παράδειγμα: `4 008 MAHMOOD SALEH FARID 304771625 11118104279 26,00`.
-     */
+    /** Ο πρώτος καθαρά αριθμητικός token μετά το όνομα είναι η στήλη ΑΜ Ι.Κ.Α. */
     private fun payrollAmIkaByCode(text: String): Map<String, String> {
         val row = Regex("""^\\s*\\d{1,3}\\s+(\\d{2,6})\\s+(.+?)\\s+(\\d{7,12})(?:\\s+\\d{7,12})?\\s+\\d{1,3}(?:[,.]\\d{2}).*$""")
         return text.lines().mapNotNull { line ->
@@ -186,9 +180,7 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
         val mapping = payrollAmIkaByCode(text)
         if (mapping.isEmpty()) return rows
         DebugLog.log("employees", "payroll ΑΜ ΙΚΑ mapping · unique=${mapping.values.toSet().size} · codes=${mapping.size}")
-        return rows.map { row ->
-            if (row.kind.perPerson) row.copy(amIka = mapping[row.personCode].orEmpty()) else row
-        }
+        return rows.map { row -> if (row.kind.perPerson) row.copy(amIka = mapping[row.personCode].orEmpty()) else row }
     }
 
     suspend fun folderUrl(): String = workspace.folderUrl(workspace.debtsFolder())
