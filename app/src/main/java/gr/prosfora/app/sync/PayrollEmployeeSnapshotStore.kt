@@ -5,6 +5,8 @@ import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.ProsforaDatabase
 import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Persistent payroll history owned by the employee card.
@@ -13,9 +15,9 @@ import org.json.JSONObject
  * affected when the corresponding debt rows are later deleted.
  */
 object PayrollEmployeeSnapshotStore {
-    fun record(context: Context, ocrText: String, debts: List<DebtEntity>) {
+    suspend fun record(context: Context, ocrText: String, debts: List<DebtEntity>) = withContext(Dispatchers.IO) {
         val payroll = debts.filter { it.kind.perPerson && EmployeeEntity.normalizeIka(it.amIka).isNotBlank() }
-        if (payroll.isEmpty()) return
+        if (payroll.isEmpty()) return@withContext
 
         val db = ProsforaDatabase.get(context.applicationContext)
         val byEmployee = payroll.groupBy { EmployeeEntity.normalizeIka(it.amIka) }
@@ -84,12 +86,6 @@ object PayrollEmployeeSnapshotStore {
         private val amountRegex = Regex("[0-9][0-9.]*,[0-9]{2}")
         private val rowHeader = Regex("""^\s*\d{1,3}\s+[A-ZΑ-Ω0-9]{2,6}\s+""")
 
-        /**
-         * Extracts the actual payroll column named «Κόστος».
-         * In the sample payroll summary the numeric columns are:
-         * ... Κρατήσεις, Καθ.Αποδ., Κόστος, Προκ/λή, Πληρωτέο.
-         * Therefore «Κόστος» is numeric index 9 (zero-based).
-         */
         fun find(text: String, debt: DebtEntity): Double {
             if (text.isBlank() || debt.personCode.isBlank()) return 0.0
             val wanted = debt.personName.trim().split(Regex("\\s+")).filter { it.length >= 2 }
