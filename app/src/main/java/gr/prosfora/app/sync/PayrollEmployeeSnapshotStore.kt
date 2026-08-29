@@ -24,17 +24,19 @@ object PayrollEmployeeSnapshotStore {
         byEmployee.forEach { (ika, rows) ->
             val old = people[ika]
             val current = runCatching { JSONObject(old?.payrollSummaryJson ?: "{}") }.getOrElse { JSONObject() }
-            val year = rows.firstOrNull()?.periodYear ?: return@forEach
-            val month = rows.firstOrNull()?.periodMonth ?: return@forEach
-            if (year <= 0 || month !in 1..12) return@forEach
+            rows.groupBy { it.periodYear to it.periodMonth }.forEach { (periodKey, periodRows) ->
+                val year = periodKey.first
+                val month = periodKey.second
+                if (year <= 0 || month !in 1..12) return@forEach
 
-            val periodKey = "%04d-%02d".format(year, month)
-            val period = JSONObject().apply {
-                put("payable", rows.sumOf { it.amount })
-                put("insuranceCost", PayrollInsuranceCostExtractor.find(ocrText, rows.first()))
-                put("insuranceDays", PayrollInsuranceDaysStore.daysFor(context, ika, year, month))
+                val jsonKey = "%04d-%02d".format(year, month)
+                val period = JSONObject().apply {
+                    put("payable", periodRows.sumOf { it.amount })
+                    put("insuranceCost", PayrollInsuranceCostExtractor.find(ocrText, periodRows.first()))
+                    put("insuranceDays", PayrollInsuranceDaysStore.daysFor(context, ika, year, month))
+                }
+                current.put(jsonKey, period)
             }
-            current.put(periodKey, period)
 
             val employee = old ?: EmployeeEntity(
                 id = ika,
@@ -82,6 +84,12 @@ object PayrollEmployeeSnapshotStore {
         private val amountRegex = Regex("[0-9][0-9.]*,[0-9]{2}")
         private val rowHeader = Regex("""^\s*\d{1,3}\s+[A-ZΑ-Ω0-9]{2,6}\s+""")
 
+        /**
+         * Extracts the actual payroll column named «Κόστος».
+         * In the sample payroll summary the numeric columns are:
+         * ... Κρατήσεις, Καθ.Αποδ., Κόστος, Προκ/λή, Πληρωτέο.
+         * Therefore «Κόστος» is numeric index 9 (zero-based).
+         */
         fun find(text: String, debt: DebtEntity): Double {
             if (text.isBlank() || debt.personCode.isBlank()) return 0.0
             val wanted = debt.personName.trim().split(Regex("\\s+")).filter { it.length >= 2 }
@@ -104,7 +112,7 @@ object PayrollEmployeeSnapshotStore {
                         ?.replace(',', '.')
                         ?.toDoubleOrNull()
                 }
-                if (numbers.size >= 8) return numbers.getOrNull(3) ?: 0.0
+                if (numbers.size >= 10) return numbers[9]
             }
             return 0.0
         }
