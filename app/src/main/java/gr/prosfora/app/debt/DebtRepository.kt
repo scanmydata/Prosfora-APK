@@ -116,8 +116,6 @@ class DebtRepository(context: Context) {
     }
 
     suspend fun ensureEmployeesFromExistingDebts() = rebuildEmployeeIndex()
-
-    /** Compatibility entry point used by the sync layer. */
     suspend fun repairEmployeeIndex() = rebuildEmployeeIndex()
 
     private suspend fun rebuildEmployeeIndex() {
@@ -138,31 +136,22 @@ class DebtRepository(context: Context) {
             }
             .toList()
 
-        // Employees are independent records: removing their last debt must NOT
-        // remove the employee. Only duplicate/non-canonical employee rows are cleaned.
-        var hardDeletedDuplicates = 0
-        storedByIka.forEach { (ika, rows) ->
-            val canonical = rows.firstOrNull { it.id == ika }
-                ?: rows.maxByOrNull { it.updatedAt }
-                ?: return@forEach
+        val grouped = payroll.groupBy({ it.first }, { it.second })
+        val activeIka = grouped.keys
+        var deleted = 0
 
-            rows.filter { it.id != canonical.id }.forEach { duplicate ->
-                employees.hardDelete(duplicate.id)
-                hardDeletedDuplicates++
-            }
-
-            if (canonical.id != ika) {
-                employees.hardDelete(canonical.id)
-                employees.upsert(canonical.copy(id = ika, amIka = ika))
+        stored.forEach { employee ->
+            val ika = EmployeeEntity.normalizeIka(employee.amIka)
+            if (ika.isBlank() || ika !in activeIka || employee.id != ika) {
+                employees.hardDelete(employee.id)
+                deleted++
             }
         }
 
-        val grouped = payroll.groupBy({ it.first }, { it.second })
-        val updates = grouped.map { (ika, rows) ->
+        val canonical = grouped.map { (ika, rows) ->
             val existing = storedByIka[ika]
                 ?.firstOrNull { it.id == ika }
                 ?: storedByIka[ika]?.maxByOrNull { it.updatedAt }
-            val latest = rows.maxByOrNull { it.updatedAt } ?: rows.first()
 
             EmployeeEntity(
                 id = ika,
@@ -173,17 +162,18 @@ class DebtRepository(context: Context) {
                 code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim()
                     ?: existing?.code.orEmpty(),
                 leftDay = existing?.leftDay,
-                updatedAt = latest.updatedAt,
+                updatedAt = rows.maxOfOrNull { it.updatedAt } ?: existing?.updatedAt ?: System.currentTimeMillis(),
                 deleted = false,
+                payrollSummaryJson = existing?.payrollSummaryJson ?: "{}",
             )
         }.sortedBy { it.name.uppercase() }
 
-        if (updates.isNotEmpty()) employees.upsertAll(updates)
+        if (canonical.isNotEmpty()) employees.upsertAll(canonical)
         EmployeeAliasRegistry.refresh(employees.allForSync())
 
         DebugLog.log(
             "employees",
-            "employee DB rebuild complete · active payroll AM IKA=${updates.size} · preserved employees=${employees.allForSync().size} · hard-deleted duplicates=$hardDeletedDuplicates",
+            "employee DB rebuild complete · active payroll AM IKA=${canonical.size} · preserved employees=${employees.allForSync().size} · hard-deleted stale/duplicates=$deleted",
         )
     }
 
@@ -196,8 +186,7 @@ class DebtRepository(context: Context) {
     suspend fun delete(ids: Collection<String>) {
         val now = System.currentTimeMillis()
         ids.forEach { debts.softDelete(it, now) }
-        // Do not rebuild/delete the employee index here. Employees must survive
-        // deletion of their debts and remain editable/searchable.
+        // Employee payroll snapshot intentionally survives debt deletion.
     }
 
     suspend fun deleteFromFile(source: String, driveFileId: String) {
