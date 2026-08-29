@@ -56,6 +56,8 @@ import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.google.rememberGoogleAuthorizer
+import gr.prosfora.app.sync.EmployeeIndexReconciler
+import gr.prosfora.app.sync.PayrollInsuranceDaysStore
 import gr.prosfora.app.sync.SheetSync
 import gr.prosfora.app.util.asMoney
 import kotlinx.coroutines.launch
@@ -74,8 +76,8 @@ fun EmployeesScreen(onMenu: () -> Unit) {
     var selected by remember { mutableStateOf<EmployeeEntity?>(null) }
     var deletingEmployee by remember { mutableStateOf<EmployeeEntity?>(null) }
 
-    LaunchedEffect(debts) {
-        repository.ensureEmployeesFromExistingDebts()
+    LaunchedEffect(Unit) {
+        EmployeeIndexReconciler.rebuild(context)
     }
 
     if (selected != null) {
@@ -118,6 +120,7 @@ fun EmployeesScreen(onMenu: () -> Unit) {
             }
             items(filtered, key = { it.id }) { employee ->
                 val rows = debts.filter { it.kind.perPerson && it.amIka == employee.amIka }
+                val insuranceDays = PayrollInsuranceDaysStore.total(context, employee.amIka)
                 Card(
                     onClick = { selected = employee },
                     modifier = Modifier.fillMaxWidth(),
@@ -141,6 +144,7 @@ fun EmployeesScreen(onMenu: () -> Unit) {
                                 Icon(Icons.Default.Delete, contentDescription = "Διαγραφή από ευρετήριο", tint = DeleteRed)
                             }
                         }
+                        Text("Σύνολο ενσήμων: $insuranceDays", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                         Text("Συνολικά πληρωτέα: ${rows.sumOf { it.amount }.asMoney()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                         Text("Άνοιγμα καρτέλας ανά μήνα / έτος →", style = MaterialTheme.typography.bodySmall, color = BrandGreen)
                     }
@@ -269,6 +273,7 @@ private fun EmployeeDetailScreen(
     val annualPayroll = selectedRows.sumOf { it.amount }
     val annualCost = months.sumOf { (month, _) -> costByMonth[keyFor(year, month)] ?: 0.0 }
     val loading = months.any { (month, _) -> loadingMonths[keyFor(year, month)] == true }
+    val totalInsuranceDays = PayrollInsuranceDaysStore.total(context, employee.amIka)
 
     Scaffold(
         topBar = {
@@ -286,6 +291,12 @@ private fun EmployeeDetailScreen(
         },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Σύνολο ενσήμων", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 8.dp))
+                    Text(totalInsuranceDays.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = BrandGreen)
+                }
+            }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Έτος", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 8.dp))
@@ -336,6 +347,7 @@ private fun EmployeeDetailScreen(
                             Text("ΣΥΝΟΛΟ $year", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = Color.Black)
                             Text("ΠΛΗΡΩΤΕΟ", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Color.Black)
                             Text(annualPayroll.asMoney(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = Color.Black)
+                            Text("Σύνολο ενσήμων: $totalInsuranceDays", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = Color.Black)
                             Text("Κόστος ενσήμων: ${annualCost.asMoney()}", style = MaterialTheme.typography.bodyMedium, color = Color.Black)
                             if (loading) Row(verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(Modifier.padding(end = 8.dp), strokeWidth = 2.dp, color = Color.Black)
