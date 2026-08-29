@@ -50,7 +50,6 @@ object PayrollCostIndexer {
             val key = "$year-$month"
             val replacement = listOf(
                 employee.id,
-                employee.amIka,
                 employee.name,
                 year.toString(),
                 month.toString(),
@@ -61,7 +60,7 @@ object PayrollCostIndexer {
             )
             val index = data.indexOfFirst {
                 it.getOrElse(0) { "" } == employee.id &&
-                    "${it.getOrElse(3) { "" }}-${it.getOrElse(4) { "" }}" == key
+                    "${it.getOrElse(2) { "" }}-${it.getOrElse(3) { "" }}" == key
             }
             if (index >= 0) data[index] = replacement else data += replacement
         }
