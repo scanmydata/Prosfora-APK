@@ -106,6 +106,13 @@ object DriveSyncCoordinator {
         runCatching { EmployeeIndexReconciler.rebuild(app) }
             .onFailure { DebugLog.log("employees", "rebuild failed: ${it.stackTraceToString()}") }
 
+        // Foreground/manual sync also participates in the once-per-day unpaid reminder.
+        runCatching {
+            DriveNotifier.notifyUnpaidDebtsDaily(app, repository.unpaidDebts())
+        }.onFailure {
+            DebugLog.log("notify", "daily unpaid reminder after sync απέτυχε: ${it.stackTraceToString()}")
+        }
+
         val sheetSummary = sheetJob?.await()
         if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) {
             runCatching { EmployeeSheetSanitizer.sync(app, accessToken) }
