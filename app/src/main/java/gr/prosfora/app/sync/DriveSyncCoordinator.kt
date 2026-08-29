@@ -23,20 +23,25 @@ object DriveSyncCoordinator {
         val repository = DebtRepository(app)
         DebugLog.log("sync") { "έναρξη ενιαίου συγχρονισμού · sheet=$syncSheet · owner=${settings.ownerEmail.ifBlank { "άγνωστος" }}" }
 
-        // Το Sheet συγχρονίζεται παράλληλα, αλλά το employee tab θα καθαριστεί
-        // ξανά μετά το payroll scan από την canonical local βάση.
         val sheetJob = if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) async {
             runCatching { SheetSync(app, SheetsClient(accessToken), settings).sync().summary }
                 .onFailure { DebugLog.log("sync", "Sheet sync απέτυχε: ${it.stackTraceToString()}") }.getOrNull()
         } else null
 
-        // Αρχεία που ανέβασε ήδη η εφαρμογή μπαίνουν αμέσως στο knownDriveIds.
-        // Πρέπει να θεωρούνται ήδη processed, διαφορετικά το επόμενο auto-sync
-        // τα ξανακατεβάζει, ξανακάνει OCR και ξαναδημιουργεί μισθοδοσίες.
+        // Payroll files that were imported before AM IKA enrichment must be
+        // scanned once more. Only those specific files are released from the
+        // known-id cache; every other imported file remains skipped.
+        val legacyPayrollFileIds = repository.legacyPayrollFileIdsMissingIka().toSet()
+        if (legacyPayrollFileIds.isNotEmpty()) {
+            repository.deleteLegacyPayrollRows(legacyPayrollFileIds)
+            settings.forgetDriveFiles(legacyPayrollFileIds)
+            DebugLog.log("employees", "legacy payroll repair queued · files=${legacyPayrollFileIds.size}")
+        }
+
         val alreadyImported =
             repository.importedFileIds() +
                 PendingDebtNotificationStore.fileIds(app) +
-                settings.knownDriveIds
+                (settings.knownDriveIds - legacyPayrollFileIds)
 
         val deferInstallments = settings.notifyDriveChanges
         val savedIds = mutableSetOf<String>()
@@ -51,9 +56,10 @@ object DriveSyncCoordinator {
                 onFound = { found ->
                     if (found.afmMismatch || found.debts.isEmpty()) return@scan
 
-                    // Χρησιμοποιούμε το OCR που ήδη παρήγαγε ο importer. Δεν
-                    // γίνεται δεύτερο download / OCR μόνο για τα ένσημα.
-                    PayrollInsuranceDaysStore.record(app, found.ocrText, found.debts)
+                    // Use the OCR text that the importer has already produced.
+                    // No second Drive download and no second OCR pass.
+                    val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
+                    PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
 
                     try {
                         PayrollCostIndexer.index(app, accessToken, found)
@@ -63,12 +69,12 @@ object DriveSyncCoordinator {
                     val pending = deferInstallments && found.installmentPlan != null
                     if (pending) {
                         if (pendingFiles.add(found.driveFileId)) {
-                            PendingDebtNotificationStore.enqueue(app, listOf(found))
+                            PendingDebtNotificationStore.enqueue(app, listOf(found.copy(debts = enrichedDebts)))
                             DebugLog.log("sync", "άμεση εκκρεμής ειδοποίηση δόσεων · file=${found.fileName}")
                         }
-                        if (notifiedFiles.add(found.driveFileId)) DriveNotifier.notifyDebts(app, found.debts, openPendingInstallments = true)
+                        if (notifiedFiles.add(found.driveFileId)) DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
                     } else {
-                        val fresh = found.debts.filter { savedIds.add(it.id) }
+                        val fresh = enrichedDebts.filter { savedIds.add(it.id) }
                         if (fresh.isNotEmpty()) {
                             repository.saveAll(fresh)
                             savedDebts += fresh
@@ -92,7 +98,8 @@ object DriveSyncCoordinator {
                 if (pendingFiles.add(found.driveFileId)) PendingDebtNotificationStore.enqueue(app, listOf(found))
                 if (notifiedFiles.add(found.driveFileId)) DriveNotifier.notifyDebts(app, found.debts, openPendingInstallments = true)
             } else {
-                val fresh = found.debts.filter { savedIds.add(it.id) }
+                val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
+                val fresh = enrichedDebts.filter { savedIds.add(it.id) }
                 if (fresh.isNotEmpty()) {
                     repository.saveAll(fresh)
                     savedDebts += fresh
@@ -101,8 +108,7 @@ object DriveSyncCoordinator {
             }
         }
 
-        // Οι εργαζόμενοι χτίζονται ΜΟΝΟ από τις μισθοδοτικές οφειλές που υπάρχουν
-        // πλέον στη βάση. Αυτό διαγράφει πραγματικά παλιά/wrong employee rows.
+        // The employee table is rebuilt only from canonical payroll debts.
         runCatching { EmployeeIndexReconciler.rebuild(app) }
             .onFailure { DebugLog.log("employees", "rebuild failed: ${it.stackTraceToString()}") }
 
