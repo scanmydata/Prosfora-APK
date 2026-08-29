@@ -6,11 +6,8 @@ import gr.prosfora.app.data.db.EmployeeEntity
 import org.json.JSONObject
 
 /**
- * Κρατάει τα ένσημα που βρέθηκαν στο OCR την ίδια στιγμή που διαβάζεται
- * η μισθοδοσία. Δεν ξανακατεβάζει ούτε ξανακάνει OCR σε ήδη εισαγμένο PDF.
- *
- * Κλειδί: ΑΜ ΙΚΑ + έτος + μήνας, ώστε μισθοδοσία και δώρο του ίδιου μήνα
- * να μη μετρήσουν τα ίδια ένσημα δύο φορές.
+ * Persists insurance days captured during payroll import.
+ * No Drive download/OCR is performed when an employee card is opened.
  */
 object PayrollInsuranceDaysStore {
     private const val PREFS = "payroll_insurance_days"
@@ -20,10 +17,8 @@ object PayrollInsuranceDaysStore {
         if (ocrText.isBlank() || debts.isEmpty()) return
 
         val byCode = extractByCode(ocrText)
-        val byIka = JSONObject(
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(KEY, "{}") ?: "{}",
-        )
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val byIka = JSONObject(prefs.getString(KEY, "{}") ?: "{}")
 
         debts.filter { it.kind.perPerson }.forEach { debt ->
             val ika = EmployeeEntity.normalizeIka(debt.amIka)
@@ -34,16 +29,21 @@ object PayrollInsuranceDaysStore {
             if (days <= 0) return@forEach
 
             val key = "$ika:${debt.periodYear}-${debt.periodMonth}"
-            // Ίδιος μήνας + ίδιος εργαζόμενος = ίδια ένσημα, ακόμη κι αν
-            // υπάρχουν χωριστές PAYROLL / PAYROLL_BONUS οφειλές.
             val current = byIka.optInt(key, 0)
             if (days > current) byIka.put(key, days)
         }
 
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY, byIka.toString())
-            .apply()
+        prefs.edit().putString(KEY, byIka.toString()).apply()
+    }
+
+    fun daysFor(context: Context, amIka: String, year: Int, month: Int): Int {
+        val ika = EmployeeEntity.normalizeIka(amIka)
+        if (ika.isBlank() || year <= 0 || month !in 1..12) return 0
+        val data = JSONObject(
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY, "{}") ?: "{}",
+        )
+        return data.optInt("$ika:$year-$month", 0)
     }
 
     fun total(context: Context, amIka: String): Int {
