@@ -193,6 +193,7 @@ private fun EmployeeDetailScreen(
     var alias by remember(employee) { mutableStateOf(employee.alias) }
 
     val totals = PayrollEmployeeSnapshotStore.totals(employee)
+    val history = PayrollEmployeeSnapshotStore.history(employee)
     val rows = debts
         .filter { it.kind.perPerson && it.amIka == employee.amIka }
         .sortedWith(compareByDescending<DebtEntity> { it.periodYear }.thenByDescending { it.periodMonth }.thenBy { it.kind.ordinal })
@@ -228,8 +229,28 @@ private fun EmployeeDetailScreen(
                 }
             }
 
+            if (history.isNotEmpty()) {
+                item {
+                    Text("ΑΝΑΛΥΣΗ ΑΝΑ ΜΗΝΑ", style = MaterialTheme.typography.titleMedium, color = BrandGreen, fontWeight = FontWeight.Bold)
+                }
+                items(history, key = { "snapshot-${it.year}-${it.month}" }) { month ->
+                    Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(14.dp)) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("%02d/%04d".format(month.month, month.year), color = BrandGreen, fontWeight = FontWeight.Bold)
+                            Text("Πληρωτέο: ${month.payable.asMoney()}", fontWeight = FontWeight.SemiBold)
+                            Text("Ένσημα: ${month.insuranceDays}", fontWeight = FontWeight.SemiBold)
+                            Text("Κόστος ενσήμων: ${month.insuranceCost.asMoney()}", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+
+            item {
+                Text("ΕΝΕΡΓΕΣ ΟΦΕΙΛΕΣ ΜΙΣΘΟΔΟΣΙΑΣ", style = MaterialTheme.typography.titleMedium, color = BrandGreen, fontWeight = FontWeight.Bold)
+            }
+
             if (rows.isEmpty()) {
-                item { Text("Δεν υπάρχουν ενεργές μισθοδοτικές οφειλές. Τα αποθηκευμένα ποσά της καρτέλας παραμένουν διαθέσιμα.") }
+                item { Text("Δεν υπάρχουν ενεργές μισθοδοτικές οφειλές. Η αποθηκευμένη μηνιαία ανάλυση και τα σύνολα της καρτέλας παραμένουν διαθέσιμα.") }
             } else {
                 items(rows, key = { it.id }) { debt ->
                     Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(14.dp)) {
