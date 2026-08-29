@@ -1,7 +1,6 @@
 package gr.prosfora.app.sync
 
 import android.content.Context
-import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.debt.DebtImporter
 import gr.prosfora.app.google.GoogleSettings
@@ -18,7 +17,9 @@ object PayrollCostIndexer {
     private val amountRegex = Regex("[0-9][0-9.]*,[0-9]{2}")
 
     suspend fun index(context: Context, accessToken: String, found: DebtImporter.Found) = withContext(Dispatchers.IO) {
-        val payroll = found.debts.filter { it.kind.perPerson && it.personName.isNotBlank() }
+        val payroll = found.debts.filter {
+            it.kind.perPerson && it.personName.isNotBlank() && it.amIka.isNotBlank()
+        }
         if (payroll.isEmpty() || found.ocrText.isBlank()) return@withContext
         val settings = GoogleSettings(context.applicationContext)
         val spreadsheetId = settings.spreadsheetId ?: return@withContext
@@ -33,19 +34,23 @@ object PayrollCostIndexer {
             .map { row -> List(SheetSync.EMPLOYEE_COST_HEADER.size) { i -> row.getOrElse(i) { "" } } }
             .toMutableList()
 
-        payroll.groupBy { it.personName to it.personCode }.forEach { (person, personRows) ->
+        payroll.groupBy { EmployeeEntity.normalizeIka(it.amIka) }.forEach { (amIka, personRows) ->
+            if (amIka.isBlank()) return@forEach
+            val first = personRows.first()
             val employee = EmployeeEntity(
-                id = EmployeeEntity.idFor(person.first),
-                name = person.first,
-                code = person.second,
+                id = EmployeeEntity.idForAmIka(amIka),
+                amIka = amIka,
+                name = first.personName,
+                code = first.personCode,
             )
             val cost = findCost(found.ocrText, employee)
-            val year = personRows.firstOrNull()?.periodYear ?: return@forEach
-            val month = personRows.firstOrNull()?.periodMonth ?: return@forEach
+            val year = first.periodYear
+            val month = first.periodMonth
             if (year <= 0 || month !in 1..12) return@forEach
             val key = "$year-$month"
             val replacement = listOf(
                 employee.id,
+                employee.amIka,
                 employee.name,
                 year.toString(),
                 month.toString(),
@@ -56,7 +61,7 @@ object PayrollCostIndexer {
             )
             val index = data.indexOfFirst {
                 it.getOrElse(0) { "" } == employee.id &&
-                    "${it.getOrElse(2) { "" }}-${it.getOrElse(3) { "" }}" == key
+                    "${it.getOrElse(3) { "" }}-${it.getOrElse(4) { "" }}" == key
             }
             if (index >= 0) data[index] = replacement else data += replacement
         }
