@@ -7,8 +7,7 @@ import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
-import gr.prosfora.app.sync.PayrollEmployeeSnapshotStore
-import gr.prosfora.app.sync.PayrollInsuranceDaysStore
+import gr.prosfora.app.sync.PayrollImportSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -48,8 +47,7 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
         settings.rememberDriveFiles(listOf(id))
         val found = read(fileName, id, bytes)
         if (!found.afmMismatch && found.debts.isNotEmpty()) {
-            PayrollInsuranceDaysStore.record(this@DebtImporter.settingsContext(), found.ocrText, found.debts)
-            PayrollEmployeeSnapshotStore.record(this@DebtImporter.settingsContext(), found.ocrText, found.debts)
+            PayrollImportSession.stage(found.ocrText, found.debts)
         }
         DebugLog.log("debt-import", "Αποτέλεσμα: afmMismatch=${found.afmMismatch}, debts=${found.debts.size}, plan=${found.installmentPlan != null}")
         moveRecognised(id, fileName, found)
@@ -200,13 +198,6 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
                 ),
             )
         }
-    }
-
-    private fun settingsContext(): android.content.Context {
-        val field = settings.javaClass.declaredFields.firstOrNull { it.name == "context" }
-        field?.isAccessible = true
-        return (field?.get(settings) as? android.content.Context)?.applicationContext
-            ?: error("GoogleSettings context unavailable")
     }
 
     suspend fun folderUrl(): String = workspace.folderUrl(workspace.debtsFolder())
