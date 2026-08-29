@@ -23,12 +23,9 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sms
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -62,7 +59,6 @@ import gr.prosfora.app.update.UpdateChecker
 import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
 import gr.prosfora.app.util.asSentStamp
-import gr.prosfora.app.util.parseDecimal
 import gr.prosfora.app.util.reason
 import kotlinx.coroutines.launch
 
@@ -79,7 +75,6 @@ fun OffersListScreen(viewModel: OffersViewModel, onMenu: () -> Unit, onOpenOffer
     val googleSettings = remember { GoogleSettings(context) }
     var refreshing by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<OfferWithDetails?>(null) }
-    var customExtraOffer by remember { mutableStateOf<OfferWithDetails?>(null) }
     var update by remember { mutableStateOf<UpdateChecker.Release?>(null) }
 
     Scaffold(
@@ -130,7 +125,7 @@ fun OffersListScreen(viewModel: OffersViewModel, onMenu: () -> Unit, onOpenOffer
                 } else {
                     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(offers, key = { it.offer.id }) { details ->
-                            OfferRow(details, onClick = { onOpenOffer(details.offer.id) }, onLongPress = { pendingDelete = details }, onCustomExtra = { customExtraOffer = details })
+                            OfferRow(details, onClick = { onOpenOffer(details.offer.id) }, onLongPress = { pendingDelete = details })
                         }
                     }
                 }
@@ -145,47 +140,13 @@ fun OffersListScreen(viewModel: OffersViewModel, onMenu: () -> Unit, onOpenOffer
                 onDismiss = { pendingDelete = null },
             )
         }
-        customExtraOffer?.let { target ->
-            CustomExtraDialog(target, onDismiss = { customExtraOffer = null }, onSave = { name, amount ->
-                viewModel.updateOffer(target.offer.copy(customExtraName = name, customExtraCost = amount))
-                customExtraOffer = null
-            }, onClear = {
-                viewModel.updateOffer(target.offer.copy(customExtraName = "", customExtraCost = 0.0))
-                customExtraOffer = null
-            })
-        }
         update?.let { release -> UpdateDialog(release = release, onDismiss = { update = null }) }
     }
 }
 
-@Composable
-private fun CustomExtraDialog(details: OfferWithDetails, onDismiss: () -> Unit, onSave: (String, Double) -> Unit, onClear: () -> Unit) {
-    var name by remember(details.offer.id) { mutableStateOf(details.offer.customExtraName) }
-    var amount by remember(details.offer.id) { mutableStateOf(if (details.offer.customExtraCost > 0) details.offer.customExtraCost.toString() else "") }
-    val value = amount.parseDecimal()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Νέο πρόσθετο κόστος") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Πρόσθεσε δική σου κατηγορία και τιμή. Θα εμφανιστεί πριν από τον ΦΠΑ στο PDF.", style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Ονομασία") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = amount, onValueChange = { amount = it }, singleLine = true, label = { Text("Τιμή (€)") }, modifier = Modifier.fillMaxWidth())
-            }
-        },
-        confirmButton = { TextButton(enabled = name.isNotBlank() && value != null, onClick = { onSave(name.trim(), value ?: 0.0) }) { Text("Αποθήκευση", color = BrandGreen) } },
-        dismissButton = {
-            Row {
-                if (details.offer.customExtraName.isNotBlank()) TextButton(onClick = onClear) { Text("Αφαίρεση", color = Color(0xFFD32F2F)) }
-                TextButton(onClick = onDismiss) { Text("Άκυρο", color = BrandGreen) }
-            }
-        },
-    )
-}
-
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
-private fun OfferRow(details: OfferWithDetails, onClick: () -> Unit, onLongPress: () -> Unit, onCustomExtra: () -> Unit) {
+private fun OfferRow(details: OfferWithDetails, onClick: () -> Unit, onLongPress: () -> Unit) {
     val offer = details.offer
     Card(Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongPress)) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
@@ -197,7 +158,6 @@ private fun OfferRow(details: OfferWithDetails, onClick: () -> Unit, onLongPress
                     Text("${offer.dateEpochDay.asOfferDate()} · ${details.grandTotal.asMoney()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (offer.customExtraName.isNotBlank()) Text("${offer.customExtraName}: ${details.customExtraCost.asMoney()}", style = MaterialTheme.typography.labelSmall, color = BrandGreen, fontWeight = FontWeight.Bold)
                 }
-                IconButton(onClick = onCustomExtra) { Icon(Icons.Default.Add, contentDescription = "Πρόσθετο κόστος", tint = BrandGreen) }
                 Text(offer.status.label, style = MaterialTheme.typography.labelMedium, color = statusColor(offer.status))
             }
             val badges = buildList {
