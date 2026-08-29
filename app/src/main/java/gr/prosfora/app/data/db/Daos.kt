@@ -37,7 +37,7 @@ interface SpaceDao {
     @Upsert suspend fun upsertAll(items: List<SpaceEntity>)
     @Query("UPDATE spaces SET deleted = 1, updatedAt = :at WHERE id = :id") suspend fun softDelete(id: String, at: Long)
     @Query("UPDATE spaces SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND deleted = 0") suspend fun softDeleteForOffer(offerId: String, at: Long)
-    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM spaces WHERE offerId = :offerId AND deleted = 0") suspend fun nextPosition(offerId: String): Int
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM spaces WHERE offerId = :offerId AND deleted = 0") suspend fun nextPosition(): Int
 }
 
 @Dao
@@ -49,7 +49,7 @@ interface NoteDao {
     @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE id = :id") suspend fun softDelete(id: String, at: Long)
     @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND deleted = 0") suspend fun softDeleteForOffer(offerId: String, at: Long)
     @Query("UPDATE notes SET deleted = 1, updatedAt = :at WHERE offerId = :offerId AND text = :text AND deleted = 0") suspend fun softDeleteByText(offerId: String, text: String, at: Long)
-    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM notes WHERE offerId = :offerId AND deleted = 0") suspend fun nextPosition(offerId: String): Int
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM notes WHERE offerId = :offerId AND deleted = 0") suspend fun nextPosition(): Int
 }
 
 @Dao
@@ -75,6 +75,10 @@ interface DebtDao {
     /** Payroll files imported before AM IKA existed must be scanned again. */
     @Query("SELECT DISTINCT driveFileId FROM debts WHERE driveFileId != '' AND NOT ((kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = '')")
     suspend fun importedFileIds(): List<String>
+    @Query("SELECT DISTINCT driveFileId FROM debts WHERE driveFileId != '' AND (kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = ''")
+    suspend fun legacyPayrollFileIdsMissingIka(): List<String>
+    @Query("DELETE FROM debts WHERE driveFileId IN (:fileIds) AND (kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = ''")
+    suspend fun deleteLegacyPayrollRows(fileIds: List<String>)
 }
 
 @Dao
