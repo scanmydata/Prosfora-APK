@@ -7,7 +7,6 @@ import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.GoogleSettings
 import kotlinx.coroutines.flow.Flow
-import java.time.LocalDate
 
 class DebtRepository(context: Context) {
     private val settings = GoogleSettings(context)
@@ -18,8 +17,9 @@ class DebtRepository(context: Context) {
     fun observeAll(): Flow<List<DebtEntity>> = debts.observeAll()
     fun observeEmployees(): Flow<List<EmployeeEntity>> = employees.observeAll()
 
-    suspend fun legacyPayrollFileIdsMissingIka(): List<String> =
-        debts.legacyPayrollFileIdsMissingIka()
+    suspend fun importedFileIds(): List<String> = debts.importedFileIds()
+
+    suspend fun legacyPayrollFileIdsMissingIka(): List<String> = debts.legacyPayrollFileIdsMissingIka()
 
     suspend fun deleteLegacyPayrollRows(fileIds: Collection<String>) {
         if (fileIds.isEmpty()) return
@@ -186,13 +186,10 @@ class DebtRepository(context: Context) {
     }
 
     private fun employeeFallbackKey(code: String, name: String): String =
-        listOf(code.trim(), name.trim().uppercase().replace(Regex("\\s+"), " "))
-            .joinToString("|")
+        listOf(code.trim(), name.trim().uppercase().replace(Regex("\\s+"), " ")).joinToString("|")
 
     private fun normalizeByDueDate(debt: DebtEntity): DebtEntity {
         if (debt.dueDay != null) return debt
         return debt.copy(dueDay = DebtEntity.defaultDue(debt.kind, debt.periodYear, debt.periodMonth))
     }
-
-    private suspend fun importedFileIds(): List<String> = debts.importedFileIds()
 }
