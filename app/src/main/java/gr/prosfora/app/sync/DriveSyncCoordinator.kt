@@ -55,6 +55,7 @@ object DriveSyncCoordinator {
 
                     val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
                     PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
+                    PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
 
                     try {
                         PayrollCostIndexer.index(app, accessToken, found)
@@ -90,10 +91,15 @@ object DriveSyncCoordinator {
             if (found.afmMismatch || found.debts.isEmpty()) continue
             val pending = deferInstallments && found.installmentPlan != null
             if (pending) {
-                if (pendingFiles.add(found.driveFileId)) PendingDebtNotificationStore.enqueue(app, listOf(found))
-                if (notifiedFiles.add(found.driveFileId)) DriveNotifier.notifyDebts(app, found.debts, openPendingInstallments = true)
+                val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
+                PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
+                PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
+                if (pendingFiles.add(found.driveFileId)) PendingDebtNotificationStore.enqueue(app, listOf(found.copy(debts = enrichedDebts)))
+                if (notifiedFiles.add(found.driveFileId)) DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
             } else {
                 val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
+                PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
+                PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
                 val fresh = enrichedDebts.filter { savedIds.add(it.id) }
                 if (fresh.isNotEmpty()) {
                     repository.saveAll(fresh)
@@ -106,7 +112,6 @@ object DriveSyncCoordinator {
         runCatching { EmployeeIndexReconciler.rebuild(app) }
             .onFailure { DebugLog.log("employees", "rebuild failed: ${it.stackTraceToString()}") }
 
-        // Foreground/manual sync also participates in the once-per-day unpaid reminder.
         runCatching {
             DriveNotifier.notifyUnpaidDebtsDaily(app, repository.unpaidDebts())
         }.onFailure {
