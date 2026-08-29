@@ -174,8 +174,8 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
      * το OCR αλλάζει συχνά τη στοίχιση και μπορεί να προσθέσει/χάσει στήλες.
      */
     private fun payrollAmIkaByCode(text: String): Map<String, String> {
-        val header = Regex("""^\\s*\\d{1,3}\\s+([0-9]{2,6})\\s+(.+)$""")
-        val longNumber = Regex("""(?<!\\d)\\d{7,12}(?!\\d)""")
+        val header = Regex("""^\s*\d{1,3}\s+([0-9]{2,6})\s+(.+)$""")
+        val longNumber = Regex("""(?<!\d)\d{7,12}(?!\d)""")
         val result = linkedMapOf<String, String>()
 
         text.lines().forEach { line ->
