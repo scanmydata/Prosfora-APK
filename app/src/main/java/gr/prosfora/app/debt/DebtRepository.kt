@@ -7,6 +7,9 @@ import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.sync.PayrollImportSession
+import gr.prosfora.app.sync.PayrollEmployeeSnapshotStore
+import gr.prosfora.app.sync.PayrollInsuranceDaysStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
 
@@ -15,6 +18,7 @@ class DebtRepository(context: Context) {
     private val database = ProsforaDatabase.get(context)
     private val debts = database.debtDao()
     private val employees = database.employeeDao()
+    private val appContext = context.applicationContext
 
     fun observeAll(): Flow<List<DebtEntity>> = debts.observeAll()
     fun observeEmployees(): Flow<List<EmployeeEntity>> =
@@ -113,6 +117,19 @@ class DebtRepository(context: Context) {
 
         debts.upsertAll(merged)
         rebuildEmployeeIndex()
+
+        // Direct/manual import is staged by DebtImporter. Consume that OCR once,
+        // immediately after the debts are persisted, so employee card totals are
+        // stored without another Drive download or OCR pass.
+        PayrollImportSession.consume()?.let { (ocrText, stagedDebts) ->
+            val effective = merged.filter { mergedDebt ->
+                stagedDebts.any { staged -> staged.id == mergedDebt.id }
+            }.ifEmpty { merged }
+            if (effective.any { it.kind.perPerson }) {
+                PayrollInsuranceDaysStore.record(appContext, ocrText, effective)
+                PayrollEmployeeSnapshotStore.record(appContext, ocrText, effective)
+            }
+        }
     }
 
     suspend fun ensureEmployeesFromExistingDebts() = rebuildEmployeeIndex()
