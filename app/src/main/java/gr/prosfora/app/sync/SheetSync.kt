@@ -109,12 +109,27 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
             dueDay = row[4].toLongOrNull(), amount = row[5].toDoubleOrNull() ?: 0.0, reference = row[6], description = row[7], personName = row[8], personCode = row[9],
             paid = row[10] == "1", paidAt = row[11].toLongOrNull(), paidDay = row[17].toLongOrNull(), createdBy = row[18], source = row[12], driveFileId = row[13],
             createdAt = row[14].toLongOrNull() ?: 0L, updatedAt = row[15].toLongOrNull() ?: 0L, deleted = row[16] == "1",
+            amIka = row.getOrElse(19) { "" },
         )
     }
 
-    private suspend fun readEmployees(spreadsheetId: String): List<EmployeeEntity> = dataRows(spreadsheetId, TAB_PEOPLE, PEOPLE_HEADER.size).map { row -> EmployeeEntity(id = row[0], name = row[1], alias = row[2], code = row[3], updatedAt = row[4].toLongOrNull() ?: 0L, deleted = row[5] == "1", leftDay = row[6].toLongOrNull()) }
+    private suspend fun readEmployees(spreadsheetId: String): List<EmployeeEntity> = dataRows(spreadsheetId, TAB_PEOPLE, PEOPLE_HEADER.size)
+        .mapNotNull { row ->
+            val amIka = EmployeeEntity.normalizeIka(row.getOrElse(7) { "" })
+            if (amIka.isBlank()) null else EmployeeEntity(
+                id = EmployeeEntity.idForAmIka(amIka),
+                amIka = amIka,
+                name = row[1],
+                alias = row[2],
+                code = row[3],
+                updatedAt = row[4].toLongOrNull() ?: 0L,
+                deleted = row[5] == "1",
+                leftDay = row[6].toLongOrNull(),
+            )
+        }
+
     private suspend fun readSpaces(spreadsheetId: String): List<SpaceEntity> = dataRows(spreadsheetId, TAB_SPACES, SPACE_HEADER.size).map { row -> SpaceEntity(id = row[0], offerId = row[1], description = row[2], area = row[3].toDoubleOrNull() ?: 0.0, unitPrice = row[4].toDoubleOrNull() ?: 0.0, position = row[5].toIntOrNull() ?: 0, updatedAt = row[6].toLongOrNull() ?: 0L, deleted = row[7] == "1") }
-    private suspend fun readNotes(spreadsheetId: String): List<NoteEntity> = dataRows(spreadsheetId, TAB_NOTES, NOTE_HEADER.size).map { row -> NoteEntity(id = row[0], offerId = row[1], text = row[2], position = row[3].toIntOrNull() ?: 0, updatedAt = row[4].toLongOrNull() ?: 0L, deleted = row[5] == "1") }
+    private suspend fun readNotes(spreadsheetId: String,): List<NoteEntity> = dataRows(spreadsheetId, TAB_NOTES, NOTE_HEADER.size).map { row -> NoteEntity(id = row[0], offerId = row[1], text = row[2], position = row[3].toIntOrNull() ?: 0, updatedAt = row[4].toLongOrNull() ?: 0L, deleted = row[5] == "1") }
 
     private suspend fun dataRows(spreadsheetId: String, tab: String, width: Int): List<List<String>> {
         val rows = sheets.readRows(spreadsheetId, tab)
@@ -125,8 +140,8 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
     private fun offerRows(offers: List<OfferEntity>) = listOf(OFFER_HEADER) + offers.map {
         listOf(it.id, it.address, it.dateEpochDay.toString(), it.kind, it.email, it.status.name, it.createdAt.toString(), it.updatedAt.toString(), it.lastSentAt?.toString().orEmpty(), if (it.deleted) "1" else "0", it.customerName, it.customerPhone, it.notifiedAt?.toString().orEmpty(), it.notifiedVia.orEmpty(), it.workStartDay?.toString().orEmpty(), it.workEndDay?.toString().orEmpty(), it.reviewSentAt?.toString().orEmpty(), it.validUntilDay?.toString().orEmpty(), it.paymentTerms, it.source, it.customerLastName, it.customerGender.name, if (it.vatIncluded) "1" else "0", if (it.scaffolding) "1" else "0", it.scaffoldingCost.toString(), if (it.permit) "1" else "0", it.permitCost.toString(), it.customExtraName, it.customExtraCost.toString())
     }
-    private fun debtRows(debts: List<DebtEntity>) = listOf(DEBT_HEADER) + debts.map { listOf(it.id, it.kind.name, it.periodMonth.toString(), it.periodYear.toString(), it.dueDay?.toString().orEmpty(), it.amount.toString(), it.reference, it.description, it.personName, it.personCode, if (it.paid) "1" else "0", it.paidAt?.toString().orEmpty(), it.source, it.driveFileId, it.createdAt.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0", it.paidDay?.toString().orEmpty(), it.createdBy) }
-    private fun employeeRows(people: List<EmployeeEntity>) = listOf(PEOPLE_HEADER) + people.map { listOf(it.id, it.name, it.alias, it.code, it.updatedAt.toString(), if (it.deleted) "1" else "0", it.leftDay?.toString().orEmpty()) }
+    private fun debtRows(debts: List<DebtEntity>) = listOf(DEBT_HEADER) + debts.map { listOf(it.id, it.kind.name, it.periodMonth.toString(), it.periodYear.toString(), it.dueDay?.toString().orEmpty(), it.amount.toString(), it.reference, it.description, it.personName, it.personCode, if (it.paid) "1" else "0", it.paidAt?.toString().orEmpty(), it.source, it.driveFileId, it.createdAt.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0", it.paidDay?.toString().orEmpty(), it.createdBy, it.amIka) }
+    private fun employeeRows(people: List<EmployeeEntity>) = listOf(PEOPLE_HEADER) + people.map { listOf(it.id, it.name, it.alias, it.code, it.updatedAt.toString(), if (it.deleted) "1" else "0", it.leftDay?.toString().orEmpty(), it.amIka) }
     private fun spaceRows(spaces: List<SpaceEntity>) = listOf(SPACE_HEADER) + spaces.map { listOf(it.id, it.offerId, it.description, it.area.toString(), it.unitPrice.toString(), it.position.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0") }
     private fun noteRows(notes: List<NoteEntity>) = listOf(NOTE_HEADER) + notes.map { listOf(it.id, it.offerId, it.text, it.position.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0") }
 
@@ -140,8 +155,8 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         val ALL_TABS = listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES, TAB_DEBTS, TAB_PEOPLE, TAB_EMPLOYEE_COSTS)
         val EMPLOYEE_COST_HEADER = listOf("ID_Εργαζομένου", "Όνομα", "Έτος", "Μήνας", "Πληρωτέο", "Κόστος ενσήμων", "Αρχείο Drive", "Ενημερώθηκε")
         private val OFFER_HEADER = listOf("ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email", "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο", "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης", "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση", "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή", "Επώνυμο", "Φύλο", "ΦΠΑ", "Σκαλωσιά", "Κόστος σκαλωσιάς", "Άδεια", "Κόστος άδειας", "Πρόσθετο κόστος", "Τιμή πρόσθετου κόστους")
-        private val DEBT_HEADER = listOf("ID_Οφειλής", "Φορέας", "Μήνας", "Έτος", "Λήξη", "Ποσό", "Ταυτότητα / RF", "Περιγραφή", "Εργαζόμενος", "Κωδικός", "Πληρώθηκε", "Ημ. πληρωμής", "Πηγή", "Αρχείο Drive", "Δημιουργήθηκε", "Ενημερώθηκε", "Διαγραμμένο", "Ημ. εξόφλησης", "Καταχωρήθηκε από")
-        private val PEOPLE_HEADER = listOf("ID_Εργαζόμενου", "Όνομα", "Ψευδώνυμο", "Κωδικός", "Ενημερώθηκε", "Διαγραμμένο", "Αποχώρηση")
+        private val DEBT_HEADER = listOf("ID_Οφειλής", "Φορέας", "Μήνα", "Έτος", "Λήξη", "Ποσό", "Ταυτότητα / RF", "Περιγραφή", "Εργαζόμενος", "Κωδικός", "Πληρώθηκε", "Ημ. πληρωμής", "Πηγή", "Αρχείο Drive", "Δημιουργήθηκε", "Ενημερώθηκε", "Διαγραμμένο", "Ημ. εξόφλησης", "Καταχωρήθηκε από", "ΑΜ ΙΚΑ")
+        private val PEOPLE_HEADER = listOf("ID_Εργαζόμενου", "Όνομα", "Ψευδώνυμο", "Κωδικός", "Ενημερώθηκε", "Διαγραμμένο", "Αποχώρηση", "ΑΜ ΙΚΑ")
         private val SPACE_HEADER = listOf("ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)", "Τιμή Μονάδος", "Σειρά", "Ενημερώθηκε", "Διαγραμμένο")
         private val NOTE_HEADER = listOf("ID_Παρατήρησης", "ID_Προσφοράς", "Κείμενο", "Σειρά", "Ενημερώθηκε", "Διαγραμμένο")
     }
