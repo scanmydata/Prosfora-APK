@@ -12,8 +12,10 @@ import androidx.work.WorkerParameters
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
+import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.GoogleAuthorizer
+import gr.prosfora.app.notify.DriveNotifier
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -27,6 +29,14 @@ class DriveAutoSyncWorker(
 
     override suspend fun doWork(): Result {
         DebugLog.log("auto-sync", "έναρξη background sync")
+
+        runCatching {
+            val unpaid = DebtRepository(applicationContext).unpaidDebts()
+            DriveNotifier.notifyUnpaidDebtsDaily(applicationContext, unpaid)
+        }.onFailure {
+            DebugLog.log("auto-sync", "daily unpaid reminder απέτυχε: ${it.stackTraceToString()}")
+        }
+
         val token = runCatching { accessTokenWithoutUi(applicationContext) }
             .onFailure { DebugLog.log("auto-sync", "δεν πήρα token: ${it.stackTraceToString()}") }
             .getOrNull()
