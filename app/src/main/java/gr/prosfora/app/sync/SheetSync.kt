@@ -9,6 +9,7 @@ import gr.prosfora.app.data.db.OfferEntity
 import gr.prosfora.app.data.db.OfferStatus
 import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.data.db.SpaceEntity
+import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.notify.DriveNotifier
@@ -24,6 +25,12 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
     suspend fun sync(): Report = withContext(Dispatchers.IO) {
         val spreadsheetId = settings.spreadsheetId ?: error("Δεν έχει οριστεί κοινόχρηστο Sheet")
         ensureTabs(spreadsheetId)
+
+        // Repair legacy/fallback employee rows before reading local state. This
+        // prevents stale duplicate IDs from being merged back into the shared
+        // Sheet and recreating duplicate employee cards on another device.
+        DebtRepository(context).repairEmployeeIndex()
+
         val remoteOffers = readOffers(spreadsheetId)
         val remoteSpaces = readSpaces(spreadsheetId)
         val remoteNotes = readNotes(spreadsheetId)
