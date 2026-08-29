@@ -22,7 +22,6 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
         val note: String = "",
         val installmentPlan: AadeInstallmentParser.Info? = null,
         val afmMismatch: Boolean = false,
-        /** Το OCR κείμενο που ήδη παρήχθη κατά την εισαγωγή — δεν ξαναγίνεται OCR. */
         val ocrText: String = "",
     ) { val recognised: Boolean get() = debts.isNotEmpty() }
 
@@ -135,15 +134,61 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
             }
             return Found(fileName, driveFileId, emptyList(), result.route, note, afmMismatch = true, ocrText = result.text)
         }
-        val byRules = DebtParser.parse(result.text, fileName, driveFileId)
+
+        val byRules = enrichPayrollAmIka(
+            result.text,
+            DebtParser.parse(result.text, fileName, driveFileId),
+        )
         val installmentPlan = AadeInstallmentParser.parse(result.text)
-        val rulesForImport = if (installmentPlan != null) byRules.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) } else byRules
+        val rulesForImport = if (installmentPlan != null) {
+            byRules.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) }
+        } else byRules
+
         val model = llm
-        if (byRules.isNotEmpty() || result.text.isBlank() || model == null) return Found(fileName, driveFileId, rulesForImport, result.route, result.note, installmentPlan, ocrText = result.text)
+        if (byRules.isNotEmpty() || result.text.isBlank() || model == null) {
+            return Found(fileName, driveFileId, rulesForImport, result.route, result.note, installmentPlan, ocrText = result.text)
+        }
+
         val extractedByModel = runCatching { model.extract(result.text, fileName, driveFileId) }
-            .onFailure { DebugLog.log("debt-llm", "failed $fileName: ${it.stackTraceToString()}") }.getOrDefault(emptyList())
-        val byModel = if (installmentPlan != null) extractedByModel.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) } else extractedByModel
-        return Found(fileName, driveFileId, byModel, if (byModel.isEmpty()) result.route else DocumentText.Route.LLM, if (byModel.isEmpty()) result.note else "διαβάστηκε από μοντέλο", installmentPlan, ocrText = result.text)
+            .onFailure { DebugLog.log("debt-llm", "failed $fileName: ${it.stackTraceToString()}") }
+            .getOrDefault(emptyList())
+        val byModel = enrichPayrollAmIka(
+            result.text,
+            if (installmentPlan != null) extractedByModel.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) } else extractedByModel,
+        )
+        return Found(
+            fileName,
+            driveFileId,
+            byModel,
+            if (byModel.isEmpty()) result.route else DocumentText.Route.LLM,
+            if (byModel.isEmpty()) result.note else "διαβάστηκε από μοντέλο",
+            installmentPlan,
+            ocrText = result.text,
+        )
+    }
+
+    /**
+     * Η μισθοδοτική κατάσταση έχει Α/Α, Κωδικό και μετά τα στοιχεία του ατόμου.
+     * Ο πρώτος καθαρά αριθμητικός token μετά το όνομα είναι η στήλη «ΑΜ Ι.Κ.Α.».
+     * Παράδειγμα: `4 008 MAHMOOD SALEH FARID 304771625 11118104279 26,00`.
+     */
+    private fun payrollAmIkaByCode(text: String): Map<String, String> {
+        val row = Regex("""^\\s*\\d{1,3}\\s+(\\d{2,6})\\s+(.+?)\\s+(\\d{7,12})(?:\\s+\\d{7,12})?\\s+\\d{1,3}(?:[,.]\\d{2}).*$""")
+        return text.lines().mapNotNull { line ->
+            val match = row.find(line) ?: return@mapNotNull null
+            val code = match.groupValues[1]
+            val amIka = EmployeeEntity.normalizeIka(match.groupValues[3])
+            if (amIka.isBlank()) null else code to amIka
+        }.toMap()
+    }
+
+    private fun enrichPayrollAmIka(text: String, rows: List<DebtEntity>): List<DebtEntity> {
+        val mapping = payrollAmIkaByCode(text)
+        if (mapping.isEmpty()) return rows
+        DebugLog.log("employees", "payroll ΑΜ ΙΚΑ mapping · unique=${mapping.values.toSet().size} · codes=${mapping.size}")
+        return rows.map { row ->
+            if (row.kind.perPerson) row.copy(amIka = mapping[row.personCode].orEmpty()) else row
+        }
     }
 
     suspend fun folderUrl(): String = workspace.folderUrl(workspace.debtsFolder())
