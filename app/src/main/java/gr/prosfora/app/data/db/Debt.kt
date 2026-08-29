@@ -55,32 +55,22 @@ data class DebtEntity(
 ) {
     val agency: DebtAgency get() = kind.agency
     val imported: Boolean get() = source.isNotBlank()
-    val periodLabel: String
-        get() = if (periodMonth in 1..12 && periodYear > 0) "$periodMonth/$periodYear" else "—"
+    val periodLabel: String get() = if (periodMonth in 1..12 && periodYear > 0) "$periodMonth/$periodYear" else "—"
     val periodKey: Int get() = periodYear * 100 + periodMonth
-
-    val title: String
-        get() = when {
-            kind.perPerson && personName.isNotBlank() -> personName
-            description.isNotBlank() -> description
-            else -> kind.label
-        }
-
-    fun overdue(today: LocalDate = LocalDate.now()): Boolean =
-        !paid && dueDay != null && dueDay < today.toEpochDay()
-
-    fun daysLeft(today: LocalDate = LocalDate.now()): Long? =
-        dueDay?.let { it - today.toEpochDay() }
+    val title: String get() = when {
+        kind.perPerson && personName.isNotBlank() -> personName
+        description.isNotBlank() -> description
+        else -> kind.label
+    }
+    fun overdue(today: LocalDate = LocalDate.now()): Boolean = !paid && dueDay != null && dueDay < today.toEpochDay()
+    fun daysLeft(today: LocalDate = LocalDate.now()): Long? = dueDay?.let { it - today.toEpochDay() }
 
     companion object {
         fun idFor(kind: DebtKind, year: Int, month: Int, reference: String, person: String): String {
-            val seed = listOf(kind.name, year.toString(), month.toString(), reference, person)
-                .joinToString("|")
-            val digest = java.security.MessageDigest.getInstance("SHA-1")
-                .digest(seed.toByteArray(Charsets.UTF_8))
+            val seed = listOf(kind.name, year.toString(), month.toString(), reference, person).joinToString("|")
+            val digest = java.security.MessageDigest.getInstance("SHA-1").digest(seed.toByteArray(Charsets.UTF_8))
             return "debt-" + digest.joinToString("") { "%02x".format(it) }.take(16)
         }
-
         fun defaultDue(kind: DebtKind, year: Int, month: Int): Long? {
             if (month !in 1..12 || year <= 0) return null
             val period = YearMonth.of(year, month)
@@ -90,11 +80,14 @@ data class DebtEntity(
     }
 }
 
-@Entity(tableName = "employees", indices = [Index(value = ["amIka"], unique = true)])
+/**
+ * Ο εργαζόμενος ταυτοποιείται αποκλειστικά από το ΑΜ ΙΚΑ. Δεν χρησιμοποιείται
+ * μοναδικό database index στο πεδίο επειδή παλιές εγκαταστάσεις έχουν legacy
+ * rows με κενό ΑΜ ΙΚΑ· το canonical upsert γίνεται από το repository.
+ */
+@Entity(tableName = "employees", indices = [Index(value = ["amIka"])])
 data class EmployeeEntity(
-    /** Canonical μοναδικό αναγνωριστικό: ΑΜ Ι.Κ.Α. */
     @PrimaryKey val id: String,
-    /** ΑΜ Ι.Κ.Α. όπως τυπώνεται στη μισθοδοτική κατάσταση. */
     val amIka: String,
     val name: String,
     val alias: String = "",
@@ -104,13 +97,11 @@ data class EmployeeEntity(
     val deleted: Boolean = false,
 ) {
     val display: String get() = alias.ifBlank { name }
-    fun gone(today: LocalDate = LocalDate.now()): Boolean =
-        leftDay != null && leftDay <= today.toEpochDay()
+    fun gone(today: LocalDate = LocalDate.now()): Boolean = leftDay != null && leftDay <= today.toEpochDay()
 
     companion object {
         fun normalizeIka(raw: String): String = raw.filter(Char::isDigit)
         fun idForAmIka(amIka: String): String = "employee-ika-${normalizeIka(amIka)}"
-        fun legacyIdFor(name: String): String =
-            name.trim().uppercase().replace(Regex("""\s+"""), " ")
+        fun legacyIdFor(name: String): String = name.trim().uppercase().replace(Regex("""\s+"""), " ")
     }
 }
