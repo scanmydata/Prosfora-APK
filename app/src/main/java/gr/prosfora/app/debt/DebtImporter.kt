@@ -7,6 +7,8 @@ import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.sync.PayrollEmployeeSnapshotStore
+import gr.prosfora.app.sync.PayrollInsuranceDaysStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -45,6 +47,10 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
         val id = drive.upload(fileName, bytes, kind.mime, inbox)
         settings.rememberDriveFiles(listOf(id))
         val found = read(fileName, id, bytes)
+        if (!found.afmMismatch && found.debts.isNotEmpty()) {
+            PayrollInsuranceDaysStore.record(this@DebtImporter.settingsContext(), found.ocrText, found.debts)
+            PayrollEmployeeSnapshotStore.record(this@DebtImporter.settingsContext(), found.ocrText, found.debts)
+        }
         DebugLog.log("debt-import", "Αποτέλεσμα: afmMismatch=${found.afmMismatch}, debts=${found.debts.size}, plan=${found.installmentPlan != null}")
         moveRecognised(id, fileName, found)
         found
@@ -165,36 +171,19 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
         )
     }
 
-    /**
-     * Εξάγει το πρώτο μεγάλο αριθμητικό token που εμφανίζεται μετά τον κωδικό
-     * εργαζομένου. Στη μισθοδοτική κατάσταση αυτή είναι η στήλη ΑΜ Ι.Κ.Α.
-     * και όχι τα ποσά ή οι ώρες της γραμμής.
-     *
-     * Δεν εξαρτόμαστε από το πλήθος των τελευταίων στηλών του πίνακα, επειδή
-     * το OCR αλλάζει συχνά τη στοίχιση και μπορεί να προσθέσει/χάσει στήλες.
-     */
     private fun payrollAmIkaByCode(text: String): Map<String, String> {
         val header = Regex("""^\s*\d{1,3}\s+([0-9]{2,6})\s+(.+)$""")
         val longNumber = Regex("""(?<!\d)\d{7,12}(?!\d)""")
         val result = linkedMapOf<String, String>()
-
         text.lines().forEach { line ->
             val match = header.find(line) ?: return@forEach
             val code = match.groupValues[1]
             val rest = match.groupValues[2]
-            val amIka = longNumber.find(rest)?.value
-                ?.let(EmployeeEntity::normalizeIka)
-                .orEmpty()
-            if (amIka.isNotBlank()) {
-                result[code] = amIka
-            }
+            val amIka = longNumber.find(rest)?.value?.let(EmployeeEntity::normalizeIka).orEmpty()
+            if (amIka.isNotBlank()) result[code] = amIka
         }
-
-        if (result.isNotEmpty()) {
-            DebugLog.log("employees", "payroll ΑΜ ΙΚΑ mapping · unique=${result.values.toSet().size} · codes=${result.size}")
-        } else {
-            DebugLog.log("employees", "payroll ΑΜ ΙΚΑ mapping EMPTY · no payroll header row matched")
-        }
+        if (result.isNotEmpty()) DebugLog.log("employees", "payroll ΑΜ ΙΚΑ mapping · unique=${result.values.toSet().size} · codes=${result.size}")
+        else DebugLog.log("employees", "payroll ΑΜ ΙΚΑ mapping EMPTY · no payroll header row matched")
         return result
     }
 
@@ -203,15 +192,21 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
         val mapping = payrollAmIkaByCode(text)
         if (mapping.isEmpty()) return rows
         return rows.map { row ->
-            if (!row.kind.perPerson) {
-                row
-            } else {
-                val ika = mapping[row.personCode]
-                    ?: mapping.entries.firstOrNull { it.key.trimStart('0') == row.personCode.trimStart('0') }?.value
-                    ?: ""
-                row.copy(amIka = EmployeeEntity.normalizeIka(ika))
-            }
+            if (!row.kind.perPerson) row else row.copy(
+                amIka = EmployeeEntity.normalizeIka(
+                    mapping[row.personCode]
+                        ?: mapping.entries.firstOrNull { it.key.trimStart('0') == row.personCode.trimStart('0') }?.value
+                        ?: "",
+                ),
+            )
         }
+    }
+
+    private fun settingsContext(): android.content.Context {
+        val field = settings.javaClass.declaredFields.firstOrNull { it.name == "context" }
+        field?.isAccessible = true
+        return (field?.get(settings) as? android.content.Context)?.applicationContext
+            ?: error("GoogleSettings context unavailable")
     }
 
     suspend fun folderUrl(): String = workspace.folderUrl(workspace.debtsFolder())
