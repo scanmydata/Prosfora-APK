@@ -98,9 +98,23 @@ object DocxTemplate {
         return xml.substring(0, open) + expanded + xml.substring(close)
     }
 
+    /**
+     * The totals area is rebuilt from one clean row template. Any old totals,
+     * extra-cost or VAT rows are removed first, so their original template
+     * position can never change the final order.
+     *
+     * Final order:
+     *   ΣΥΝΟΛΟ ΧΩΡΩΝ
+     *   πρόσθετα κόστη
+     *   ΦΠΑ 24% (only when enabled)
+     *   ΓΕΝΙΚΟ ΣΥΝΟΛΟ
+     */
     private fun normalizeTotalsLayout(xml: String, details: OfferWithDetails): String {
-        val baseMarker = listOf("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;", "&lt;&lt;[Σύνολο]&gt;&gt;")
-            .mapNotNull { marker -> xml.indexOf(marker).takeIf { it >= 0 } }.minOrNull() ?: return xml
+        val baseMarker = listOf(
+            "&lt;&lt;[Καθαρή Αξία]&gt;&gt;",
+            "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;",
+            "&lt;&lt;[Σύνολο]&gt;&gt;",
+        ).mapNotNull { marker -> xml.indexOf(marker).takeIf { it >= 0 } }.minOrNull() ?: return xml
 
         val (baseOpen, baseClose) = enclosingTag(xml, baseMarker, "w:tr")
         var baseRow = xml.substring(baseOpen, baseClose)
@@ -111,50 +125,62 @@ object DocxTemplate {
             .replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>")
             .replaceFirst("Σύνολο</w:t>", "Σύνολο Χώρων</w:t>")
 
-        baseRow = boldRow(baseRow)
-        var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)
+        val regularBaseRow = baseRow
+        val boldSpacesRow = boldRow(baseRow)
+
+        // Leave a stable anchor exactly where the first totals row was.
+        val anchor = "__PROSFORA_TOTALS_ANCHOR__"
+        var result = xml.substring(0, baseOpen) + anchor + xml.substring(baseClose)
+
+        // Remove every old totals/extra/VAT row. This is what guarantees the
+        // requested order even when an uploaded template already has rows in a
+        // different order or contains old optional markers.
+        val removableMarkers = listOf(
+            "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;",
+            "&lt;&lt;[Σύνολο]&gt;&gt;",
+            "&lt;&lt;[Σκαλωσιά]&gt;&gt;",
+            "&lt;&lt;[Άδεια]&gt;&gt;",
+            "&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;",
+            "&lt;&lt;[ΦΠΑ]&gt;&gt;",
+            "&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;",
+            "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;",
+        )
+        removableMarkers.forEach { marker ->
+            while (true) {
+                val at = result.indexOf(marker)
+                if (at < 0) break
+                result = dropBlock(result, at)
+            }
+        }
 
         fun cloneRow(label: String, marker: String, bold: Boolean = false): String {
-            var row = baseRow
+            val row = regularBaseRow
                 .replace("&lt;&lt;[Σύνολο Χώρων]&gt;&gt;", "&lt;&lt;[$marker]&gt;&gt;")
                 .replaceFirst("ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>", "$label</w:t>")
                 .replaceFirst("Σύνολο Χώρων</w:t>", "$label</w:t>")
             return if (bold) boldRow(row) else row
         }
 
-        val additions = buildString {
-            if (details.scaffoldingCost > 0.0 && !result.contains("&lt;&lt;[Σκαλωσιά]&gt;&gt;")) {
+        val totalsRows = buildString {
+            append(boldSpacesRow)
+
+            if (details.scaffoldingCost > 0.0) {
                 append(cloneRow("ΣΚΑΛΩΣΙΑ", "Σκαλωσιά"))
             }
-            if (details.permitCost > 0.0 && !result.contains("&lt;&lt;[Άδεια]&gt;&gt;")) {
+            if (details.permitCost > 0.0) {
                 append(cloneRow("ΑΔΕΙΑ ΜΙΚΡΗΣ ΚΛΙΜΑΚΑΣ", "Άδεια"))
             }
-            if (details.customExtraCost > 0.0 && details.offer.customExtraName.isNotBlank() && !result.contains("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;")) {
-                append(cloneRow(details.offer.customExtraName.uppercase(), "Πρόσθετο Κόστος"))
+            if (details.customExtraCost > 0.0 && details.offer.customExtraName.isNotBlank()) {
+                append(cloneRow(details.offer.customExtraName.trim().uppercase(), "Πρόσθετο Κόστος"))
             }
-            if (details.offer.vatIncluded && !result.contains("&lt;&lt;[ΦΠΑ]&gt;&gt;")) {
+            if (details.offer.vatIncluded) {
                 append(cloneRow("ΦΠΑ 24%", "ΦΠΑ"))
             }
+
+            append(cloneRow("ΓΕΝΙΚΟ ΣΥΝΟΛΟ", "Γενικό Σύνολο Live", bold = true))
         }
 
-        val grandMarkers = listOf("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;")
-        val grandMarker = grandMarkers.mapNotNull { marker -> result.indexOf(marker).takeIf { it >= 0 } }.minOrNull()
-        if (additions.isNotEmpty() && grandMarker != null) {
-            val (grandOpen, _) = enclosingTag(result, grandMarker, "w:tr")
-            result = result.substring(0, grandOpen) + additions + result.substring(grandOpen)
-        }
-
-        val currentGrandMarker = grandMarkers.mapNotNull { marker -> result.indexOf(marker).takeIf { it >= 0 } }.minOrNull()
-        if (currentGrandMarker != null) {
-            val (grandOpen, grandClose) = enclosingTag(result, currentGrandMarker, "w:tr")
-            val grandRow = boldRow(
-                result.substring(grandOpen, grandClose)
-                    .replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΓΕΝΙΚΟ ΣΥΝΟΛΟ</w:t>")
-                    .replaceFirst("Σύνολο</w:t>", "Γενικό Σύνολο</w:t>"),
-            )
-            result = result.substring(0, grandOpen) + grandRow + result.substring(grandClose)
-        }
-        return result
+        return result.replace(anchor, totalsRows)
     }
 
     /** Bold the generated totals rows without relying on how the source template was formatted. */
@@ -170,7 +196,9 @@ object DocxTemplate {
     private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {
         val offer = details.offer
         val total = details.grandTotal.asMoney()
-        val customText = if (offer.customExtraName.isNotBlank()) "${offer.customExtraName}: ${details.customExtraCost.asMoney()}" else ""
+        // The custom-extra row has already received the custom name as its
+        // label. Its numeric cell must therefore contain ONLY the amount.
+        val customAmount = details.customExtraCost.asMoney()
         return xml
             .replace("&lt;&lt;[Είδος]&gt;&gt;", escape(offer.kind.strippedKind()))
             .replace("&lt;&lt;[Οδός / Περιοχή]&gt;&gt;", escape(offer.address.upperGreek()))
@@ -179,7 +207,7 @@ object DocxTemplate {
             .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", escape(details.linesTotal.asMoney()))
             .replace("&lt;&lt;[Σύνολο Χώρων]&gt;&gt;", escape(details.linesTotal.asMoney()))
             .replace("&lt;&lt;[Σύνολο]&gt;&gt;", escape(details.total.asMoney()))
-            .replace("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;", escape(customText.ifBlank { (details.scaffoldingCost + details.permitCost).asMoney() }))
+            .replace("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;", escape(customAmount))
             .replace("&lt;&lt;[Σκαλωσιά]&gt;&gt;", escape(details.scaffoldingCost.asMoney()))
             .replace("&lt;&lt;[Άδεια]&gt;&gt;", escape(details.permitCost.asMoney()))
             .replace("&lt;&lt;[ΦΠΑ]&gt;&gt;", escape(details.vatAmount.asMoney()))
