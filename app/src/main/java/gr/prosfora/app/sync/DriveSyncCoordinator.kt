@@ -65,12 +65,6 @@ object DriveSyncCoordinator {
                     PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
                     PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
 
-                    try {
-                        PayrollCostIndexer.index(app, accessToken, enrichedFound)
-                    } catch (e: Exception) {
-                        DebugLog.log("payroll-cost", "Αποτυχία index κόστους ${found.fileName}: ${e.stackTraceToString()}")
-                    }
-
                     val pending = deferInstallments && enrichedFound.installmentPlan != null
                     if (pending) {
                         if (pendingFiles.add(enrichedFound.driveFileId)) {
@@ -129,6 +123,8 @@ object DriveSyncCoordinator {
 
         val firstSheetSummary = sheetJob?.await()
         val finalSheetSummary = if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) {
+            // This is the authoritative employee-cost export. It reads the
+            // canonical monthly snapshots for every employee, not aliases.
             runCatching { SheetSync(app, SheetsClient(accessToken), settings).sync().summary }
                 .onFailure { DebugLog.log("sync", "τελικό Sheet sync απέτυχε: ${it.stackTraceToString()}") }
                 .getOrNull() ?: firstSheetSummary
