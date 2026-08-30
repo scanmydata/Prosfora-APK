@@ -1,7 +1,6 @@
 package gr.prosfora.app.debt
 
 import android.content.Context
-import gr.prosfora.app.data.db.DebtAgency
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeAliasRegistry
 import gr.prosfora.app.data.db.EmployeeEntity
@@ -28,6 +27,24 @@ class DebtRepository(context: Context) {
     suspend fun importedFileIds(): Set<String> = debts.importedFileIds().toSet()
     suspend fun legacyPayrollFileIdsMissingIka(): List<String> = debts.legacyPayrollFileIdsMissingIka()
 
+    /** Only incomplete payroll files are allowed through the already-imported gate. */
+    suspend fun payrollFileIdsNeedingSnapshot(): Set<String> {
+        val employeeByIka = employees.allForSync().associateBy { EmployeeEntity.normalizeIka(it.amIka) }
+        return debts.allForSync()
+            .asSequence()
+            .filter { !it.deleted && it.kind.perPerson && it.driveFileId.isNotBlank() }
+            .filter { debt ->
+                val ika = EmployeeEntity.normalizeIka(debt.amIka)
+                if (ika.isBlank() || debt.periodYear <= 0 || debt.periodMonth !in 1..12) return@filter true
+                val employee = employeeByIka[ika] ?: return@filter true
+                val key = "%04d-%02d".format(debt.periodYear, debt.periodMonth)
+                val row = runCatching { JSONObject(employee.payrollSummaryJson).optJSONObject(key) }.getOrNull()
+                row == null || !row.has("insuranceCost") || !row.has("insuranceDays")
+            }
+            .map { it.driveFileId }
+            .toSet()
+    }
+
     suspend fun deleteLegacyPayrollRows(fileIds: Collection<String>) {
         if (fileIds.isNotEmpty()) debts.deleteLegacyPayrollRows(fileIds.toList())
     }
@@ -52,9 +69,10 @@ class DebtRepository(context: Context) {
 
     suspend fun deleteEmployee(id: String) = employees.softDelete(id, System.currentTimeMillis())
 
-    /** Permanently remove the employee and create a sync tombstone so the shared Sheet cannot recreate it. */
+    /** Permanently remove the employee and create a sync tombstone. */
     suspend fun deleteEmployeeFromDatabase(id: String) {
-        val ika = EmployeeEntity.normalizeIka(id)
+        val employee = employees.allForSync().firstOrNull { it.id == id }
+        val ika = EmployeeEntity.normalizeIka(employee?.amIka ?: id)
         settings.rememberDeletedEmployee(if (ika.isNotBlank()) ika else id)
         if (ika.isNotBlank()) debts.hardDeletePayrollForEmployee(ika)
         employees.hardDelete(id)
@@ -75,9 +93,7 @@ class DebtRepository(context: Context) {
             var existing = debts.getById(incoming.id)
 
             if (existing != null && incoming.source.isNotBlank() && existing.driveFileId.isNotBlank() && existing.driveFileId != incoming.driveFileId) {
-                incoming = incoming.copy(
-                    id = DebtEntity.idFor(incoming.kind, incoming.periodYear, incoming.periodMonth, incoming.reference, incoming.personName),
-                )
+                incoming = incoming.copy(id = DebtEntity.idFor(incoming.kind, incoming.periodYear, incoming.periodMonth, incoming.reference, incoming.personName))
                 existing = debts.getById(incoming.id)
             }
 
