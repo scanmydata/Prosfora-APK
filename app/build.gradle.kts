@@ -9,6 +9,55 @@ plugins {
 val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
 val appVersionName = (project.findProperty("appVersionName") as String?) ?: "0.1.0"
 
+/**
+ * The offer screens/template already have their storage model. This small,
+ * deterministic source transform wires the real presentation layer into the
+ * existing screen without relying on fragile multi-line matches.
+ */
+val wireOfferExtrasPresentation by tasks.registering {
+    doLast {
+        fun replaceOnce(path: String, from: String, to: String) {
+            val source = file(path)
+            val text = source.readText()
+            if (text.contains(to)) return
+            val index = text.indexOf(from)
+            check(index >= 0) { "Δεν βρέθηκε το σημείο '$from' στο $path" }
+            source.writeText(text.substring(0, index) + to + text.substring(index + from.length))
+        }
+
+        replaceOnce(
+            "src/main/java/gr/prosfora/app/ui/offers/OfferDetailScreen.kt",
+            "item { ExtrasCard(current, viewModel) }",
+            "item { OfferExtrasCard(current, viewModel) }",
+        )
+        replaceOnce(
+            "src/main/java/gr/prosfora/app/ui/offers/OfferDetailScreen.kt",
+            "item { VatCard(current, viewModel) }",
+            "item { OfferTotalsCard(current, viewModel) }",
+        )
+
+        // In DocxTemplate the regular extra rows must be cloned from the
+        // non-bold row. Only the spaces total and grand total are bold.
+        val template = file("src/main/java/gr/prosfora/app/doc/DocxTemplate.kt")
+        var xml = template.readText()
+        if (!xml.contains("val regularBaseRow = baseRow")) {
+            val old = "baseRow = boldRow(baseRow)\n        var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)"
+            val new = "val regularBaseRow = baseRow\n        baseRow = boldRow(baseRow)\n        var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)"
+            val at = xml.indexOf(old)
+            check(at >= 0) { "Δεν βρέθηκε το baseRow block στο DocxTemplate.kt" }
+            xml = xml.substring(0, at) + new + xml.substring(at + old.length)
+        }
+        if (!xml.contains("var row = regularBaseRow")) {
+            val old = "var row = baseRow\n                .replace(\"&lt;&lt;[Σύνολο Χώρων]&gt;&gt;\", \"&lt;&lt;[$marker]&gt;&gt;\")"
+            val new = "var row = regularBaseRow\n                .replace(\"&lt;&lt;[Σύνολο Χώρων]&gt;&gt;\", \"&lt;&lt;[$marker]&gt;&gt;\")"
+            val at = xml.indexOf(old)
+            check(at >= 0) { "Δεν βρέθηκε το cloneRow block στο DocxTemplate.kt" }
+            xml = xml.substring(0, at) + new + xml.substring(at + old.length)
+        }
+        template.writeText(xml)
+    }
+}
+
 android {
     namespace = "gr.prosfora.app"
     compileSdk = 35
@@ -100,4 +149,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(wireOfferExtrasPresentation)
 }
