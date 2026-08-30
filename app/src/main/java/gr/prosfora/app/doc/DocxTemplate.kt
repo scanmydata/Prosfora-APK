@@ -113,14 +113,22 @@ object DocxTemplate {
             .replaceFirst("ΣΥΝΟΛΟ</w:t>", "$label</w:t>")
             .replaceFirst("Σύνολο</w:t>", "$label</w:t>")
 
-        val hasSpecificExtra = result.contains("&lt;&lt;[Σκαλωσιά]&gt;&gt;") || result.contains("&lt;&lt;[Άδεια]&gt;&gt;") || result.contains("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;")
+        // Each extra is handled independently. An existing marker for one extra
+        // must never suppress the automatic row for another extra.
         val additions = buildString {
-            if (details.scaffoldingCost > 0.0 && !hasSpecificExtra) append(cloneRow("ΣΚΑΛΩΣΙΑ", "Σκαλωσιά"))
-            if (details.permitCost > 0.0 && !hasSpecificExtra) append(cloneRow("ΑΔΕΙΑ ΜΙΚΡΗΣ ΚΛΙΜΑΚΑΣ", "Άδεια"))
-            if (details.customExtraCost > 0.0 && details.offer.customExtraName.isNotBlank() && !hasSpecificExtra) {
+            if (details.scaffoldingCost > 0.0 && !result.contains("&lt;&lt;[Σκαλωσιά]&gt;&gt;")) {
+                append(cloneRow("ΣΚΑΛΩΣΙΑ", "Σκαλωσιά"))
+            }
+            if (details.permitCost > 0.0 && !result.contains("&lt;&lt;[Άδεια]&gt;&gt;")) {
+                append(cloneRow("ΑΔΕΙΑ ΜΙΚΡΗΣ ΚΛΙΜΑΚΑΣ", "Άδεια"))
+            }
+            if (details.customExtraCost > 0.0 && details.offer.customExtraName.isNotBlank() && !result.contains("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;")) {
                 append(cloneRow(details.offer.customExtraName.uppercase(), "Πρόσθετο Κόστος"))
             }
-            if (details.offer.vatIncluded && !result.contains("&lt;&lt;[ΦΠΑ]&gt;&gt;")) append(cloneRow("ΦΠΑ", "ΦΠΑ"))
+            // Extras are always inserted before VAT. VAT itself is optional.
+            if (details.offer.vatIncluded && !result.contains("&lt;&lt;[ΦΠΑ]&gt;&gt;")) {
+                append(cloneRow("ΦΠΑ", "ΦΠΑ"))
+            }
         }
         val grandMarkers = listOf("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;")
         val grandMarker = grandMarkers.mapNotNull { marker -> result.indexOf(marker).takeIf { it >= 0 } }.minOrNull()
