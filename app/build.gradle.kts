@@ -5,15 +5,9 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-// versionCode comes from CI (GitHub Actions run number) so every build is unique.
 val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
 val appVersionName = (project.findProperty("appVersionName") as String?) ?: "0.1.0"
 
-/**
- * Wires the offer presentation layer into the existing offer editor and keeps
- * the generated DOCX totals rows correctly formatted. The source model already
- * contains the custom extra-cost fields, so no Room migration is required.
- */
 val wireOfferExtrasPresentation by tasks.registering {
     doLast {
         val offerScreen = file("src/main/java/gr/prosfora/app/ui/offers/OfferDetailScreen.kt")
@@ -35,25 +29,18 @@ val wireOfferExtrasPresentation by tasks.registering {
         val template = file("src/main/java/gr/prosfora/app/doc/DocxTemplate.kt")
         var xml = template.readText()
 
-        // Keep the generated additional-cost rows regular-weight. Only the
-        // spaces total and final grand total should be bold.
         if (!xml.contains("val regularBaseRow = baseRow")) {
             val old = "baseRow = boldRow(baseRow)\n        var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)"
             val replacement = "val regularBaseRow = baseRow\n        baseRow = boldRow(baseRow)\n        var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)"
             val at = xml.indexOf(old)
             if (at >= 0) xml = xml.substring(0, at) + replacement + xml.substring(at + old.length)
         }
+
         if (!xml.contains("var row = regularBaseRow")) {
-            val old = "var row = baseRow\n                .replace(\"&lt;&lt;[Σύνολο Χώρων]&gt;&gt;\", \"&lt;&lt;[$marker]&gt;&gt;\")"
-            val replacement = "var row = regularBaseRow\n                .replace(\"&lt;&lt;[Σύνολο Χώρων]&gt;&gt;\", \"&lt;&lt;[\u0000]&gt;&gt;\")"
+            val old = "var row = baseRow\n                .replace(\"&lt;&lt;[Σύνολο Χώρων]&gt;&gt;\", \"&lt;&lt;[${'$'}marker]&gt;&gt;\")"
+            val replacement = "var row = regularBaseRow\n                .replace(\"&lt;&lt;[Σύνολο Χώρων]&gt;&gt;\", \"&lt;&lt;[${'$'}marker]&gt;&gt;\")"
             val at = xml.indexOf(old)
-            if (at >= 0) {
-                // Replace the placeholder marker in the generated Kotlin source
-                // with the runtime cloneRow marker expression without referring to
-                // a Gradle-script variable.
-                val fixed = replacement.replace("\u0000", "$marker")
-                xml = xml.substring(0, at) + fixed + xml.substring(at + old.length)
-            }
+            if (at >= 0) xml = xml.substring(0, at) + replacement + xml.substring(at + old.length)
         }
         template.writeText(xml)
     }
