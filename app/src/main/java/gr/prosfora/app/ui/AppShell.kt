@@ -50,7 +50,9 @@ enum class TopDestination(
     JOBS(ROUTE_JOBS, "Εργασίες", Icons.Default.Handyman, SentGreen),
     DEBTS(ROUTE_DEBTS, "Οφειλές", Icons.Default.AccountBalance, DeleteRed, DriveWatch.Area.DEBTS),
     EMPLOYEES(ROUTE_EMPLOYEES, "Εργαζόμενοι", Icons.Default.Groups, Color(0xFF00E2A2)),
-    ARCHIVE(ROUTE_ARCHIVE, "Αρχείο PDF", Icons.Default.PictureAsPdf, null, DriveWatch.Area.PDF),
+    // PDFs belong only to the offers workflow. Do not show a +N badge here:
+    // debt-file imports must not be presented as PDF-archive changes.
+    ARCHIVE(ROUTE_ARCHIVE, "Αρχείο PDF", Icons.Default.PictureAsPdf, null),
     SETTINGS(ROUTE_SETTINGS, "Ρυθμίσεις", Icons.Default.Settings, null),
 }
 
