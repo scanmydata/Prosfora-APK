@@ -11,8 +11,6 @@ import kotlinx.coroutines.withContext
 /**
  * Persistent payroll history owned by the employee card.
  * Key: AM IKA + payment due year/month.
- * The snapshot is updated only when a payroll file is imported and is not
- * affected when the corresponding debt rows are later deleted.
  */
 object PayrollEmployeeSnapshotStore {
     suspend fun record(context: Context, ocrText: String, debts: List<DebtEntity>) = withContext(Dispatchers.IO) {
@@ -21,15 +19,11 @@ object PayrollEmployeeSnapshotStore {
 
         val db = ProsforaDatabase.get(context.applicationContext)
         val byEmployee = payroll.groupBy { EmployeeEntity.normalizeIka(it.amIka) }
-        val people = db.employeeDao()
-            .allForSync()
-            .associateBy { EmployeeEntity.normalizeIka(it.amIka) }
+        val people = db.employeeDao().allForSync().associateBy { EmployeeEntity.normalizeIka(it.amIka) }
 
         byEmployee.forEach { (ika, rows) ->
             val old = people[ika]
-            val current = runCatching {
-                JSONObject(old?.payrollSummaryJson ?: "{}")
-            }.getOrElse { JSONObject() }
+            val current = runCatching { JSONObject(old?.payrollSummaryJson ?: "{}") }.getOrElse { JSONObject() }
 
             rows.groupBy { it.periodYear to it.periodMonth }.forEach { (periodKey, periodRows) ->
                 val year = periodKey.first
@@ -38,12 +32,14 @@ object PayrollEmployeeSnapshotStore {
 
                 val metrics = PayrollMetricsExtractor.find(ocrText, periodRows.first())
                 val jsonKey = "%04d-%02d".format(year, month)
-                val period = JSONObject().apply {
-                    put("payable", periodRows.sumOf { it.amount })
-                    put("insuranceCost", metrics.insuranceCost)
-                    put("insuranceDays", metrics.insuranceDays)
-                }
-                current.put(jsonKey, period)
+                current.put(
+                    jsonKey,
+                    JSONObject().apply {
+                        put("payable", periodRows.sumOf { it.amount })
+                        put("insuranceCost", metrics.insuranceCost)
+                        put("insuranceDays", metrics.insuranceDays)
+                    },
+                )
             }
 
             val employee = old ?: EmployeeEntity(
@@ -57,16 +53,8 @@ object PayrollEmployeeSnapshotStore {
                 employee.copy(
                     id = ika,
                     amIka = ika,
-                    name = rows.firstOrNull { it.personName.isNotBlank() }
-                        ?.personName
-                        ?.trim()
-                        ?.ifBlank { employee.name }
-                        ?: employee.name,
-                    code = rows.firstOrNull { it.personCode.isNotBlank() }
-                        ?.personCode
-                        ?.trim()
-                        ?.ifBlank { employee.code }
-                        ?: employee.code,
+                    name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim()?.ifBlank { employee.name } ?: employee.name,
+                    code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim()?.ifBlank { employee.code } ?: employee.code,
                     payrollSummaryJson = current.toString(),
                     updatedAt = System.currentTimeMillis(),
                     deleted = false,
@@ -90,18 +78,14 @@ object PayrollEmployeeSnapshotStore {
     )
 
     fun history(employee: EmployeeEntity): List<Monthly> {
-        val root = runCatching { JSONObject(employee.payrollSummaryJson) }
-            .getOrElse { JSONObject() }
-
+        val root = runCatching { JSONObject(employee.payrollSummaryJson) }.getOrElse { JSONObject() }
         return buildList {
             root.keys().forEach { key ->
                 val parts = key.split('-')
                 if (parts.size != 2) return@forEach
-
                 val year = parts[0].toIntOrNull() ?: return@forEach
                 val month = parts[1].toIntOrNull() ?: return@forEach
                 if (year <= 0 || month !in 1..12) return@forEach
-
                 val row = root.optJSONObject(key) ?: return@forEach
                 add(
                     Monthly(
@@ -113,10 +97,7 @@ object PayrollEmployeeSnapshotStore {
                     ),
                 )
             }
-        }.sortedWith(
-            compareByDescending<Monthly> { it.year }
-                .thenByDescending { it.month },
-        )
+        }.sortedWith(compareByDescending<Monthly> { it.year }.thenByDescending { it.month })
     }
 
     fun totals(employee: EmployeeEntity, year: Int? = null): Totals {
@@ -128,125 +109,77 @@ object PayrollEmployeeSnapshotStore {
         )
     }
 
-    /**
-     * Extracts the payroll values from the employee block of the OCR text.
-     *
-     * Business rules:
-     * - Insurance days = the number immediately after the regular "ΤΑ" row marker.
-     *   Bonus rows (ΔΧ/ΕΑ/ΑΛ/ΜΛ) do not add insurance days.
-     * - Insurance cost = the 4th monetary value of the payroll totals row.
-     *   In the supplied payroll statement this is 118,86 for BUTT HURARA.
-     */
     private object PayrollMetricsExtractor {
-        private val employeeHeader = Regex(
-            """^\s*\d{1,3}\s+[A-ZΑ-Ω0-9]{2,8}\s+.+$""",
-        )
-        private val regularRow = Regex(
-            """^\s*ΤΑ\s+(\d+(?:,\d+)?)\s+""",
-            RegexOption.IGNORE_CASE,
-        )
+        private val employeeLine = Regex("""^\s*\d{1,3}\s+[0-9]{2,6}\s+.+$""")
+        private val regularTaLine = Regex("""^\s*ΤΑ\s+(\d+(?:,\d+)?)\s+""", RegexOption.IGNORE_CASE)
         private val moneyToken = Regex("[0-9][0-9.]*,[0-9]{2}")
+        private val rowStart = Regex("""^\s*\d{1,3}\s+[0-9]{2,6}\s+""")
 
-        data class Metrics(
-            val insuranceDays: Int,
-            val insuranceCost: Double,
-        )
+        data class Metrics(val insuranceDays: Int, val insuranceCost: Double)
 
         fun find(text: String, debt: DebtEntity): Metrics {
-            if (text.isBlank()) return Metrics(0, 0.0)
-
-            val wantedName = debt.personName
-                .trim()
-                .split(Regex("\\s+"))
-                .filter { it.length >= 2 }
-                .map { it.uppercase() }
-            val wantedCode = debt.personCode.trim()
-
-            if (wantedName.isEmpty() && wantedCode.isBlank()) {
-                return Metrics(0, 0.0)
-            }
+            val ika = EmployeeEntity.normalizeIka(debt.amIka)
+            val code = debt.personCode.trim()
+            if (text.isBlank() || ika.isBlank() || code.isBlank()) return Metrics(0, 0.0)
 
             val lines = text.lines()
-            var employeeStart = -1
+            var start = -1
 
             lines.forEachIndexed { index, raw ->
-                if (employeeStart >= 0) return@forEachIndexed
+                if (start >= 0) return@forEachIndexed
                 val line = raw.trim()
-                if (!employeeHeader.matches(line)) return@forEachIndexed
-
+                if (!employeeLine.matches(line)) return@forEachIndexed
                 val upper = line.uppercase()
-                val codeMatch = wantedCode.isNotBlank() && (
-                    upper.contains(" ${wantedCode.uppercase()} ") ||
-                        upper.endsWith(" ${wantedCode.uppercase()}")
-                    )
-                val nameMatch = wantedName.isNotEmpty() && wantedName.all { upper.contains(it) }
-                if (codeMatch || nameMatch) {
-                    employeeStart = index
-                }
+                val normalizedCode = code.trimStart('0').ifBlank { code }
+                val codeInLine = upper.substringBefore(' ').trimStart('0').ifBlank { upper.substringBefore(' ') }
+                if (codeInLine != normalizedCode) return@forEachIndexed
+                if (upper.contains(ika)) start = index
             }
 
-            if (employeeStart < 0) return Metrics(0, 0.0)
+            if (start < 0) return Metrics(0, 0.0)
 
-            var insuranceDays = 0
-            var insuranceCost = 0.0
-            var index = employeeStart + 1
-
-            while (index < lines.size) {
-                val line = lines[index].trim()
+            var days = 0
+            var cost = 0.0
+            var i = start + 1
+            while (i < lines.size) {
+                val line = lines[i].trim()
                 if (line.isBlank()) {
-                    index++
+                    i++
                     continue
                 }
+                if (i > start + 1 && rowStart.containsMatchIn(line)) break
 
-                // Reached the next employee block.
-                if (index > employeeStart + 1 && employeeHeader.matches(line)) break
-
-                val regular = regularRow.find(line)
-                if (regular != null) {
-                    val rawDays = regular.groupValues[1]
-                    val days = rawDays.replace(',', '.')
-                        .toDoubleOrNull()
-                        ?.toInt()
-                        ?: 0
-                    insuranceDays += days
-
-                    // Search forward inside this employee row until the totals line.
-                    // The TEKA detail row has 4 numbers, while the payroll totals row has 12.
-                    var summaryIndex = index + 1
-                    while (summaryIndex < lines.size) {
-                        val summary = lines[summaryIndex].trim()
-                        if (summary.isBlank()) {
-                            summaryIndex++
+                val ta = regularTaLine.find(line)
+                if (ta != null) {
+                    days = ta.groupValues[1].replace(',', '.').toDoubleOrNull()?.toInt() ?: 0
+                    var j = i + 1
+                    while (j < lines.size) {
+                        val next = lines[j].trim()
+                        if (next.isBlank()) {
+                            j++
                             continue
                         }
-                        if (employeeHeader.matches(summary)) break
-
-                        val numbers = summary
-                            .split(Regex("\\s+"))
-                            .mapNotNull { token ->
-                                moneyToken.matchEntire(token)
-                                    ?.value
-                                    ?.replace(".", "")
-                                    ?.replace(',', '.')
-                                    ?.toDoubleOrNull()
-                            }
-
-                        if (numbers.size >= 12) {
-                            // 4th value = total insurance contributions.
-                            insuranceCost += numbers[3]
+                        if (rowStart.containsMatchIn(next)) break
+                        val numbers = next.split(Regex("\\s+")).mapNotNull { token ->
+                            moneyToken.matchEntire(token)
+                                ?.value
+                                ?.replace(".", "")
+                                ?.replace(',', '.')
+                                ?.toDoubleOrNull()
+                        }
+                        if (numbers.size == 12) {
+                            // Header order: ... Σύνολο ... Κρατήσεις Καθ.Αποδ. Κόστος ... Πληρωτέο.
+                            // The requested insurance cost is the "Σύνολο" contribution amount (4th value).
+                            cost = numbers[3]
                             break
                         }
-                        summaryIndex++
+                        j++
                     }
+                    break
                 }
-
-                index++
+                i++
             }
-
-            return Metrics(
-                insuranceDays = insuranceDays,
-                insuranceCost = insuranceCost,
-            )
+            return Metrics(days, cost)
         }
     }
 }
