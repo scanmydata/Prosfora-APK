@@ -200,9 +200,11 @@ android {
     }
 }
 
-// The source patch must run before Kotlin/KSP tasks and is idempotent.
-tasks.matching { it.name == "preBuild" }.configureEach {
-    dependsOn(patchOfferExtrasUi)
+// The patch is idempotent and must run before every Kotlin/KSP compilation task.
+tasks.configureEach {
+    if (name == "preBuild" || name.contains("Kotlin", ignoreCase = true) || name.contains("ksp", ignoreCase = true)) {
+        dependsOn(patchOfferExtrasUi)
+    }
 }
 
 dependencies {
@@ -216,7 +218,6 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
-    implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
