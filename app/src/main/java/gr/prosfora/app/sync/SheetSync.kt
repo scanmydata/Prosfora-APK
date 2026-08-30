@@ -20,55 +20,90 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
     data class Report(val pulledOffers: Int, val pulledSpaces: Int, val pulledNotes: Int, val pulledDebts: Int, val pushedRows: Int) {
         val summary: String get() = "Λήφθηκαν $pulledOffers προσφορές / $pulledSpaces χώροι / $pulledNotes σημειώσεις / $pulledDebts οφειλές · στάλθηκαν $pushedRows γραμμές"
     }
+
     private val db = ProsforaDatabase.get(context)
 
     suspend fun sync(): Report = withContext(Dispatchers.IO) {
         val spreadsheetId = settings.spreadsheetId ?: error("Δεν έχει οριστεί κοινόχρηστο Sheet")
         ensureTabs(spreadsheetId)
 
-        // Repair legacy/fallback employee rows before reading local state. This
-        // prevents stale duplicate IDs from being merged back into the shared
-        // Sheet and recreating duplicate employee cards on another device.
-        DebtRepository(context).repairEmployeeIndex()
-
         val remoteOffers = readOffers(spreadsheetId)
         val remoteSpaces = readSpaces(spreadsheetId)
         val remoteNotes = readNotes(spreadsheetId)
         val remoteDebts = readDebts(spreadsheetId)
         val remoteEmployees = readEmployees(spreadsheetId)
+            .filterNot { settings.deletedEmployeeIds.contains(it.id) }
+
         val localOffers = db.offerDao().allForSync()
         val localSpaces = db.spaceDao().allForSync()
         val localNotes = db.noteDao().allForSync()
         val localDebts = db.debtDao().allForSync()
         val localEmployees = db.employeeDao().allForSync()
+
         val mergedOffers = merge(localOffers, remoteOffers, { it.id }, { it.updatedAt })
         val mergedSpaces = merge(localSpaces, remoteSpaces, { it.id }, { it.updatedAt })
         val mergedNotes = merge(localNotes, remoteNotes, { it.id }, { it.updatedAt })
-        val mergedDebts = merge(localDebts, remoteDebts, { it.id }, { it.updatedAt })
-        val mergedEmployees = merge(localEmployees, remoteEmployees, { it.id }, { it.updatedAt })
+        val mergedDebts = mergeDeletedWins(localDebts, remoteDebts, { it.id }, { it.updatedAt })
+        val mergedEmployees = mergeEmployees(localEmployees, remoteEmployees)
+
         var pulledOffers = 0
-        mergedOffers.forEach { merged -> if (localOffers.none { it.id == merged.id && it == merged }) { db.offerDao().upsert(merged); pulledOffers++ } }
+        mergedOffers.forEach { merged ->
+            if (localOffers.none { it.id == merged.id && it == merged }) {
+                db.offerDao().upsert(merged)
+                pulledOffers++
+            }
+        }
         var pulledSpaces = 0
-        mergedSpaces.forEach { merged -> if (localSpaces.none { it.id == merged.id && it == merged }) { db.spaceDao().upsert(merged); pulledSpaces++ } }
+        mergedSpaces.forEach { merged ->
+            if (localSpaces.none { it.id == merged.id && it == merged }) {
+                db.spaceDao().upsert(merged)
+                pulledSpaces++
+            }
+        }
         var pulledNotes = 0
-        mergedNotes.forEach { merged -> if (localNotes.none { it.id == merged.id && it == merged }) { db.noteDao().upsert(merged); pulledNotes++ } }
+        mergedNotes.forEach { merged ->
+            if (localNotes.none { it.id == merged.id && it == merged }) {
+                db.noteDao().upsert(merged)
+                pulledNotes++
+            }
+        }
         var pulledDebts = 0
-        mergedDebts.forEach { merged -> if (localDebts.none { it.id == merged.id && it == merged }) { db.debtDao().upsert(merged); pulledDebts++ } }
+        mergedDebts.forEach { merged ->
+            if (localDebts.none { it.id == merged.id && it == merged }) {
+                db.debtDao().upsert(merged)
+                pulledDebts++
+            }
+        }
         announceForeignDebts(localDebts, mergedDebts)
+
+        mergedEmployees.forEach { merged ->
+            if (localEmployees.none { it.id == merged.id && it == merged }) {
+                db.employeeDao().upsert(merged)
+            }
+        }
+
         sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))
         sheets.replaceRows(spreadsheetId, TAB_SPACES, spaceRows(mergedSpaces))
         sheets.replaceRows(spreadsheetId, TAB_NOTES, noteRows(mergedNotes))
-        mergedEmployees.forEach { merged -> if (localEmployees.none { it.id == merged.id && it == merged }) db.employeeDao().upsert(merged) }
         sheets.replaceRows(spreadsheetId, TAB_DEBTS, debtRows(mergedDebts))
         sheets.replaceRows(spreadsheetId, TAB_PEOPLE, employeeRows(mergedEmployees))
+
         settings.lastSyncAt = System.currentTimeMillis()
-        Report(pulledOffers, pulledSpaces, pulledNotes, pulledDebts, mergedOffers.size + mergedSpaces.size + mergedNotes.size + mergedDebts.size + mergedEmployees.size)
+        Report(
+            pulledOffers,
+            pulledSpaces,
+            pulledNotes,
+            pulledDebts,
+            mergedOffers.size + mergedSpaces.size + mergedNotes.size + mergedDebts.size + mergedEmployees.size,
+        )
     }
 
     private fun announceForeignDebts(local: List<DebtEntity>, merged: List<DebtEntity>) {
         val mine = settings.ownerEmail.trim().lowercase()
         val known = local.map { it.id }.toSet()
-        val fresh = merged.filter { debt -> !debt.deleted && debt.id !in known && debt.createdBy.isNotBlank() && debt.createdBy.trim().lowercase() != mine }
+        val fresh = merged.filter { debt ->
+            !debt.deleted && debt.id !in known && debt.createdBy.isNotBlank() && debt.createdBy.trim().lowercase() != mine
+        }
         if (fresh.isNotEmpty()) DriveNotifier.notifyDebts(context, fresh)
     }
 
@@ -79,7 +114,8 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
             val folder = gr.prosfora.app.google.DriveWorkspace(drive, settings).rootFolder()
             runCatching { drive.moveToFolder(id, folder) }
         }
-        sync(); id
+        sync()
+        id
     }
 
     private suspend fun ensureTabs(spreadsheetId: String) {
@@ -90,8 +126,59 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
     }
 
     private fun <T> merge(local: List<T>, remote: List<T>, id: (T) -> String, updatedAt: (T) -> Long): List<T> {
-        val byId = LinkedHashMap<String, T>(); local.forEach { byId[id(it)] = it }
-        remote.forEach { incoming -> val key = id(incoming); val existing = byId[key]; if (existing == null || updatedAt(incoming) > updatedAt(existing)) byId[key] = incoming }
+        val byId = LinkedHashMap<String, T>()
+        local.forEach { byId[id(it)] = it }
+        remote.forEach { incoming ->
+            val key = id(incoming)
+            val existing = byId[key]
+            if (existing == null || updatedAt(incoming) > updatedAt(existing)) byId[key] = incoming
+        }
+        return byId.values.toList()
+    }
+
+    /** A local deleted tombstone is authoritative and may not be resurrected by Sheet data. */
+    private fun <T> mergeDeletedWins(local: List<T>, remote: List<T>, id: (T) -> String, updatedAt: (T) -> Long): List<T> {
+        val byId = LinkedHashMap<String, T>()
+        local.forEach { byId[id(it)] = it }
+        remote.forEach { incoming ->
+            val key = id(incoming)
+            val existing = byId[key]
+            if (existing == null) {
+                byId[key] = incoming
+            } else {
+                val deleted = existing::class == DebtEntity::class && (existing as DebtEntity).deleted
+                if (!deleted && updatedAt(incoming) > updatedAt(existing)) byId[key] = incoming
+            }
+        }
+        return byId.values.toList()
+    }
+
+    /**
+     * Payroll summaries are deliberately local to the employee card. The Sheet
+     * employee table has no payrollSummaryJson column, so a remote employee row
+     * must never replace an existing local summary with "{}".
+     */
+    private fun mergeEmployees(local: List<EmployeeEntity>, remote: List<EmployeeEntity>): List<EmployeeEntity> {
+        val byId = LinkedHashMap<String, EmployeeEntity>()
+        local.forEach { byId[it.id] = it }
+        remote.forEach { incoming ->
+            if (settings.deletedEmployeeIds.contains(incoming.id)) return@forEach
+            val existing = byId[incoming.id]
+            if (existing == null) {
+                byId[incoming.id] = incoming
+            } else {
+                val merged = if (incoming.updatedAt > existing.updatedAt) {
+                    incoming.copy(payrollSummaryJson = existing.payrollSummaryJson)
+                } else {
+                    existing.copy(
+                        name = incoming.name.ifBlank { existing.name },
+                        alias = incoming.alias.ifBlank { existing.alias },
+                        code = incoming.code.ifBlank { existing.code },
+                    )
+                }
+                byId[incoming.id] = merged
+            }
+        }
         return byId.values.toList()
     }
 
@@ -115,28 +202,31 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
             id = row[0], kind = runCatching { DebtKind.valueOf(row[1]) }.getOrDefault(DebtKind.AADE), periodMonth = row[2].toIntOrNull() ?: 0, periodYear = row[3].toIntOrNull() ?: 0,
             dueDay = row[4].toLongOrNull(), amount = row[5].toDoubleOrNull() ?: 0.0, reference = row[6], description = row[7], personName = row[8], personCode = row[9],
             paid = row[10] == "1", paidAt = row[11].toLongOrNull(), paidDay = row[17].toLongOrNull(), createdBy = row[18], source = row[12], driveFileId = row[13],
-            createdAt = row[14].toLongOrNull() ?: 0L, updatedAt = row[15].toLongOrNull() ?: 0L, deleted = row[16] == "1",
-            amIka = row.getOrElse(19) { "" },
+            createdAt = row[14].toLongOrNull() ?: 0L, updatedAt = row[15].toLongOrNull() ?: 0L, deleted = row[16] == "1", amIka = row.getOrElse(19) { "" },
         )
     }
 
-    private suspend fun readEmployees(spreadsheetId: String): List<EmployeeEntity> = dataRows(spreadsheetId, TAB_PEOPLE, PEOPLE_HEADER.size)
-        .mapNotNull { row ->
-            val amIka = EmployeeEntity.normalizeIka(row.getOrElse(7) { "" })
-            if (amIka.isBlank()) null else EmployeeEntity(
-                id = EmployeeEntity.idForAmIka(amIka),
-                amIka = amIka,
-                name = row[1],
-                alias = row[2],
-                code = row[3],
-                updatedAt = row[4].toLongOrNull() ?: 0L,
-                deleted = row[5] == "1",
-                leftDay = row[6].toLongOrNull(),
-            )
-        }
+    private suspend fun readEmployees(spreadsheetId: String): List<EmployeeEntity> = dataRows(spreadsheetId, TAB_PEOPLE, PEOPLE_HEADER.size).mapNotNull { row ->
+        val amIka = EmployeeEntity.normalizeIka(row.getOrElse(7) { "" })
+        if (amIka.isBlank()) null else EmployeeEntity(
+            id = EmployeeEntity.idForAmIka(amIka),
+            amIka = amIka,
+            name = row[1],
+            alias = row[2],
+            code = row[3],
+            updatedAt = row[4].toLongOrNull() ?: 0L,
+            deleted = row[5] == "1",
+            leftDay = row[6].toLongOrNull(),
+        )
+    }
 
-    private suspend fun readSpaces(spreadsheetId: String): List<SpaceEntity> = dataRows(spreadsheetId, TAB_SPACES, SPACE_HEADER.size).map { row -> SpaceEntity(id = row[0], offerId = row[1], description = row[2], area = row[3].toDoubleOrNull() ?: 0.0, unitPrice = row[4].toDoubleOrNull() ?: 0.0, position = row[5].toIntOrNull() ?: 0, updatedAt = row[6].toLongOrNull() ?: 0L, deleted = row[7] == "1") }
-    private suspend fun readNotes(spreadsheetId: String,): List<NoteEntity> = dataRows(spreadsheetId, TAB_NOTES, NOTE_HEADER.size).map { row -> NoteEntity(id = row[0], offerId = row[1], text = row[2], position = row[3].toIntOrNull() ?: 0, updatedAt = row[4].toLongOrNull() ?: 0L, deleted = row[5] == "1") }
+    private suspend fun readSpaces(spreadsheetId: String): List<SpaceEntity> = dataRows(spreadsheetId, TAB_SPACES, SPACE_HEADER.size).map { row ->
+        SpaceEntity(id = row[0], offerId = row[1], description = row[2], area = row[3].toDoubleOrNull() ?: 0.0, unitPrice = row[4].toDoubleOrNull() ?: 0.0, position = row[5].toIntOrNull() ?: 0, updatedAt = row[6].toLongOrNull() ?: 0L, deleted = row[7] == "1")
+    }
+
+    private suspend fun readNotes(spreadsheetId: String): List<NoteEntity> = dataRows(spreadsheetId, TAB_NOTES, NOTE_HEADER.size).map { row ->
+        NoteEntity(id = row[0], offerId = row[1], text = row[2], position = row[3].toIntOrNull() ?: 0, updatedAt = row[4].toLongOrNull() ?: 0L, deleted = row[5] == "1")
+    }
 
     private suspend fun dataRows(spreadsheetId: String, tab: String, width: Int): List<List<String>> {
         val rows = sheets.readRows(spreadsheetId, tab)
@@ -147,10 +237,22 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
     private fun offerRows(offers: List<OfferEntity>) = listOf(OFFER_HEADER) + offers.map {
         listOf(it.id, it.address, it.dateEpochDay.toString(), it.kind, it.email, it.status.name, it.createdAt.toString(), it.updatedAt.toString(), it.lastSentAt?.toString().orEmpty(), if (it.deleted) "1" else "0", it.customerName, it.customerPhone, it.notifiedAt?.toString().orEmpty(), it.notifiedVia.orEmpty(), it.workStartDay?.toString().orEmpty(), it.workEndDay?.toString().orEmpty(), it.reviewSentAt?.toString().orEmpty(), it.validUntilDay?.toString().orEmpty(), it.paymentTerms, it.source, it.customerLastName, it.customerGender.name, if (it.vatIncluded) "1" else "0", if (it.scaffolding) "1" else "0", it.scaffoldingCost.toString(), if (it.permit) "1" else "0", it.permitCost.toString(), it.customExtraName, it.customExtraCost.toString())
     }
-    private fun debtRows(debts: List<DebtEntity>) = listOf(DEBT_HEADER) + debts.map { listOf(it.id, it.kind.name, it.periodMonth.toString(), it.periodYear.toString(), it.dueDay?.toString().orEmpty(), it.amount.toString(), it.reference, it.description, it.personName, it.personCode, if (it.paid) "1" else "0", it.paidAt?.toString().orEmpty(), it.source, it.driveFileId, it.createdAt.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0", it.paidDay?.toString().orEmpty(), it.createdBy, it.amIka) }
-    private fun employeeRows(people: List<EmployeeEntity>) = listOf(PEOPLE_HEADER) + people.map { listOf(it.id, it.name, it.alias, it.code, it.updatedAt.toString(), if (it.deleted) "1" else "0", it.leftDay?.toString().orEmpty(), it.amIka) }
-    private fun spaceRows(spaces: List<SpaceEntity>) = listOf(SPACE_HEADER) + spaces.map { listOf(it.id, it.offerId, it.description, it.area.toString(), it.unitPrice.toString(), it.position.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0") }
-    private fun noteRows(notes: List<NoteEntity>) = listOf(NOTE_HEADER) + notes.map { listOf(it.id, it.offerId, it.text, it.position.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0") }
+
+    private fun debtRows(debts: List<DebtEntity>) = listOf(DEBT_HEADER) + debts.map {
+        listOf(it.id, it.kind.name, it.periodMonth.toString(), it.periodYear.toString(), it.dueDay?.toString().orEmpty(), it.amount.toString(), it.reference, it.description, it.personName, it.personCode, if (it.paid) "1" else "0", it.paidAt?.toString().orEmpty(), it.source, it.driveFileId, it.createdAt.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0", it.paidDay?.toString().orEmpty(), it.createdBy, it.amIka)
+    }
+
+    private fun employeeRows(people: List<EmployeeEntity>) = listOf(PEOPLE_HEADER) + people.map {
+        listOf(it.id, it.name, it.alias, it.code, it.updatedAt.toString(), if (it.deleted) "1" else "0", it.leftDay?.toString().orEmpty(), it.amIka)
+    }
+
+    private fun spaceRows(spaces: List<SpaceEntity>) = listOf(SPACE_HEADER) + spaces.map {
+        listOf(it.id, it.offerId, it.description, it.area.toString(), it.unitPrice.toString(), it.position.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0")
+    }
+
+    private fun noteRows(notes: List<NoteEntity>) = listOf(NOTE_HEADER) + notes.map {
+        listOf(it.id, it.offerId, it.text, it.position.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0")
+    }
 
     companion object {
         const val TAB_OFFERS = "Προσφορές"
