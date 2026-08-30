@@ -52,8 +52,16 @@ class DebtRepository(context: Context) {
     suspend fun deleteEmployee(id: String) =
         employees.softDelete(id, System.currentTimeMillis())
 
-    suspend fun deleteEmployeeFromDatabase(id: String) =
+    suspend fun deleteEmployeeFromDatabase(id: String) {
+        val employee = employees.allForSync().firstOrNull { it.id == id }
+            ?: return
+        val ika = EmployeeEntity.normalizeIka(employee.amIka)
+        if (ika.isNotBlank()) {
+            debts.hardDeletePayrollForEmployee(ika)
+        }
         employees.hardDelete(id)
+        EmployeeAliasRegistry.refresh(employees.allForSync())
+    }
 
     suspend fun save(debt: DebtEntity) {
         val normalized = normalizeByDueDate(debt.copy(amIka = EmployeeEntity.normalizeIka(debt.amIka)))
