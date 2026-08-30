@@ -59,29 +59,38 @@ object DriveSyncCoordinator {
                 onFound = { found ->
                     if (found.afmMismatch || found.debts.isEmpty()) return@scan
 
+                    // IMPORTANT: all payroll consumers must receive the same enriched
+                    // rows, after the canonical AM IKA mapping has been applied.
                     val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
+                    val enrichedFound = found.copy(debts = enrichedDebts)
+
                     PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
                     PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
 
                     try {
-                        PayrollCostIndexer.index(app, accessToken, found)
+                        PayrollCostIndexer.index(app, accessToken, enrichedFound)
                     } catch (e: Exception) {
                         DebugLog.log("payroll-cost", "Αποτυχία index κόστους ${found.fileName}: ${e.stackTraceToString()}")
                     }
-                    val pending = deferInstallments && found.installmentPlan != null
+
+                    val pending = deferInstallments && enrichedFound.installmentPlan != null
                     if (pending) {
-                        if (pendingFiles.add(found.driveFileId)) {
-                            PendingDebtNotificationStore.enqueue(app, listOf(found.copy(debts = enrichedDebts)))
-                            DebugLog.log("sync", "άμεση εκκρεμής ειδοποίηση δόσεων · file=${found.fileName}")
+                        if (pendingFiles.add(enrichedFound.driveFileId)) {
+                            PendingDebtNotificationStore.enqueue(app, listOf(enrichedFound))
+                            DebugLog.log("sync", "άμεση εκκρεμής ειδοποίηση δόσεων · file=${enrichedFound.fileName}")
                         }
-                        if (notifiedFiles.add(found.driveFileId)) DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
+                        if (notifiedFiles.add(enrichedFound.driveFileId)) {
+                            DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
+                        }
                     } else {
                         val fresh = enrichedDebts.filter { savedIds.add(it.id) }
                         if (fresh.isNotEmpty()) {
                             repository.saveAll(fresh)
                             savedDebts += fresh
                             DebugLog.log("sync", "άμεση αποθήκευση ${fresh.size} οφειλών από ${found.fileName}")
-                            if (notifiedFiles.add(found.driveFileId)) DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
+                            if (notifiedFiles.add(enrichedFound.driveFileId)) {
+                                DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
+                            }
                         }
                     }
                 },
@@ -95,22 +104,26 @@ object DriveSyncCoordinator {
 
         for (found in report.found) {
             if (found.afmMismatch || found.debts.isEmpty()) continue
-            val pending = deferInstallments && found.installmentPlan != null
+            val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
+            val enrichedFound = found.copy(debts = enrichedDebts)
+            val pending = deferInstallments && enrichedFound.installmentPlan != null
             if (pending) {
-                val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
                 PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
                 PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
-                if (pendingFiles.add(found.driveFileId)) PendingDebtNotificationStore.enqueue(app, listOf(found.copy(debts = enrichedDebts)))
-                if (notifiedFiles.add(found.driveFileId)) DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
+                if (pendingFiles.add(enrichedFound.driveFileId)) PendingDebtNotificationStore.enqueue(app, listOf(enrichedFound))
+                if (notifiedFiles.add(enrichedFound.driveFileId)) {
+                    DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
+                }
             } else {
-                val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
                 PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
                 PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
                 val fresh = enrichedDebts.filter { savedIds.add(it.id) }
                 if (fresh.isNotEmpty()) {
                     repository.saveAll(fresh)
                     savedDebts += fresh
-                    if (notifiedFiles.add(found.driveFileId)) DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
+                    if (notifiedFiles.add(enrichedFound.driveFileId)) {
+                        DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
+                    }
                 }
             }
         }
