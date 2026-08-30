@@ -104,7 +104,7 @@ object PayrollEmployeeSnapshotStore {
 
     private object PayrollMetricsExtractor {
         private val rowStart = Regex("""^\s*\d{1,3}\s+([0-9]{2,6})\b""")
-        private val moneyToken = Regex("(?<!\\d)[0-9][0-9.]*,[0-9]{2}(?!\\d)")
+        private val moneyToken = Regex("(?<!\\d)(?:[0-9][0-9.]*,[0-9]{2}|[0-9][0-9,]*\\.[0-9]{2})(?!\\d)")
         private val daysPatterns = listOf(
             Regex("""\bΤΑ\s*[:=\-]?\s*(\d{1,2})(?:[.,]\d+)?\b""", RegexOption.IGNORE_CASE),
             Regex("""\b(\d{1,2})(?:[.,]\d+)?\s+ΤΑ\b""", RegexOption.IGNORE_CASE),
@@ -112,6 +112,14 @@ object PayrollEmployeeSnapshotStore {
 
         data class Metrics(val payable: Double?, val insuranceCost: Double?, val insuranceDays: Int?)
         private data class Candidate(val lineIndex: Int, val numbers: List<Double>)
+
+        private fun parseMoney(raw: String): Double? {
+            val token = raw.trim()
+            return when {
+                token.contains(',') -> token.replace(".", "").replace(',', '.').toDoubleOrNull()
+                else -> token.replace(",", "").toDoubleOrNull()
+            }
+        }
 
         fun find(text: String, debt: DebtEntity): Metrics {
             val code = debt.personCode.trim()
@@ -138,9 +146,7 @@ object PayrollEmployeeSnapshotStore {
                 .firstOrNull { it in 0..31 }
 
             val candidates = block.mapIndexedNotNull { index, raw ->
-                val numbers = moneyToken.findAll(raw).mapNotNull {
-                    it.value.replace(".", "").replace(',', '.').toDoubleOrNull()
-                }.toList()
+                val numbers = moneyToken.findAll(raw).mapNotNull { parseMoney(it.value) }.toList()
                 numbers.takeIf { it.size >= 8 }?.let { Candidate(start + index, it) }
             }
 
@@ -168,9 +174,7 @@ object PayrollEmployeeSnapshotStore {
             // Some PDF text layers wrap the total line. Combine up to three
             // adjacent numeric fragments as a tolerant fallback.
             val fragments = block.mapIndexedNotNull { index, raw ->
-                val numbers = moneyToken.findAll(raw).mapNotNull {
-                    it.value.replace(".", "").replace(',', '.').toDoubleOrNull()
-                }.toList()
+                val numbers = moneyToken.findAll(raw).mapNotNull { parseMoney(it.value) }.toList()
                 numbers.takeIf { it.isNotEmpty() }?.let { Candidate(start + index, it) }
             }
 
