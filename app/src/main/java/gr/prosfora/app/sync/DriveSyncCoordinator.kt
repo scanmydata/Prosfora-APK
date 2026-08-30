@@ -59,8 +59,6 @@ object DriveSyncCoordinator {
                 onFound = { found ->
                     if (found.afmMismatch || found.debts.isEmpty()) return@scan
 
-                    // IMPORTANT: all payroll consumers must receive the same enriched
-                    // rows, after the canonical AM IKA mapping has been applied.
                     val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
                     val enrichedFound = found.copy(debts = enrichedDebts)
 
@@ -79,18 +77,14 @@ object DriveSyncCoordinator {
                             PendingDebtNotificationStore.enqueue(app, listOf(enrichedFound))
                             DebugLog.log("sync", "άμεση εκκρεμής ειδοποίηση δόσεων · file=${enrichedFound.fileName}")
                         }
-                        if (notifiedFiles.add(enrichedFound.driveFileId)) {
-                            DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
-                        }
+                        if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
                     } else {
                         val fresh = enrichedDebts.filter { savedIds.add(it.id) }
                         if (fresh.isNotEmpty()) {
                             repository.saveAll(fresh)
                             savedDebts += fresh
                             DebugLog.log("sync", "άμεση αποθήκευση ${fresh.size} οφειλών από ${found.fileName}")
-                            if (notifiedFiles.add(enrichedFound.driveFileId)) {
-                                DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
-                            }
+                            if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
                         }
                     }
                 },
@@ -111,9 +105,7 @@ object DriveSyncCoordinator {
                 PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
                 PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
                 if (pendingFiles.add(enrichedFound.driveFileId)) PendingDebtNotificationStore.enqueue(app, listOf(enrichedFound))
-                if (notifiedFiles.add(enrichedFound.driveFileId)) {
-                    DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
-                }
+                if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
             } else {
                 PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
                 PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
@@ -121,9 +113,7 @@ object DriveSyncCoordinator {
                 if (fresh.isNotEmpty()) {
                     repository.saveAll(fresh)
                     savedDebts += fresh
-                    if (notifiedFiles.add(enrichedFound.driveFileId)) {
-                        DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
-                    }
+                    if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
                 }
             }
         }
@@ -137,13 +127,21 @@ object DriveSyncCoordinator {
             DebugLog.log("notify", "daily unpaid reminder after sync απέτυχε: ${it.stackTraceToString()}")
         }
 
-        val sheetSummary = sheetJob?.await()
+        val firstSheetSummary = sheetJob?.await()
+        val finalSheetSummary = if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) {
+            runCatching { SheetSync(app, SheetsClient(accessToken), settings).sync().summary }
+                .onFailure { DebugLog.log("sync", "τελικό Sheet sync απέτυχε: ${it.stackTraceToString()}") }
+                .getOrNull() ?: firstSheetSummary
+        } else {
+            firstSheetSummary
+        }
+
         if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) {
             runCatching { EmployeeSheetSanitizer.sync(app, accessToken) }
                 .onFailure { DebugLog.log("employees", "Sheet employee sanitizer failed: ${it.stackTraceToString()}") }
         }
 
         DebugLog.log("sync", "τέλος · scanned=${report.scanned}, skipped=${report.skipped}, saved=${savedDebts.size}, pendingInstallments=${pendingFiles.size}, notifications=${notifiedFiles.size}")
-        Result(sheetSummary, savedDebts.distinctBy { it.id }, report.unreadable.size)
+        Result(finalSheetSummary, savedDebts.distinctBy { it.id }, report.unreadable.size)
     }
 }
