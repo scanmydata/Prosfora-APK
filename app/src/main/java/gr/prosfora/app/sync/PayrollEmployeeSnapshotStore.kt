@@ -10,7 +10,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * Persists the payroll snapshot independently from DebtEntity lifetime.
- * The payroll PDF is the source of truth for insurance days and insurance cost.
+ * The payroll PDF is the source of truth for payable amount, insurance days
+ * and total employee+employer insurance cost.
  */
 object PayrollEmployeeSnapshotStore {
     suspend fun record(context: Context, ocrText: String, debts: List<DebtEntity>) = withContext(Dispatchers.IO) {
@@ -30,21 +31,28 @@ object PayrollEmployeeSnapshotStore {
                 val month = periodKey.second
                 if (year <= 0 || month !in 1..12) return@forEach
 
-                val metrics = PayrollMetricsExtractor.find(ocrText, periodRows.first())
                 val key = "%04d-%02d".format(year, month)
                 val previous = current.optJSONObject(key)
+                val metrics = PayrollMetricsExtractor.find(ocrText, periodRows.first())
 
-                // Always replace the monthly snapshot with the values extracted
-                // from the payroll PDF. Never preserve an older payable-only or
-                // zero-metric record, because that was the source of the stale
-                // employee-card totals seen after later imports.
+                // The PDF is authoritative. If OCR was incomplete for one metric,
+                // preserve the previous valid value instead of replacing it with 0.
+                val payable = metrics.payable
+                    ?: previous?.optDouble("payable", Double.NaN)?.takeUnless { it.isNaN() }
+                    ?: periodRows.sumOf { it.amount }
+                val insuranceCost = metrics.insuranceCost
+                    ?: previous?.optDouble("insuranceCost", Double.NaN)?.takeUnless { it.isNaN() }
+                    ?: 0.0
+                val insuranceDays = metrics.insuranceDays
+                    ?: previous?.optInt("insuranceDays", 0)?.takeIf { it > 0 }
+                    ?: PayrollInsuranceDaysStore.daysFor(appContext = context.applicationContext, amIka = ika, year = year, month = month)
+
                 current.put(
                     key,
                     JSONObject().apply {
-                        put("payable", periodRows.sumOf { it.amount })
-                        put("insuranceCost", metrics.insuranceCost)
-                        put("insuranceDays", metrics.insuranceDays)
-                        // Keep no hidden dependency on deleted DebtEntity rows.
+                        put("payable", payable)
+                        put("insuranceCost", insuranceCost)
+                        put("insuranceDays", insuranceDays)
                         if (previous?.has("source") == true) put("source", previous.optString("source"))
                     },
                 )
@@ -95,64 +103,102 @@ object PayrollEmployeeSnapshotStore {
     }
 
     private object PayrollMetricsExtractor {
-        private val employeeLine = Regex("""^\s*\d{1,3}\s+[0-9]{2,6}\s+.+$""")
-        private val regularTaLine = Regex("""^\s*ΤΑ\s+(\d+(?:[.,]\d+)?)\b""", RegexOption.IGNORE_CASE)
-        private val moneyToken = Regex("[0-9][0-9.]*,[0-9]{2}")
-        private val rowStart = Regex("""^\s*\d{1,3}\s+[0-9]{2,6}\s+""")
+        private val rowStart = Regex("""^\s*\d{1,3}\s+([0-9]{2,6})\b""")
+        private val moneyToken = Regex("(?<!\\d)[0-9][0-9.]*,[0-9]{2}(?!\\d)")
+        private val daysPatterns = listOf(
+            Regex("""\bΤΑ\s*[:=\-]?\s*(\d{1,2})(?:[.,]\d+)?\b""", RegexOption.IGNORE_CASE),
+            Regex("""\b(\d{1,2})(?:[.,]\d+)?\s+ΤΑ\b""", RegexOption.IGNORE_CASE),
+        )
 
-        data class Metrics(val insuranceDays: Int, val insuranceCost: Double)
+        data class Metrics(val payable: Double?, val insuranceCost: Double?, val insuranceDays: Int?)
+        private data class Candidate(val lineIndex: Int, val numbers: List<Double>)
 
         fun find(text: String, debt: DebtEntity): Metrics {
-            val ika = EmployeeEntity.normalizeIka(debt.amIka)
             val code = debt.personCode.trim()
-            if (text.isBlank() || code.isBlank()) return Metrics(0, 0.0)
+            val ika = EmployeeEntity.normalizeIka(debt.amIka)
+            if (text.isBlank() || code.isBlank()) return Metrics(null, null, null)
 
             val normalizedCode = code.trimStart('0').ifBlank { code }
             val lines = text.lines()
             val start = lines.indexOfFirst { raw ->
                 val line = raw.removePrefix("\uFEFF").trim()
-                if (!employeeLine.matches(line)) return@indexOfFirst false
-                val tokens = line.split(Regex("\\s+"), limit = 3)
-                if (tokens.size < 3) return@indexOfFirst false
-                val rowCode = tokens[1].trimStart('0').ifBlank { tokens[1] }
-                rowCode == normalizedCode && (ika.isBlank() || line.contains(ika))
+                val row = rowStart.find(line) ?: return@indexOfFirst false
+                val rowCode = row.groupValues[1].trimStart('0').ifBlank { row.groupValues[1] }
+                rowCode == normalizedCode
             }
-            if (start < 0) return Metrics(0, 0.0)
+            if (start < 0) return Metrics(null, null, null)
 
-            var days = 0
-            var cost = 0.0
-            var i = start + 1
-            while (i < lines.size) {
-                val line = lines[i].removePrefix("\uFEFF").trim()
-                if (line.isBlank()) { i++; continue }
-                if (i > start + 1 && rowStart.containsMatchIn(line)) break
+            val end = (start + 1 until lines.size)
+                .firstOrNull { rowStart.containsMatchIn(lines[it].removePrefix("\uFEFF").trim()) }
+                ?: lines.size
+            val block = lines.subList(start, end)
 
-                val ta = regularTaLine.find(line)
-                if (ta != null) {
-                    days = ta.groupValues[1].replace(',', '.').toDoubleOrNull()?.toInt() ?: 0
-                    var j = i + 1
-                    while (j < lines.size) {
-                        val next = lines[j].removePrefix("\uFEFF").trim()
-                        if (next.isBlank()) { j++; continue }
-                        if (rowStart.containsMatchIn(next)) break
-                        val numbers = next.split(Regex("\\s+")).mapNotNull { token ->
-                            moneyToken.matchEntire(token)?.value?.replace(".", "")?.replace(',', '.')?.toDoubleOrNull()
-                        }
-                        // Payroll employee total row contains 12 money values:
-                        // gross, employee contribution, employer contribution,
-                        // subsidy, total, ... , payable. The 4th value is the
-                        // total insurance cost for the employee.
-                        if (numbers.size >= 12) {
-                            cost = numbers[3]
-                            break
-                        }
-                        j++
-                    }
-                    break
+            val insuranceDays = block.asSequence()
+                .flatMap { line -> daysPatterns.asSequence().mapNotNull { it.find(line)?.groupValues?.get(1) } }
+                .mapNotNull { it.replace(',', '.').toDoubleOrNull()?.toInt() }
+                .firstOrNull { it in 0..31 }
+
+            val candidates = block.mapIndexedNotNull { index, raw ->
+                val numbers = moneyToken.findAll(raw).mapNotNull {
+                    it.value.replace(".", "").replace(',', '.').toDoubleOrNull()
+                }.toList()
+                numbers.takeIf { it.size >= 8 }?.let { Candidate(start + index, it) }
+            }
+
+            // In normal payroll PDFs the employee total line is the widest
+            // numeric line in the employee block and its last amount is payable.
+            // Prefer the last candidate on ties so wrapped OCR lines still work.
+            val total = candidates.maxWithOrNull(
+                compareBy<Candidate> { it.numbers.size }.thenBy { it.lineIndex },
+            )
+
+            if (total != null) {
+                val numbers = total.numbers
+                val insuranceCost = when {
+                    numbers.size >= 4 -> numbers[3]
+                    numbers.size >= 3 -> numbers[1] + numbers[2]
+                    else -> null
                 }
-                i++
+                return Metrics(
+                    payable = numbers.lastOrNull(),
+                    insuranceCost = insuranceCost,
+                    insuranceDays = insuranceDays,
+                )
             }
-            return Metrics(days, cost)
+
+            // Some PDF text layers wrap the total line. Combine up to three
+            // adjacent numeric fragments as a tolerant fallback.
+            val fragments = block.mapIndexedNotNull { index, raw ->
+                val numbers = moneyToken.findAll(raw).mapNotNull {
+                    it.value.replace(".", "").replace(',', '.').toDoubleOrNull()
+                }.toList()
+                numbers.takeIf { it.isNotEmpty() }?.let { Candidate(start + index, it) }
+            }
+
+            var best: Candidate? = null
+            for (i in fragments.indices) {
+                val combined = mutableListOf<Double>()
+                for (j in i until minOf(i + 3, fragments.size)) {
+                    if (j > i && fragments[j].lineIndex != fragments[j - 1].lineIndex + 1) break
+                    combined += fragments[j].numbers
+                    if (combined.size >= 8) {
+                        best = Candidate(fragments[j].lineIndex, combined.toList())
+                        break
+                    }
+                }
+            }
+
+            if (best != null) {
+                val numbers = best!!.numbers
+                val insuranceCost = when {
+                    numbers.size >= 4 -> numbers[3]
+                    numbers.size >= 3 -> numbers[1] + numbers[2]
+                    else -> null
+                }
+                return Metrics(numbers.lastOrNull(), insuranceCost, insuranceDays)
+            }
+
+            return Metrics(null, null, insuranceDays)
         }
     }
 }
