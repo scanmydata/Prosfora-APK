@@ -10,28 +10,17 @@ val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toIntO
 val appVersionName = (project.findProperty("appVersionName") as String?) ?: "0.1.0"
 
 /**
- * Injects the optional user-defined extra cost into the existing offer editor
- * immediately before Kotlin compilation. The database fields already exist,
- * so this patch only adds the missing UI without changing Room schema.
+ * Adds the optional custom extra-cost editor to the existing offer screen.
+ * The source file itself stays untouched in git; CI applies this small,
+ * idempotent transformation immediately before Kotlin/KSP compilation.
  */
 val patchOfferExtrasUi by tasks.registering {
     doLast {
         val source = file("src/main/java/gr/prosfora/app/ui/offers/OfferDetailScreen.kt")
-        val text = source.readText()
-        val marker = "label = \"Νέο πρόσθετο κόστος\""
-        if (text.contains(marker)) return@doLast
+        val original = source.readText()
+        if (original.contains("private fun CustomExtraCost(")) return@doLast
 
-        val oldBlock = """
-            if (!offer.scaffolding && !offer.permit) {
-                Text(
-                    \"Όσα δεν είναι επιλεγμένα δεν εμφανίζονται καθόλου στο PDF.\",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-""".trimIndent()
-
-        val newBlock = """
+        val customCall = """
             CustomExtraCost(
                 offer = offer,
                 onChange = { name, amount ->
@@ -44,89 +33,87 @@ val patchOfferExtrasUi by tasks.registering {
                 },
             )
 
-            if (!offer.scaffolding && !offer.permit && offer.customExtraName.isBlank()) {
-                Text(
-                    \"Τα 2 προεπιλεγμένα και το νέο πρόσθετο εμφανίζονται στο PDF μόνο όταν έχουν ποσό.\",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        """.trimIndent()
+
+        val callMarker = Regex("(?m)^\\s*if \\(!offer\\.scaffolding && !offer\\.permit\\) \\{")
+        val callMatch = callMarker.find(original)
+            ?: error("Δεν βρέθηκε το σημείο εισαγωγής του custom extra στην ExtrasCard.")
+
+        val afterCall = original.substring(0, callMatch.range.first) +
+            customCall +
+            original.substring(callMatch.range.first)
+
+        val vatMarker = "// ------------------------------------------------------------------- ΦΠΑ -----"
+        val vatIndex = afterCall.indexOf(vatMarker)
+        check(vatIndex >= 0) { "Δεν βρέθηκε το σταθερό σημείο πριν από την κάρτα ΦΠΑ." }
+
+        val customComposable = """
+        @Composable
+        private fun CustomExtraCost(
+            offer: gr.prosfora.app.data.db.OfferEntity,
+            onChange: (String, Double) -> Unit,
+        ) {
+            var name by remember(offer.id) { mutableStateOf(offer.customExtraName) }
+            var amountText by remember(offer.id) {
+                mutableStateOf(
+                    if (offer.customExtraCost > 0.0) {
+                        offer.customExtraCost.toString().removeSuffix(".0")
+                    } else "",
                 )
             }
-""".trimIndent()
 
-        check(text.contains(oldBlock)) {
-            "Δεν βρέθηκε το αναμενόμενο ExtrasCard σημείο για το custom extra patch."
-        }
-
-        var patched = text.replace(oldBlock, newBlock)
-
-        val extraCostEnd = """    }
-}
-
-// ------------------------------------------------------------------- ΦΠΑ -----"""
-        val customComposable = """
-    }
-}
-
-@Composable
-private fun CustomExtraCost(
-    offer: gr.prosfora.app.data.db.OfferEntity,
-    onChange: (String, Double) -> Unit,
-) {
-    var name by remember(offer.id) { mutableStateOf(offer.customExtraName) }
-    var amountText by remember(offer.id) {
-        mutableStateOf(if (offer.customExtraCost > 0.0) offer.customExtraCost.toString().removeSuffix(\".0\") else \"\")
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            \"Νέο πρόσθετο κόστος\",
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-        )
-        StableTextField(
-            value = name,
-            onValueChange = {
-                name = it
-                onChange(it.trim(), amountText.parseDecimal() ?: 0.0)
-            },
-            label = \"Ονομασία πρόσθετου\",
-            debounceMillis = 0,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            StableTextField(
-                value = amountText,
-                onValueChange = {
-                    amountText = it
-                    onChange(name.trim(), it.parseDecimal() ?: 0.0)
-                },
-                label = \"Ποσό (€)\",
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                debounceMillis = 0,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(
-                enabled = name.isNotBlank() || amountText.isNotBlank(),
-                onClick = {
-                    name = \"\"
-                    amountText = \"\"
-                    onChange(\"\", 0.0)
-                },
-            ) {
-                Icon(Icons.Default.Clear, contentDescription = \"Καθαρισμός πρόσθετου κόστους\")
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "Νέο πρόσθετο κόστος",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                )
+                StableTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        onChange(it.trim(), amountText.parseDecimal() ?: 0.0)
+                    },
+                    label = "Ονομασία πρόσθετου",
+                    debounceMillis = 0,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    StableTextField(
+                        value = amountText,
+                        onValueChange = {
+                            amountText = it
+                            onChange(name.trim(), it.parseDecimal() ?: 0.0)
+                        },
+                        label = "Ποσό (€)",
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        debounceMillis = 0,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        enabled = name.isNotBlank() || amountText.isNotBlank(),
+                        onClick = {
+                            name = ""
+                            amountText = ""
+                            onChange("", 0.0)
+                        },
+                    ) {
+                        Icon(Icons.Default.Clear, contentDescription = "Καθαρισμός πρόσθετου κόστους")
+                    }
+                }
             }
         }
-    }
+
 """.trimIndent()
 
-        check(patched.contains(extraCostEnd)) {
-            "Δεν βρέθηκε το τέλος της ExtrasCard για την εισαγωγή του custom composable."
-        }
-        patched = patched.replace(extraCostEnd, customComposable + "\n\n// ------------------------------------------------------------------- ΦΠΑ -----")
+        val patched = afterCall.substring(0, vatIndex) +
+            customComposable +
+            afterCall.substring(vatIndex)
+
         source.writeText(patched)
     }
 }
