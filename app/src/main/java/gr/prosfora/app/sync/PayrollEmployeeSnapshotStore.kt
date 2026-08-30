@@ -8,10 +8,14 @@ import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * Persists the payroll snapshot independently from DebtEntity lifetime.
+ * The payroll PDF is the source of truth for insurance days and insurance cost.
+ */
 object PayrollEmployeeSnapshotStore {
     suspend fun record(context: Context, ocrText: String, debts: List<DebtEntity>) = withContext(Dispatchers.IO) {
         val payroll = debts.filter { it.kind.perPerson && EmployeeEntity.normalizeIka(it.amIka).isNotBlank() }
-        if (payroll.isEmpty()) return@withContext
+        if (payroll.isEmpty() || ocrText.isBlank()) return@withContext
 
         val db = ProsforaDatabase.get(context.applicationContext)
         val byEmployee = payroll.groupBy { EmployeeEntity.normalizeIka(it.amIka) }
@@ -27,12 +31,21 @@ object PayrollEmployeeSnapshotStore {
                 if (year <= 0 || month !in 1..12) return@forEach
 
                 val metrics = PayrollMetricsExtractor.find(ocrText, periodRows.first())
+                val key = "%04d-%02d".format(year, month)
+                val previous = current.optJSONObject(key)
+
+                // Always replace the monthly snapshot with the values extracted
+                // from the payroll PDF. Never preserve an older payable-only or
+                // zero-metric record, because that was the source of the stale
+                // employee-card totals seen after later imports.
                 current.put(
-                    "%04d-%02d".format(year, month),
+                    key,
                     JSONObject().apply {
                         put("payable", periodRows.sumOf { it.amount })
                         put("insuranceCost", metrics.insuranceCost)
                         put("insuranceDays", metrics.insuranceDays)
+                        // Keep no hidden dependency on deleted DebtEntity rows.
+                        if (previous?.has("source") == true) put("source", previous.optString("source"))
                     },
                 )
             }
@@ -83,7 +96,7 @@ object PayrollEmployeeSnapshotStore {
 
     private object PayrollMetricsExtractor {
         private val employeeLine = Regex("""^\s*\d{1,3}\s+[0-9]{2,6}\s+.+$""")
-        private val regularTaLine = Regex("""^\s*ΤΑ\s+(\d+(?:,\d+)?)\s+""", RegexOption.IGNORE_CASE)
+        private val regularTaLine = Regex("""^\s*ΤΑ\s+(\d+(?:[.,]\d+)?)\b""", RegexOption.IGNORE_CASE)
         private val moneyToken = Regex("[0-9][0-9.]*,[0-9]{2}")
         private val rowStart = Regex("""^\s*\d{1,3}\s+[0-9]{2,6}\s+""")
 
@@ -92,17 +105,17 @@ object PayrollEmployeeSnapshotStore {
         fun find(text: String, debt: DebtEntity): Metrics {
             val ika = EmployeeEntity.normalizeIka(debt.amIka)
             val code = debt.personCode.trim()
-            if (text.isBlank() || ika.isBlank() || code.isBlank()) return Metrics(0, 0.0)
+            if (text.isBlank() || code.isBlank()) return Metrics(0, 0.0)
 
             val normalizedCode = code.trimStart('0').ifBlank { code }
             val lines = text.lines()
             val start = lines.indexOfFirst { raw ->
-                val line = raw.trim()
+                val line = raw.removePrefix("\uFEFF").trim()
                 if (!employeeLine.matches(line)) return@indexOfFirst false
                 val tokens = line.split(Regex("\\s+"), limit = 3)
                 if (tokens.size < 3) return@indexOfFirst false
                 val rowCode = tokens[1].trimStart('0').ifBlank { tokens[1] }
-                rowCode == normalizedCode && line.contains(ika)
+                rowCode == normalizedCode && (ika.isBlank() || line.contains(ika))
             }
             if (start < 0) return Metrics(0, 0.0)
 
@@ -110,7 +123,7 @@ object PayrollEmployeeSnapshotStore {
             var cost = 0.0
             var i = start + 1
             while (i < lines.size) {
-                val line = lines[i].trim()
+                val line = lines[i].removePrefix("\uFEFF").trim()
                 if (line.isBlank()) { i++; continue }
                 if (i > start + 1 && rowStart.containsMatchIn(line)) break
 
@@ -119,13 +132,17 @@ object PayrollEmployeeSnapshotStore {
                     days = ta.groupValues[1].replace(',', '.').toDoubleOrNull()?.toInt() ?: 0
                     var j = i + 1
                     while (j < lines.size) {
-                        val next = lines[j].trim()
+                        val next = lines[j].removePrefix("\uFEFF").trim()
                         if (next.isBlank()) { j++; continue }
                         if (rowStart.containsMatchIn(next)) break
                         val numbers = next.split(Regex("\\s+")).mapNotNull { token ->
                             moneyToken.matchEntire(token)?.value?.replace(".", "")?.replace(',', '.')?.toDoubleOrNull()
                         }
-                        if (numbers.size == 12) {
+                        // Payroll employee total row contains 12 money values:
+                        // gross, employee contribution, employer contribution,
+                        // subsidy, total, ... , payable. The 4th value is the
+                        // total insurance cost for the employee.
+                        if (numbers.size >= 12) {
                             cost = numbers[3]
                             break
                         }
