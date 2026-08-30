@@ -26,7 +26,6 @@ class DebtRepository(context: Context) {
         employees.observeAll().onEach(EmployeeAliasRegistry::refresh)
 
     suspend fun importedFileIds(): Set<String> = debts.importedFileIds().toSet()
-
     suspend fun legacyPayrollFileIdsMissingIka(): List<String> = debts.legacyPayrollFileIdsMissingIka()
 
     suspend fun deleteLegacyPayrollRows(fileIds: Collection<String>) {
@@ -52,6 +51,9 @@ class DebtRepository(context: Context) {
 
     suspend fun deleteEmployee(id: String) =
         employees.softDelete(id, System.currentTimeMillis())
+
+    suspend fun deleteEmployeeFromDatabase(id: String) =
+        employees.hardDelete(id)
 
     suspend fun save(debt: DebtEntity) {
         val normalized = normalizeByDueDate(debt.copy(amIka = EmployeeEntity.normalizeIka(debt.amIka)))
@@ -119,8 +121,6 @@ class DebtRepository(context: Context) {
         debts.upsertAll(merged)
         rebuildEmployeeIndex()
 
-        // Direct/manual payroll import stages its OCR until saveAll(). Consume it
-        // exactly once and persist the employee snapshot without another scan.
         PayrollImportSession.consume()?.let { (ocrText, stagedDebts) ->
             val effective = merged.filter { mergedDebt ->
                 stagedDebts.any { staged -> staged.id == mergedDebt.id }
@@ -153,7 +153,6 @@ class DebtRepository(context: Context) {
             }
             .groupBy({ it.first }, { it.second })
 
-        // Canonicalize IDs and remove only true duplicate/non-canonical rows.
         var hardDeletedDuplicates = 0
         storedByIka.forEach { (ika, rows) ->
             val survivor = rows.firstOrNull { it.id == ika }
@@ -169,18 +168,12 @@ class DebtRepository(context: Context) {
             }
         }
 
-        // Existing employees NEVER disappear because a debt was deleted.
-        // Active payroll is used only to create missing employees/update identity.
         val updates = payrollByIka.map { (ika, rows) ->
             val existing = storedByIka[ika]
                 ?.firstOrNull { it.id == ika }
                 ?: storedByIka[ika]?.maxByOrNull { it.updatedAt }
             val latest = rows.maxByOrNull { it.updatedAt } ?: rows.first()
-            val summary = ensureSnapshotPeriods(
-                existing?.payrollSummaryJson ?: "{}",
-                rows,
-                ika,
-            )
+            val summary = ensureSnapshotPeriods(existing?.payrollSummaryJson ?: "{}", rows, ika)
 
             EmployeeEntity(
                 id = ika,
@@ -206,11 +199,6 @@ class DebtRepository(context: Context) {
         )
     }
 
-    /**
-     * Backfills payable/days for already imported payroll rows without OCR.
-     * Existing snapshot periods are never overwritten, so stored cost is not
-     * recalculated on every sync or card open.
-     */
     private fun ensureSnapshotPeriods(json: String, rows: List<DebtEntity>, ika: String): String {
         val root = runCatching { JSONObject(json) }.getOrElse { JSONObject() }
         rows.groupBy { it.periodYear to it.periodMonth }.forEach { (period, periodRows) ->
@@ -240,7 +228,6 @@ class DebtRepository(context: Context) {
     suspend fun delete(ids: Collection<String>) {
         val now = System.currentTimeMillis()
         ids.forEach { debts.softDelete(it, now) }
-        // Employee cards and their payroll snapshots intentionally survive debt deletion.
     }
 
     suspend fun deleteFromFile(source: String, driveFileId: String) {
