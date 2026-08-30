@@ -39,7 +39,10 @@ class DebtRepository(context: Context) {
                 val employee = employeeByIka[ika] ?: return@filter true
                 val key = "%04d-%02d".format(debt.periodYear, debt.periodMonth)
                 val row = runCatching { JSONObject(employee.payrollSummaryJson).optJSONObject(key) }.getOrNull()
-                row == null || !row.has("insuranceCost") || !row.has("insuranceDays")
+                row == null ||
+                    !row.has("payable") ||
+                    !row.has("insuranceCost") ||
+                    !row.has("insuranceDays")
             }
             .map { it.driveFileId }
             .toSet()
@@ -187,7 +190,9 @@ class DebtRepository(context: Context) {
             if (root.has(key)) return@forEach
             root.put(key, JSONObject().apply {
                 put("payable", periodRows.sumOf { it.amount })
-                put("insuranceCost", 0.0)
+                // Do not fabricate an insurance cost here. An imported payroll
+                // without a complete snapshot is deliberately re-scanned by
+                // payrollFileIdsNeedingSnapshot() on the next Drive sync.
                 put("insuranceDays", PayrollInsuranceDaysStore.daysFor(appContext, ika, year, month))
             })
         }
