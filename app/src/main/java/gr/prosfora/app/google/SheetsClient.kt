@@ -30,7 +30,6 @@ class SheetsClient(private val accessToken: String) {
         .url(url)
         .header("Authorization", "Bearer $accessToken")
 
-    /** Τα ονόματα των tabs — για να ξέρουμε ποια λείπουν. */
     suspend fun sheetTitles(spreadsheetId: String): List<String> = withContext(Dispatchers.IO) {
         val url = "$API/$spreadsheetId?fields=sheets(properties(title))"
         execute(builder(url).get().build()) { body ->
@@ -41,7 +40,6 @@ class SheetsClient(private val accessToken: String) {
         }
     }
 
-    /** Επιστρέφει το numeric sheetId που χρειάζεται το batchUpdate deleteDimension. */
     suspend fun sheetId(spreadsheetId: String, tab: String): Int = withContext(Dispatchers.IO) {
         val url = "$API/$spreadsheetId?fields=sheets(properties(sheetId,title))"
         execute(builder(url).get().build()) { body ->
@@ -88,7 +86,6 @@ class SheetsClient(private val accessToken: String) {
         execute(request) { }
     }
 
-    /** Όλες οι γραμμές ενός tab. */
     suspend fun readRows(spreadsheetId: String, tab: String): List<List<String>> =
         withContext(Dispatchers.IO) {
             val range = "'${tab.replace("'", "''")}'".urlEncode()
@@ -102,10 +99,6 @@ class SheetsClient(private val accessToken: String) {
             }
         }
 
-    /**
-     * Αντικαθιστά όλο το tab. Παραμένει για tabs όπου θέλουμε deterministic
-     * full rebuild (π.χ. προσφορές/χώροι/σημειώσεις/οφειλές).
-     */
     suspend fun replaceRows(spreadsheetId: String, tab: String, rows: List<List<String>>) =
         withContext(Dispatchers.IO) {
             val quoted = "'${tab.replace("'", "''")}'"
@@ -130,42 +123,37 @@ class SheetsClient(private val accessToken: String) {
         }
 
     /**
-     * Πραγματικό CRUD πάνω σε tab με stable key στην πρώτη στήλη.
+     * Row-level CRUD. Το tab δεν γίνεται ποτέ clear.
      *
-     * - UPDATE: ενημερώνει μόνο την υπάρχουσα γραμμή.
-     * - CREATE: κάνει append μόνο για νέα keys.
-     * - DELETE: διαγράφει μόνο γραμμές των keys που δεν υπάρχουν πλέον στο desired.
-     *
-     * Δεν κάνει clear όλου του tab, ώστε ένα edit ενός εργαζομένου να μην αφήνει
-     * το κοινόχρηστο Sheet προσωρινά ή μόνιμα με μόνο μία γραμμή.
+     * UPDATE ενημερώνει την υπάρχουσα γραμμή, CREATE κάνει append τη νέα,
+     * DELETE σβήνει μόνο obsolete rows. Το key μπορεί να είναι σύνθετο για
+     * tabs όπου ένα ID έχει πολλές εγγραφές, όπως το Κόστη_Εργαζομένων.
      */
     suspend fun syncRowsCrud(
         spreadsheetId: String,
         tab: String,
         desiredRows: List<List<String>>,
+        key: (List<String>) -> String = { it.firstOrNull().orEmpty() },
     ) = withContext(Dispatchers.IO) {
         require(desiredRows.isNotEmpty()) { "Το CRUD sync χρειάζεται τουλάχιστον header row." }
         val existing = readRows(spreadsheetId, tab)
         val header = desiredRows.first()
-        val desired = desiredRows.drop(1).filter { it.firstOrNull()?.isNotBlank() == true }
+        val desired = desiredRows.drop(1).filter { key(it).isNotBlank() }
         val desiredByKey = LinkedHashMap<String, List<String>>()
-        desired.forEach { row -> desiredByKey[row.first()] = row }
+        desired.forEach { row -> desiredByKey[key(row)] = row }
 
         val existingByKey = LinkedHashMap<String, Pair<Int, List<String>>>()
         existing.drop(1).forEachIndexed { index, row ->
-            val key = row.firstOrNull()?.trim().orEmpty()
-            if (key.isNotBlank()) existingByKey[key] = (index + 2) to row
+            val rowKey = key(row).trim()
+            if (rowKey.isNotBlank()) existingByKey[rowKey] = (index + 2) to row
         }
 
-        // Guarantee the expected header without clearing data rows.
-        if (existing.isEmpty()) {
-            writeRowsAt(spreadsheetId, tab, 1, listOf(header))
-        } else if (existing.first() != header) {
+        if (existing.isEmpty() || existing.first() != header) {
             writeRowsAt(spreadsheetId, tab, 1, listOf(header))
         }
 
-        desiredByKey.forEach { (key, row) ->
-            val current = existingByKey[key]
+        desiredByKey.forEach { (rowKey, row) ->
+            val current = existingByKey[rowKey]
             if (current == null) {
                 appendRows(spreadsheetId, tab, listOf(row))
             } else if (current.second != row) {
@@ -173,28 +161,34 @@ class SheetsClient(private val accessToken: String) {
             }
         }
 
-        val stale = existingByKey.keys.filter { it !in desiredByKey.keys }
-        if (stale.isNotEmpty()) {
+        val staleRows = existingByKey
+            .filterKeys { it !in desiredByKey }
+            .values
+            .map { it.first }
+            .sortedDescending()
+
+        if (staleRows.isNotEmpty()) {
             val sheet = sheetId(spreadsheetId, tab)
-            val ranges = stale.mapNotNull { existingByKey[it]?.first }
-                .sortedDescending()
-                .map { rowNumber ->
-                    JSONObject().put(
-                        "deleteDimension",
+            val requests = JSONArray().apply {
+                staleRows.forEach { rowNumber ->
+                    put(
                         JSONObject().put(
-                            "range",
-                            JSONObject()
-                                .put("sheetId", sheet)
-                                .put("dimension", "ROWS")
-                                .put("startIndex", rowNumber - 1)
-                                .put("endIndex", rowNumber),
+                            "deleteDimension",
+                            JSONObject().put(
+                                "range",
+                                JSONObject()
+                                    .put("sheetId", sheet)
+                                    .put("dimension", "ROWS")
+                                    .put("startIndex", rowNumber - 1)
+                                    .put("endIndex", rowNumber),
+                            ),
                         ),
                     )
                 }
-            val payload = JSONObject().put("requests", JSONArray().apply { ranges.forEach(::put) })
+            }
             execute(
                 builder("$API/$spreadsheetId:batchUpdate")
-                    .post(payload.toString().toRequestBody(JSON))
+                    .post(JSONObject().put("requests", requests).toString().toRequestBody(JSON))
                     .build(),
             ) { }
         }
