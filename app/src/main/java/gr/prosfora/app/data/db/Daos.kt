@@ -88,5 +88,6 @@ interface EmployeeDao {
     @Query("SELECT * FROM employees") suspend fun allForSync(): List<EmployeeEntity>
     @Query("UPDATE employees SET deleted = 1, updatedAt = :at WHERE id = :id") suspend fun softDelete(id: String, at: Long)
     @Query("UPDATE employees SET deleted = 1, updatedAt = :at") suspend fun softDeleteAll(at: Long)
-    @Query("DELETE FROM employees WHERE id = :id") suspend fun hardDelete(id: String)
+    /** Permanent delete by canonical AM IKA as well as legacy row id. */
+    @Query("DELETE FROM employees WHERE id = :id OR amIka = (SELECT amIka FROM employees WHERE id = :id LIMIT 1)") suspend fun hardDelete(id: String)
 }
