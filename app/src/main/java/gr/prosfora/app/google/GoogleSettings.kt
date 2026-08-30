@@ -64,12 +64,10 @@ class GoogleSettings(context: Context) {
         get() = prefs.getBoolean(KEY_AUTO_SYNC, true)
         set(value) = prefs.edit().putBoolean(KEY_AUTO_SYNC, value).apply()
 
-    /** Το σώμα του email, επεξεργάσιμο από τον χρήστη. `{είδος}` αντικαθίσταται. */
     var emailBodyTemplate: String
         get() = prefs.getString(KEY_EMAIL_BODY, DEFAULT_EMAIL_BODY) ?: DEFAULT_EMAIL_BODY
         set(value) = prefs.edit().putString(KEY_EMAIL_BODY, value).apply()
 
-    /** Πώς φεύγουν τα email: με τον συνδεδεμένο λογαριασμό Google ή με SMTP. */
     var sendMethod: SendMethod
         get() = runCatching { SendMethod.valueOf(prefs.getString(KEY_SEND_METHOD, null) ?: "") }
             .getOrDefault(SendMethod.GOOGLE)
@@ -91,15 +89,10 @@ class GoogleSettings(context: Context) {
         get() = prefs.getString(KEY_VIBER, MessageTemplates.DEFAULT_VIBER) ?: MessageTemplates.DEFAULT_VIBER
         set(value) = prefs.edit().putString(KEY_VIBER, value).apply()
 
-    /** Υποφάκελος όπου καταλήγουν τα παραγόμενα PDF. */
     var pdfFolderId: String?
         get() = prefs.getString(KEY_PDF_FOLDER, null)
         set(value) = prefs.edit().putString(KEY_PDF_FOLDER, value).apply()
 
-    /**
-     * Τα ids των φακέλων ανά έτος, ώστε να μη ρωτάμε το Drive σε κάθε PDF.
-     * Αποθηκεύονται ως απλό JSON αντικείμενο «έτος → id».
-     */
     fun pdfFolderForYear(year: Int): String? =
         runCatching { JSONObject(prefs.getString(KEY_PDF_YEARS, "{}").orEmpty()) }
             .getOrNull()
@@ -113,7 +106,6 @@ class GoogleSettings(context: Context) {
         prefs.edit().putString(KEY_PDF_YEARS, json.toString()).apply()
     }
 
-    /** Ο φάκελος «Οφειλές» και οι υποφάκελοί του ανά φορέα. */
     var debtsFolderId: String?
         get() = prefs.getString(KEY_DEBTS_FOLDER, null)
         set(value) = prefs.edit().putString(KEY_DEBTS_FOLDER, value).apply()
@@ -131,57 +123,30 @@ class GoogleSettings(context: Context) {
         prefs.edit().putString(KEY_DEBTS_SUBFOLDERS, json.toString()).apply()
     }
 
-    /**
-     * Το κλειδί του ocr.space, για τα παραστατικά που δεν έχουν κείμενο μέσα
-     * τους. Το αρχείο φεύγει στον πάροχο, οπότε αδειάζοντάς το ο χρήστης
-     * κλείνει εντελώς αυτόν τον δρόμο και μένει μόνο το OCR του Drive.
-     */
     var ocrApiKey: String
         get() = prefs.getString(KEY_OCR_KEY, DEFAULT_OCR_KEY) ?: DEFAULT_OCR_KEY
         set(value) = prefs.edit().putString(KEY_OCR_KEY, value.trim()).apply()
 
-    /** Αν, τσεκάροντας μια οφειλή ως πληρωμένη, ζητείται και ημερομηνία. */
     var askPaidDate: Boolean
         get() = prefs.getBoolean(KEY_ASK_PAID_DATE, false)
         set(value) = prefs.edit().putBoolean(KEY_ASK_PAID_DATE, value).apply()
 
-    /**
-     * Κλειδί Groq, για την ανάγνωση παραστατικού από μοντέλο γλώσσας.
-     *
-     * Όπως και του ocr.space, ζει εδώ και όχι στον κώδικα: το αποθετήριο είναι
-     * δημόσιο, και ένα κλειδί μέσα στο apk το βγάζει όποιος το ανοίξει.
-     */
     var groqApiKey: String
         get() = prefs.getString(KEY_GROQ, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_GROQ, value.trim()).apply()
 
-    /** Κλειδί OpenRouter. Χρησιμοποιούνται μόνο τα δωρεάν του μοντέλα. */
     var openRouterApiKey: String
         get() = prefs.getString(KEY_OPENROUTER, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_OPENROUTER, value.trim()).apply()
 
-    /**
-     * Τοπική καταγραφή διαγνωστικών σε αρχείο.
-     *
-     * Σβηστή από προεπιλογή: το κείμενο των παραστατικών περιέχει ΑΦΜ, ονόματα
-     * και ποσά, και δεν γράφεται πουθενά χωρίς να το ζητήσει ο χρήστης.
-     */
     var debugLogging: Boolean
         get() = prefs.getBoolean(KEY_DEBUG_LOG, false)
         set(value) = prefs.edit().putBoolean(KEY_DEBUG_LOG, value).apply()
 
-    /** Ειδοποιήσεις για αλλαγές στον κοινόχρηστο φάκελο του Drive. */
     var notifyDriveChanges: Boolean
         get() = prefs.getBoolean(KEY_NOTIFY_DRIVE, true)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_DRIVE, value).apply()
 
-    /**
-     * Τα αρχεία του Drive που έχει ήδη δει η εφαρμογή.
-     *
-     * Ό,τι εμφανιστεί εκτός αυτού του συνόλου ήρθε από αλλού — συνεργάτη με
-     * πρόσβαση στον κοινόχρηστο φάκελο — και αξίζει ειδοποίηση. Ό,τι χαθεί από
-     * μέσα του σημαίνει ότι κάποιος έσβησε αρχείο.
-     */
     var knownDriveIds: Set<String>
         get() = prefs.getStringSet(KEY_KNOWN_FILES, emptySet()).orEmpty()
         set(value) = prefs.edit().putStringSet(KEY_KNOWN_FILES, value.toSet()).apply()
@@ -196,64 +161,39 @@ class GoogleSettings(context: Context) {
         knownDriveIds = knownDriveIds - ids.toSet()
     }
 
-    /** Έχει γίνει η πρώτη καταγραφή· πριν από αυτήν όλα μοιάζουν «νέα». */
+    /** Employee ids deleted permanently from the local DB. Sync must not recreate them. */
+    var deletedEmployeeIds: Set<String>
+        get() = prefs.getStringSet(KEY_DELETED_EMPLOYEES, emptySet()).orEmpty()
+        set(value) = prefs.edit().putStringSet(KEY_DELETED_EMPLOYEES, value.toSet()).apply()
+
+    fun rememberDeletedEmployee(id: String) {
+        if (id.isBlank()) return
+        deletedEmployeeIds = deletedEmployeeIds + id
+    }
+
+    fun forgetDeletedEmployee(id: String) {
+        if (id.isBlank()) return
+        deletedEmployeeIds = deletedEmployeeIds - id
+    }
+
     var driveWatchReady: Boolean
         get() = prefs.getBoolean(KEY_WATCH_READY, false)
         set(value) = prefs.edit().putBoolean(KEY_WATCH_READY, value).apply()
 
-    /**
-     * Αν τα στατιστικά μετράνε και τις προσφορές που ήρθαν από εισαγωγή αρχείου.
-     * Είναι παλιές επιμετρήσεις που δεν ξέρουμε σίγουρα αν έγιναν δουλειές.
-     */
     var statsIncludeImported: Boolean
         get() = prefs.getBoolean(KEY_STATS_IMPORTED, true)
         set(value) = prefs.edit().putBoolean(KEY_STATS_IMPORTED, value).apply()
 
-    /** Ποιο έτοιμο πρότυπο εγκαθίσταται όταν δεν υπάρχει άλλο στο Drive. */
     var builtInTemplate: BuiltInTemplate
         get() = runCatching {
             BuiltInTemplate.valueOf(prefs.getString(KEY_BUILTIN, null) ?: "")
         }.getOrDefault(BuiltInTemplate.CLASSIC)
         set(value) = prefs.edit().putString(KEY_BUILTIN, value.name).apply()
 
-    /**
-     * Η διεύθυνση του συνδεδεμένου λογαριασμού Google. Τη μαθαίνουμε από το
-     * consent window· χρησιμεύει για να στέλνει ο χρήστης πράγματα στον εαυτό του.
-     */
     var ownerEmail: String
         get() = prefs.getString(KEY_OWNER_EMAIL, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_OWNER_EMAIL, value.trim()).apply()
 
-    /** Έχει δοθεί έστω μία φορά έγκριση στη Google. */
-    var googleConnected: Boolean
-        get() = prefs.getBoolean(KEY_CONNECTED, false)
-        set(value) = prefs.edit().putBoolean(KEY_CONNECTED, value).apply()
-
-    /**
-     * Πώς προσφωνείται ο πελάτης. Με επώνυμο μπαίνει και «κύριε»/«κυρία», εφόσον
-     * έχει δηλωθεί φύλο και το θέλει ο χρήστης.
-     */
-    var greetingOptions: GreetingOptions
-        get() = GreetingOptions(
-            style = runCatching {
-                GreetingStyle.valueOf(prefs.getString(KEY_GREETING_STYLE, null) ?: "")
-            }.getOrDefault(GreetingStyle.FIRST_NAME),
-            useTitle = prefs.getBoolean(KEY_GREETING_TITLE, true),
-        )
-        set(value) = prefs.edit()
-            .putString(KEY_GREETING_STYLE, value.style.name)
-            .putBoolean(KEY_GREETING_TITLE, value.useTitle)
-            .apply()
-
-    /** Ξεχνάει τους φακέλους PDF ανά έτος — τους ξαναβρίσκει στον νέο χώρο εργασίας. */
-    fun clearPdfFolders() = prefs.edit()
-        .remove(KEY_PDF_FOLDER)
-        .remove(KEY_PDF_YEARS)
-        .remove(KEY_DEBTS_FOLDER)
-        .remove(KEY_DEBTS_SUBFOLDERS)
-        .apply()
-
-    /** Μέρες μετά την ολοκλήρωση για να ζητηθεί αξιολόγηση. */
     var reviewDelayDays: Int
         get() = prefs.getInt(KEY_REVIEW_DELAY, 3)
         set(value) = prefs.edit().putInt(KEY_REVIEW_DELAY, value.coerceIn(0, 365)).apply()
@@ -262,22 +202,16 @@ class GoogleSettings(context: Context) {
         get() = prefs.getString(KEY_REVIEW_LINK, DEFAULT_REVIEW_LINK) ?: DEFAULT_REVIEW_LINK
         set(value) = prefs.edit().putString(KEY_REVIEW_LINK, value.trim()).apply()
 
-    /**
-     * Πόσες μέρες ισχύει μια νέα προσφορά. Μπαίνει αυτόματα στο «ισχύει έως»
-     * κάθε νέας προσφοράς — αλλάζει ελεύθερα ανά προσφορά.
-     */
     var offerValidDays: Int
         get() = prefs.getInt(KEY_VALID_DAYS, 60)
         set(value) = prefs.edit().putInt(KEY_VALID_DAYS, value.coerceIn(1, 3650)).apply()
 
-    /** Ο προεπιλεγμένος τρόπος πληρωμής — μία δόση ανά γραμμή. */
     var defaultPaymentTerms: String
         get() = prefs.getString(KEY_PAYMENT_TERMS, DEFAULT_PAYMENT_TERMS) ?: DEFAULT_PAYMENT_TERMS
         set(value) = prefs.edit().putString(KEY_PAYMENT_TERMS, value).apply()
 
     var reviewTemplate: String
-        get() = prefs.getString(KEY_REVIEW_TEMPLATE, MessageTemplates.DEFAULT_REVIEW)
-            ?: MessageTemplates.DEFAULT_REVIEW
+        get() = prefs.getString(KEY_REVIEW_TEMPLATE, MessageTemplates.DEFAULT_REVIEW) ?: MessageTemplates.DEFAULT_REVIEW
         set(value) = prefs.edit().putString(KEY_REVIEW_TEMPLATE, value).apply()
 
     fun clear() = prefs.edit().clear().apply()
@@ -317,25 +251,14 @@ class GoogleSettings(context: Context) {
         private const val KEY_OPENROUTER = "openrouter_api_key"
         private const val KEY_KNOWN_FILES = "known_drive_files"
         private const val KEY_WATCH_READY = "drive_watch_ready"
+        private const val KEY_DELETED_EMPLOYEES = "deleted_employee_ids"
 
-        /**
-         * Το δωρεάν κλειδί που άνοιξε ο χρήστης στο ocr.space. Ζει στις
-         * ρυθμίσεις και όχι στον κώδικα ώστε να αλλάζει χωρίς νέα έκδοση.
-         */
         const val DEFAULT_OCR_KEY = "K88425303488957"
-
         const val DRIVE_FOLDER_NAME = "Προσφορές"
-
-        /**
-         * Ο σύνδεσμος αξιολόγησης στο Google. Είναι επεξεργάσιμος από τις
-         * ρυθμίσεις: οι παράμετροι που δίνει η αναζήτηση της Google παλιώνουν,
-         * οπότε αν κάποτε πάψει να δουλεύει αντικαθίσταται από εκεί.
-         */
         const val DEFAULT_REVIEW_LINK =
             "https://www.google.com/search?sca_esv=faef517198de48e6&sxsrf=APpeQnsNZphqJuT4MHKHXH44GKCkHZnD4g:1787396921174&q=tovapsimo&si=APenkKm7iecQ4G6P-TsbSMFKIQtv3EFIqRAFw-i8uEbk55Z-_zMIB2TTEOESsRGZcitMJR4C6ZCfQDHpOm-TOHvLnX5KJ7--tzuev5vDfGjwf4BlCN7vN4Y%3D&uds=AJ5uw192rzALllUuaB2bJuLcuxCm6NkqFwo97LiWIr3XYWdW96aegZObi6cVFnchLgADHbfT1SmVu-TAALPaBzg-VlTWay0u-WFs88GF57hvtogFQK4pGvg&sa=X"
         const val TEMPLATE_NAME = "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — πρότυπο"
 
-        /** Οι συνηθισμένες δόσεις, όπως στα υπάρχοντα φύλλα προσφοράς. */
         val DEFAULT_PAYMENT_TERMS = """
             20% του ποσού με την έναρξη των εργασιών
             30% με την πρόοδο των εργασιών
@@ -344,7 +267,6 @@ class GoogleSettings(context: Context) {
         """.trimIndent()
 
         val DEFAULT_EMAIL_SUBJECT = MessageTemplates.DEFAULT_EMAIL_SUBJECT
-
         val DEFAULT_EMAIL_BODY = MessageTemplates.DEFAULT_EMAIL_BODY
     }
 }
