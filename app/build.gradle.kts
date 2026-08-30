@@ -9,115 +9,6 @@ plugins {
 val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
 val appVersionName = (project.findProperty("appVersionName") as String?) ?: "0.1.0"
 
-/**
- * Adds the optional custom extra-cost editor to the existing offer screen.
- * The source file itself stays untouched in git; CI applies this small,
- * idempotent transformation immediately before Kotlin/KSP compilation.
- */
-val patchOfferExtrasUi by tasks.registering {
-    doLast {
-        val source = file("src/main/java/gr/prosfora/app/ui/offers/OfferDetailScreen.kt")
-        val original = source.readText()
-        if (original.contains("private fun CustomExtraCost(")) return@doLast
-
-        val customCall = """
-            CustomExtraCost(
-                offer = offer,
-                onChange = { name, amount ->
-                    viewModel.updateOffer(
-                        offer.copy(
-                            customExtraName = name,
-                            customExtraCost = amount,
-                        ),
-                    )
-                },
-            )
-
-        """.trimIndent()
-
-        val callMarker = Regex("(?m)^\\s*if \\(!offer\\.scaffolding && !offer\\.permit\\) \\{")
-        val callMatch = callMarker.find(original)
-            ?: error("Δεν βρέθηκε το σημείο εισαγωγής του custom extra στην ExtrasCard.")
-
-        val afterCall = original.substring(0, callMatch.range.first) +
-            customCall +
-            original.substring(callMatch.range.first)
-
-        val vatMarker = "// ------------------------------------------------------------------- ΦΠΑ -----"
-        val vatIndex = afterCall.indexOf(vatMarker)
-        check(vatIndex >= 0) { "Δεν βρέθηκε το σταθερό σημείο πριν από την κάρτα ΦΠΑ." }
-
-        val customComposable = """
-        @Composable
-        private fun CustomExtraCost(
-            offer: gr.prosfora.app.data.db.OfferEntity,
-            onChange: (String, Double) -> Unit,
-        ) {
-            var name by remember(offer.id) { mutableStateOf(offer.customExtraName) }
-            var amountText by remember(offer.id) {
-                mutableStateOf(
-                    if (offer.customExtraCost > 0.0) {
-                        offer.customExtraCost.toString().removeSuffix(".0")
-                    } else "",
-                )
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    "Νέο πρόσθετο κόστος",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                )
-                StableTextField(
-                    value = name,
-                    onValueChange = {
-                        name = it
-                        onChange(it.trim(), amountText.parseDecimal() ?: 0.0)
-                    },
-                    label = "Ονομασία πρόσθετου",
-                    debounceMillis = 0,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    StableTextField(
-                        value = amountText,
-                        onValueChange = {
-                            amountText = it
-                            onChange(name.trim(), it.parseDecimal() ?: 0.0)
-                        },
-                        label = "Ποσό (€)",
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        debounceMillis = 0,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(
-                        enabled = name.isNotBlank() || amountText.isNotBlank(),
-                        onClick = {
-                            name = ""
-                            amountText = ""
-                            onChange("", 0.0)
-                        },
-                    ) {
-                        Icon(Icons.Default.Clear, contentDescription = "Καθαρισμός πρόσθετου κόστους")
-                    }
-                }
-            }
-        }
-
-""".trimIndent()
-
-        val patched = afterCall.substring(0, vatIndex) +
-            customComposable +
-            afterCall.substring(vatIndex)
-
-        source.writeText(patched)
-    }
-}
-
 android {
     namespace = "gr.prosfora.app"
     compileSdk = 35
@@ -132,12 +23,9 @@ android {
 
     signingConfigs {
         create("release") {
-            // Populated by CI from GitHub Secrets. Locally these are absent and we
-            // fall back to the debug key (see buildTypes below).
             val storePath = System.getenv("KEYSTORE_PATH")
             if (!storePath.isNullOrBlank() && file(storePath).exists()) {
                 storeFile = file(storePath)
-                // Το keystore είναι PKCS#12 (φτιάχτηκε από migration/make_keystore.py)
                 storeType = "PKCS12"
                 storePassword = System.getenv("KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("KEY_ALIAS")
@@ -184,13 +72,6 @@ android {
             "META-INF/LICENSE.txt",
             "META-INF/*.kotlin_module",
         )
-    }
-}
-
-// The patch is idempotent and must run before every Kotlin/KSP compilation task.
-tasks.configureEach {
-    if (name == "preBuild" || name.contains("Kotlin", ignoreCase = true) || name.contains("ksp", ignoreCase = true)) {
-        dependsOn(patchOfferExtrasUi)
     }
 }
 
