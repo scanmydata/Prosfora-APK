@@ -69,8 +69,8 @@ object DocxTemplate {
             SPACES_START.replace(rowTemplate, "")
                 .replace(LOOP_END, "")
                 .replace("&lt;&lt;[Περιγραφή Χώρου]&gt;&gt;", escape(space.description))
-                .replace("&lt;&lt;[Επιφάνεια (τ.μ.)]&gt;&gt;", escape(space.area.asNumber()))
                 .replace("&lt;&lt;Επιφάνεια (τ.μ.)&gt;&gt;", escape(space.area.asNumber()))
+                .replace("&lt;&lt;[Επιφάνεια (τ.μ.)]&gt;&gt;", escape(space.area.asNumber()))
                 .replace("&lt;&lt;[Τιμή Μονάδος]&gt;&gt;", escape(space.unitPrice.asMoney()))
                 .replace("&lt;&lt;[Σύνολο Γραμμής]&gt;&gt;", escape(space.lineTotal.asMoney()))
         }
@@ -99,22 +99,29 @@ object DocxTemplate {
     }
 
     private fun normalizeTotalsLayout(xml: String, details: OfferWithDetails): String {
-        val baseMarker = listOf("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο]&gt;&gt;")
+        val baseMarker = listOf("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;", "&lt;&lt;[Σύνολο]&gt;&gt;")
             .mapNotNull { marker -> xml.indexOf(marker).takeIf { it >= 0 } }.minOrNull() ?: return xml
+
         val (baseOpen, baseClose) = enclosingTag(xml, baseMarker, "w:tr")
         var baseRow = xml.substring(baseOpen, baseClose)
-            .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο]&gt;&gt;")
-            .replaceFirst("ΚΑΘΑΡΗ ΑΞΙΑ</w:t>", "ΣΥΝΟΛΟ</w:t>")
-            .replaceFirst("Καθαρή Αξία</w:t>", "Σύνολο</w:t>")
+            .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;")
+            .replace("&lt;&lt;[Σύνολο]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;")
+            .replaceFirst("ΚΑΘΑΡΗ ΑΞΙΑ</w:t>", "ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>")
+            .replaceFirst("Καθαρή Αξία</w:t>", "Σύνολο Χώρων</w:t>")
+            .replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>")
+            .replaceFirst("Σύνολο</w:t>", "Σύνολο Χώρων</w:t>")
+
+        baseRow = boldRow(baseRow)
         var result = xml.substring(0, baseOpen) + baseRow + xml.substring(baseClose)
 
-        fun cloneRow(label: String, marker: String): String = baseRow
-            .replace("&lt;&lt;[Σύνολο]&gt;&gt;", "&lt;&lt;[$marker]&gt;&gt;")
-            .replaceFirst("ΣΥΝΟΛΟ</w:t>", "$label</w:t>")
-            .replaceFirst("Σύνολο</w:t>", "$label</w:t>")
+        fun cloneRow(label: String, marker: String, bold: Boolean = false): String {
+            var row = baseRow
+                .replace("&lt;&lt;[Σύνολο Χώρων]&gt;&gt;", "&lt;&lt;[$marker]&gt;&gt;")
+                .replaceFirst("ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>", "$label</w:t>")
+                .replaceFirst("Σύνολο Χώρων</w:t>", "$label</w:t>")
+            return if (bold) boldRow(row) else row
+        }
 
-        // Each extra is handled independently. An existing marker for one extra
-        // must never suppress the automatic row for another extra.
         val additions = buildString {
             if (details.scaffoldingCost > 0.0 && !result.contains("&lt;&lt;[Σκαλωσιά]&gt;&gt;")) {
                 append(cloneRow("ΣΚΑΛΩΣΙΑ", "Σκαλωσιά"))
@@ -125,26 +132,39 @@ object DocxTemplate {
             if (details.customExtraCost > 0.0 && details.offer.customExtraName.isNotBlank() && !result.contains("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;")) {
                 append(cloneRow(details.offer.customExtraName.uppercase(), "Πρόσθετο Κόστος"))
             }
-            // Extras are always inserted before VAT. VAT itself is optional.
             if (details.offer.vatIncluded && !result.contains("&lt;&lt;[ΦΠΑ]&gt;&gt;")) {
-                append(cloneRow("ΦΠΑ", "ΦΠΑ"))
+                append(cloneRow("ΦΠΑ 24%", "ΦΠΑ"))
             }
         }
+
         val grandMarkers = listOf("&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;", "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;")
         val grandMarker = grandMarkers.mapNotNull { marker -> result.indexOf(marker).takeIf { it >= 0 } }.minOrNull()
         if (additions.isNotEmpty() && grandMarker != null) {
             val (grandOpen, _) = enclosingTag(result, grandMarker, "w:tr")
             result = result.substring(0, grandOpen) + additions + result.substring(grandOpen)
         }
+
         val currentGrandMarker = grandMarkers.mapNotNull { marker -> result.indexOf(marker).takeIf { it >= 0 } }.minOrNull()
         if (currentGrandMarker != null) {
             val (grandOpen, grandClose) = enclosingTag(result, currentGrandMarker, "w:tr")
-            val grandRow = result.substring(grandOpen, grandClose)
-                .replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΓΕΝΙΚΟ ΣΥΝΟΛΟ</w:t>")
-                .replaceFirst("Σύνολο</w:t>", "Γενικό Σύνολο</w:t>")
+            val grandRow = boldRow(
+                result.substring(grandOpen, grandClose)
+                    .replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΓΕΝΙΚΟ ΣΥΝΟΛΟ</w:t>")
+                    .replaceFirst("Σύνολο</w:t>", "Γενικό Σύνολο</w:t>"),
+            )
             result = result.substring(0, grandOpen) + grandRow + result.substring(grandClose)
         }
         return result
+    }
+
+    /** Bold the generated totals rows without relying on how the source template was formatted. */
+    private fun boldRow(row: String): String {
+        if (row.contains("<w:b/>") || row.contains("<w:b ")) return row
+        return if (row.contains("<w:rPr>")) {
+            row.replace("<w:rPr>", "<w:rPr><w:b/>", 1)
+        } else {
+            row.replace("<w:r>", "<w:r><w:rPr><w:b/></w:rPr>")
+        }
     }
 
     private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {
@@ -157,6 +177,7 @@ object DocxTemplate {
             .replace("&lt;&lt;[Ημερομηνία]&gt;&gt;", escape(offer.dateEpochDay.asOfferDate()))
             .replace("&lt;&lt;[Ισχύει έως]&gt;&gt;", escape(offer.validUntilDay?.asOfferDate() ?: "—"))
             .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", escape(details.linesTotal.asMoney()))
+            .replace("&lt;&lt;[Σύνολο Χώρων]&gt;&gt;", escape(details.linesTotal.asMoney()))
             .replace("&lt;&lt;[Σύνολο]&gt;&gt;", escape(details.total.asMoney()))
             .replace("&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;", escape(customText.ifBlank { (details.scaffoldingCost + details.permitCost).asMoney() }))
             .replace("&lt;&lt;[Σκαλωσιά]&gt;&gt;", escape(details.scaffoldingCost.asMoney()))
@@ -168,7 +189,7 @@ object DocxTemplate {
 
     private fun enclosingTag(xml: String, index: Int, tag: String): Pair<Int, Int> {
         val open = maxOf(xml.lastIndexOf("<$tag ", index), xml.lastIndexOf("<$tag>", index))
-        require(open >= 0) { "δεν βρέθηκε άνοιγμα <$tag> πριν τη θέση $index" }
+        require(open >= 0) { "δεν βρέθηκε άνοιγμα <$tag πριν τη θέση $index" }
         val close = xml.indexOf("</$tag>", index)
         require(close >= 0) { "δεν βρέθηκε κλείσιμο </$tag> μετά τη θέση $index" }
         return open to close + tag.length + 3
