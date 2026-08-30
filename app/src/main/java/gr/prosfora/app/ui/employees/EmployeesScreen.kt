@@ -27,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -51,6 +52,7 @@ import gr.prosfora.app.sync.PayrollEmployeeSnapshotStore
 import gr.prosfora.app.ui.MenuButton
 import gr.prosfora.app.util.asMoney
 import kotlinx.coroutines.launch
+import java.util.Calendar
 
 private val BrandGreen = Color(0xFF00E2A2)
 private val DeleteRed = Color(0xFFD32F2F)
@@ -162,7 +164,13 @@ fun EmployeesScreen(onMenu: () -> Unit) {
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("Διαγραφή εργαζομένου") },
-            text = { Text("Θα αφαιρεθεί ο «${employee.display}» από το ευρετήριο. Οι οφειλές και τα αποθηκευμένα ιστορικά ποσά της καρτέλας δεν διαγράφονται.") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Ο εργαζόμενος «${employee.display}» θα αφαιρεθεί από το ευρετήριο.")
+                    Text("Τα αποθηκευμένα ιστορικά ποσά και οι οφειλές δεν διαγράφονται με την απλή αφαίρεση από το ευρετήριο.")
+                    Text("Θέλεις να διαγραφεί οριστικά και από τη βάση δεδομένων;")
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     val victim = employee
@@ -171,9 +179,21 @@ fun EmployeesScreen(onMenu: () -> Unit) {
                         repository.deleteEmployee(victim.id)
                         Toast.makeText(context, "Ο εργαζόμενος αφαιρέθηκε από το ευρετήριο.", Toast.LENGTH_SHORT).show()
                     }
-                }) { Text("Διαγραφή", color = DeleteRed) }
+                }) { Text("Μόνο από ευρετήριο", color = BrandGreen) }
             },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Άκυρο", color = BrandGreen) } },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = {
+                        val victim = employee
+                        deleting = null
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                            repository.deleteEmployeeFromDatabase(victim.id)
+                            Toast.makeText(context, "Ο εργαζόμενος διαγράφηκε από τη βάση.", Toast.LENGTH_SHORT).show()
+                        }
+                    }) { Text("Και από βάση", color = DeleteRed) }
+                    TextButton(onClick = { deleting = null }) { Text("Άκυρο", color = BrandGreen) }
+                }
+            },
         )
     }
 }
@@ -191,12 +211,15 @@ private fun EmployeeDetailScreen(
     val debts by repository.observeAll().collectAsState(initial = emptyList())
     var showEdit by remember { mutableStateOf(false) }
     var alias by remember(employee) { mutableStateOf(employee.alias) }
+    var showAnnualTotals by remember { mutableStateOf(false) }
 
-    val totals = PayrollEmployeeSnapshotStore.totals(employee)
     val history = PayrollEmployeeSnapshotStore.history(employee)
+    val totals = PayrollEmployeeSnapshotStore.totals(employee)
     val rows = debts
         .filter { it.kind.perPerson && it.amIka == employee.amIka }
         .sortedWith(compareByDescending<DebtEntity> { it.periodYear }.thenByDescending { it.periodMonth }.thenBy { it.kind.ordinal })
+    val byYear = history.groupBy { it.year }.toSortedMap(compareByDescending { it })
+    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
 
     Scaffold(
         topBar = {
@@ -221,18 +244,41 @@ private fun EmployeeDetailScreen(
             item {
                 Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(16.dp)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("ΑΠΟΘΗΚΕΥΜΕΝΑ ΣΤΟΙΧΕΙΑ ΚΑΡΤΕΛΑΣ", style = MaterialTheme.typography.labelLarge, color = BrandGreen, fontWeight = FontWeight.Bold)
-                        Text("Σύνολο πληρωτέο: ${totals.payable.asMoney()}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                        Text("Σύνολο ενσήμων: ${totals.insuranceDays}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                        Text("Κόστος ενσήμων: ${totals.insuranceCost.asMoney()}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("ΑΠΟΘΗΚΕΥΜΕΝΑ ΣΤΟΙΧΕΙΑ ΚΑΡΤΕΛΑΣ", style = MaterialTheme.typography.labelLarge, color = BrandGreen, fontWeight = FontWeight.Bold)
+                                Text("Τα μηνιαία στοιχεία παραμένουν ανεξάρτητα από τις ενεργές οφειλές.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Switch(checked = showAnnualTotals, onCheckedChange = { showAnnualTotals = it })
+                        }
+
+                        if (showAnnualTotals) {
+                            Text("ΣΥΝΟΛΑ ΕΤΟΥΣ", style = MaterialTheme.typography.titleMedium, color = BrandGreen, fontWeight = FontWeight.Bold)
+                            byYear.forEach { (year, months) ->
+                                val yearTotals = PayrollEmployeeSnapshotStore.Totals(
+                                    payable = months.sumOf { it.payable },
+                                    insuranceCost = months.sumOf { it.insuranceCost },
+                                    insuranceDays = months.sumOf { it.insuranceDays },
+                                )
+                                Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(12.dp)) {
+                                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Text(year.toString(), fontWeight = FontWeight.Bold, color = BrandGreen)
+                                        Text("Πληρωτέο: ${yearTotals.payable.asMoney()}")
+                                        Text("Ένσημα: ${yearTotals.insuranceDays}")
+                                        Text("Κόστος ενσήμων: ${yearTotals.insuranceCost.asMoney()}")
+                                    }
+                                }
+                            }
+                            Text("Συνολικά αποθηκευμένα: ${totals.payable.asMoney()} · ${totals.insuranceDays} ένσημα · ${totals.insuranceCost.asMoney()} κόστος", fontWeight = FontWeight.Bold)
+                        } else {
+                            Text("Τα ετήσια σύνολα είναι κρυφά", style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                 }
             }
 
             if (history.isNotEmpty()) {
-                item {
-                    Text("ΑΝΑΛΥΣΗ ΑΝΑ ΜΗΝΑ", style = MaterialTheme.typography.titleMedium, color = BrandGreen, fontWeight = FontWeight.Bold)
-                }
+                item { Text("ΑΝΑΛΥΣΗ ΑΝΑ ΜΗΝΑ", style = MaterialTheme.typography.titleMedium, color = BrandGreen, fontWeight = FontWeight.Bold) }
                 items(history, key = { "snapshot-${it.year}-${it.month}" }) { month ->
                     Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(14.dp)) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -245,12 +291,9 @@ private fun EmployeeDetailScreen(
                 }
             }
 
-            item {
-                Text("ΕΝΕΡΓΕΣ ΟΦΕΙΛΕΣ ΜΙΣΘΟΔΟΣΙΑΣ", style = MaterialTheme.typography.titleMedium, color = BrandGreen, fontWeight = FontWeight.Bold)
-            }
-
+            item { Text("ΕΝΕΡΓΕΣ ΟΦΕΙΛΕΣ ΜΙΣΘΟΔΟΣΙΑΣ", style = MaterialTheme.typography.titleMedium, color = BrandGreen, fontWeight = FontWeight.Bold) }
             if (rows.isEmpty()) {
-                item { Text("Δεν υπάρχουν ενεργές μισθοδοτικές οφειλές. Η αποθηκευμένη μηνιαία ανάλυση και τα σύνολα της καρτέλας παραμένουν διαθέσιμα.") }
+                item { Text("Δεν υπάρχουν ενεργές μισθοδοτικές οφειλές. Η αποθηκευμένη μηνιαία ανάλυση παραμένει διαθέσιμη.") }
             } else {
                 items(rows, key = { it.id }) { debt ->
                     Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(14.dp)) {
