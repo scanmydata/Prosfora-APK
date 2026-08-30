@@ -35,10 +35,16 @@ object DriveSyncCoordinator {
             DebugLog.log("employees", "legacy payroll repair queued · files=${legacyPayrollFileIds.size}")
         }
 
-        val alreadyImported =
+        val targetedPayrollRepair = repository.payrollFileIdsNeedingSnapshot()
+        if (targetedPayrollRepair.isNotEmpty()) {
+            DebugLog.log("employees", "payroll snapshot repair · files=${targetedPayrollRepair.size} · only incomplete payroll files will be rescanned")
+        }
+
+        val alreadyImported = (
             repository.importedFileIds() +
                 PendingDebtNotificationStore.fileIds(app) +
                 (settings.knownDriveIds - legacyPayrollFileIds)
+            ).toMutableSet().apply { removeAll(targetedPayrollRepair) }
 
         val deferInstallments = settings.notifyDriveChanges
         val savedIds = mutableSetOf<String>()
