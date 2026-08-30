@@ -63,31 +63,25 @@ object PayrollInsuranceDaysStore {
     private fun extractByCode(text: String): Map<String, Int> {
         val result = linkedMapOf<String, Int>()
         val header = Regex("""^\s*\d{1,3}\s+([A-ZΑ-Ω0-9]{2,6})\s+(.+)$""")
-        val explicitDays = Regex(
-            """(?:ΗΜΕΡΕΣ|ΗΜ\.?)[\s._-]*(?:ΑΣΦΑΛΙΣΗΣ|ΑΣΦ\.?)[\s:=-]*(\d{1,2})(?!\d)""",
-            RegexOption.IGNORE_CASE,
-        )
-        val longNumber = Regex("""(?<!\d)\d{7,12}(?!\d)""")
+        val rowStart = Regex("""^\s*\d{1,3}\s+[A-ZΑ-Ω0-9]{2,6}\s+""", RegexOption.IGNORE_CASE)
+        val taLine = Regex("""^\s*ΤΑ\s+(\d+(?:[.,]\d+)?)\b""", RegexOption.IGNORE_CASE)
 
-        text.lines().forEach { line ->
-            val match = header.find(line) ?: return@forEach
+        val lines = text.lines()
+        lines.forEachIndexed { index, line ->
+            val match = header.find(line.removePrefix("\uFEFF")) ?: return@forEachIndexed
             val code = match.groupValues[1].trim()
-            val rest = match.groupValues[2]
 
-            val explicit = explicitDays.find(rest)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            if (explicit != null && explicit in 1..31) {
-                result[code] = explicit
-                result[code.trimStart('0')] = explicit
-                return@forEach
-            }
-
-            val ika = longNumber.find(rest) ?: return@forEach
-            val afterIka = rest.substring(ika.range.last + 1)
-            val candidate = Regex("""(?<!\d)(\d{1,2})(?!\d)""")
-                .find(afterIka)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            if (candidate != null && candidate in 1..31) {
-                result[code] = candidate
-                result[code.trimStart('0')] = candidate
+            for (i in index + 1 until lines.size) {
+                val next = lines[i].removePrefix("\uFEFF").trim()
+                if (next.isBlank()) continue
+                if (rowStart.containsMatchIn(next)) break
+                val ta = taLine.find(next) ?: continue
+                val days = ta.groupValues[1].replace(',', '.').toDoubleOrNull()?.toInt() ?: 0
+                if (days in 1..31) {
+                    result[code] = days
+                    result[code.trimStart('0')] = days
+                }
+                break
             }
         }
         return result
