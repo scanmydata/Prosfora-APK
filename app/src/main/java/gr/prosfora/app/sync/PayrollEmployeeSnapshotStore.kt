@@ -45,7 +45,7 @@ object PayrollEmployeeSnapshotStore {
                     ?: 0.0
                 val insuranceDays = metrics.insuranceDays
                     ?: previous?.optInt("insuranceDays", 0)?.takeIf { it > 0 }
-                    ?: PayrollInsuranceDaysStore.daysFor(appContext = context.applicationContext, amIka = ika, year = year, month = month)
+                    ?: PayrollInsuranceDaysStore.daysFor(context.applicationContext, ika, year, month)
 
                 current.put(
                     key,
@@ -115,7 +115,6 @@ object PayrollEmployeeSnapshotStore {
 
         fun find(text: String, debt: DebtEntity): Metrics {
             val code = debt.personCode.trim()
-            val ika = EmployeeEntity.normalizeIka(debt.amIka)
             if (text.isBlank() || code.isBlank()) return Metrics(null, null, null)
 
             val normalizedCode = code.trimStart('0').ifBlank { code }
@@ -188,8 +187,8 @@ object PayrollEmployeeSnapshotStore {
                 }
             }
 
-            if (best != null) {
-                val numbers = best!!.numbers
+            best?.let {
+                val numbers = it.numbers
                 val insuranceCost = when {
                     numbers.size >= 4 -> numbers[3]
                     numbers.size >= 3 -> numbers[1] + numbers[2]
