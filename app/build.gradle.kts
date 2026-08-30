@@ -57,7 +57,7 @@ val patchOfferExtrasUi by tasks.registering {
             "Δεν βρέθηκε το αναμενόμενο ExtrasCard σημείο για το custom extra patch."
         }
 
-        var patched = text.replace(oldBlock, newBlock, limit = 1)
+        var patched = text.replace(oldBlock, newBlock)
 
         val extraCostEnd = """    }
 }
@@ -126,7 +126,7 @@ private fun CustomExtraCost(
         check(patched.contains(extraCostEnd)) {
             "Δεν βρέθηκε το τέλος της ExtrasCard για την εισαγωγή του custom composable."
         }
-        patched = patched.replace(extraCostEnd, customComposable + "\n\n// ------------------------------------------------------------------- ΦΠΑ -----", limit = 1)
+        patched = patched.replace(extraCostEnd, customComposable + "\n\n// ------------------------------------------------------------------- ΦΠΑ -----")
         source.writeText(patched)
     }
 }
