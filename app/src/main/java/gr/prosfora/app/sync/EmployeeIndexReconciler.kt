@@ -16,7 +16,7 @@ object EmployeeIndexReconciler {
         val db = ProsforaDatabase.get(context.applicationContext)
         val employeeDao = db.employeeDao()
         val debtDao = db.debtDao()
-        val stored = employeeDao.allForSync()
+        var stored = employeeDao.allForSync()
         val storedByIka = stored
             .mapNotNull { employee ->
                 val ika = EmployeeEntity.normalizeIka(employee.amIka)
@@ -24,7 +24,6 @@ object EmployeeIndexReconciler {
             }
             .groupBy({ it.first }, { it.second })
 
-        var hardDeletedDuplicates = 0
         storedByIka.forEach { (ika, rows) ->
             val survivor = rows.firstOrNull { it.id == ika }
                 ?: rows.maxByOrNull { it.updatedAt }
@@ -32,7 +31,6 @@ object EmployeeIndexReconciler {
 
             rows.filter { it.id != survivor.id }.forEach { duplicate ->
                 employeeDao.hardDelete(duplicate.id)
-                hardDeletedDuplicates++
             }
 
             if (survivor.id != ika) {
@@ -41,8 +39,17 @@ object EmployeeIndexReconciler {
             }
         }
 
-        // Active payroll enriches existing employee cards and creates missing
-        // cards. It never removes cards whose debts were deleted.
+        // IMPORTANT: reload after duplicate/id repair and after any preceding
+        // payroll snapshot write. Otherwise rebuild() could take the old
+        // payrollSummaryJson and overwrite a freshly recorded snapshot with {}.
+        stored = employeeDao.allForSync()
+        val currentByIka = stored
+            .mapNotNull { employee ->
+                val ika = EmployeeEntity.normalizeIka(employee.amIka)
+                if (ika.isBlank()) null else ika to employee
+            }
+            .groupBy({ it.first }, { it.second })
+
         val payrollByIka = debtDao.allForSync()
             .asSequence()
             .filter { !it.deleted && it.kind.perPerson }
@@ -53,9 +60,9 @@ object EmployeeIndexReconciler {
             .groupBy({ it.first }, { it.second })
 
         val updates = payrollByIka.map { (ika, rows) ->
-            val existing = storedByIka[ika]
+            val existing = currentByIka[ika]
                 ?.firstOrNull { it.id == ika }
-                ?: storedByIka[ika]?.maxByOrNull { it.updatedAt }
+                ?: currentByIka[ika]?.maxByOrNull { it.updatedAt }
             val latest = rows.maxByOrNull { it.updatedAt } ?: rows.first()
 
             EmployeeEntity(
@@ -69,6 +76,9 @@ object EmployeeIndexReconciler {
                 leftDay = existing?.leftDay,
                 updatedAt = latest.updatedAt,
                 deleted = false,
+                // Preserve the CURRENT persisted payroll history. It is
+                // independent from DebtEntity lifetime and must survive
+                // rebuilds and debt deletion.
                 payrollSummaryJson = existing?.payrollSummaryJson ?: "{}",
             )
         }
