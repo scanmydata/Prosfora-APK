@@ -161,9 +161,9 @@ object DocxTemplate {
     private fun boldRow(row: String): String {
         if (row.contains("<w:b/>") || row.contains("<w:b ")) return row
         return if (row.contains("<w:rPr>")) {
-            row.replace("<w:rPr>", "<w:rPr><w:b/>", 1)
+            row.replaceFirst("<w:rPr>", "<w:rPr><w:b/>")
         } else {
-            row.replace("<w:r>", "<w:r><w:rPr><w:b/></w:rPr>")
+            row.replaceFirst("<w:r>", "<w:r><w:rPr><w:b/></w:rPr>")
         }
     }
 
