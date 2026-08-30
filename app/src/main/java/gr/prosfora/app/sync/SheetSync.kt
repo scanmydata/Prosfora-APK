@@ -9,7 +9,6 @@ import gr.prosfora.app.data.db.OfferEntity
 import gr.prosfora.app.data.db.OfferStatus
 import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.data.db.SpaceEntity
-import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.notify.DriveNotifier
@@ -82,11 +81,17 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
             }
         }
 
+        // Re-read employees after merge/upsert so the persistent payroll snapshot
+        // is always the source for the employee-cost sheet.
+        val employeesForExport = db.employeeDao().allForSync()
+            .filterNot { settings.deletedEmployeeIds.contains(it.id) }
+
         sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))
         sheets.replaceRows(spreadsheetId, TAB_SPACES, spaceRows(mergedSpaces))
         sheets.replaceRows(spreadsheetId, TAB_NOTES, noteRows(mergedNotes))
         sheets.replaceRows(spreadsheetId, TAB_DEBTS, debtRows(mergedDebts))
-        sheets.replaceRows(spreadsheetId, TAB_PEOPLE, employeeRows(mergedEmployees))
+        sheets.replaceRows(spreadsheetId, TAB_PEOPLE, employeeRows(employeesForExport))
+        sheets.replaceRows(spreadsheetId, TAB_EMPLOYEE_COSTS, employeeCostRows(employeesForExport))
 
         settings.lastSyncAt = System.currentTimeMillis()
         Report(
@@ -94,7 +99,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
             pulledSpaces,
             pulledNotes,
             pulledDebts,
-            mergedOffers.size + mergedSpaces.size + mergedNotes.size + mergedDebts.size + mergedEmployees.size,
+            mergedOffers.size + mergedSpaces.size + mergedNotes.size + mergedDebts.size + employeesForExport.size,
         )
     }
 
@@ -121,8 +126,11 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
     private suspend fun ensureTabs(spreadsheetId: String) {
         val existing = sheets.sheetTitles(spreadsheetId)
         ALL_TABS.filterNot { it in existing }.forEach { sheets.addSheet(spreadsheetId, it) }
-        if (TAB_EMPLOYEE_COSTS !in existing) sheets.replaceRows(spreadsheetId, TAB_EMPLOYEE_COSTS, listOf(EMPLOYEE_COST_HEADER))
-        else if (sheets.readRows(spreadsheetId, TAB_EMPLOYEE_COSTS).isEmpty()) sheets.replaceRows(spreadsheetId, TAB_EMPLOYEE_COSTS, listOf(EMPLOYEE_COST_HEADER))
+        if (TAB_EMPLOYEE_COSTS !in existing) {
+            sheets.replaceRows(spreadsheetId, TAB_EMPLOYEE_COSTS, listOf(EMPLOYEE_COST_HEADER))
+        } else if (sheets.readRows(spreadsheetId, TAB_EMPLOYEE_COSTS).isEmpty()) {
+            sheets.replaceRows(spreadsheetId, TAB_EMPLOYEE_COSTS, listOf(EMPLOYEE_COST_HEADER))
+        }
     }
 
     private fun <T> merge(local: List<T>, remote: List<T>, id: (T) -> String, updatedAt: (T) -> Long): List<T> {
@@ -136,7 +144,6 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         return byId.values.toList()
     }
 
-    /** A local deleted tombstone is authoritative and may not be resurrected by Sheet data. */
     private fun <T> mergeDeletedWins(local: List<T>, remote: List<T>, id: (T) -> String, updatedAt: (T) -> Long): List<T> {
         val byId = LinkedHashMap<String, T>()
         local.forEach { byId[id(it)] = it }
@@ -153,11 +160,6 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         return byId.values.toList()
     }
 
-    /**
-     * Payroll summaries are deliberately local to the employee card. The Sheet
-     * employee table has no payrollSummaryJson column, so a remote employee row
-     * must never replace an existing local summary with "{}".
-     */
     private fun mergeEmployees(local: List<EmployeeEntity>, remote: List<EmployeeEntity>): List<EmployeeEntity> {
         val byId = LinkedHashMap<String, EmployeeEntity>()
         local.forEach { byId[it.id] = it }
@@ -211,12 +213,8 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         if (amIka.isBlank()) null else EmployeeEntity(
             id = EmployeeEntity.idForAmIka(amIka),
             amIka = amIka,
-            name = row[1],
-            alias = row[2],
-            code = row[3],
-            updatedAt = row[4].toLongOrNull() ?: 0L,
-            deleted = row[5] == "1",
-            leftDay = row[6].toLongOrNull(),
+            name = row[1], alias = row[2], code = row[3],
+            updatedAt = row[4].toLongOrNull() ?: 0L, deleted = row[5] == "1", leftDay = row[6].toLongOrNull(),
         )
     }
 
@@ -246,6 +244,25 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         listOf(it.id, it.name, it.alias, it.code, it.updatedAt.toString(), if (it.deleted) "1" else "0", it.leftDay?.toString().orEmpty(), it.amIka)
     }
 
+    private fun employeeCostRows(people: List<EmployeeEntity>): List<List<String>> = buildList {
+        add(EMPLOYEE_COST_HEADER)
+        people.forEach { employee ->
+            PayrollEmployeeSnapshotStore.history(employee).forEach { month ->
+                add(
+                    listOf(
+                        employee.id,
+                        employee.display,
+                        month.year.toString(),
+                        month.month.toString(),
+                        month.payable.toString(),
+                        month.insuranceCost.toString(),
+                        month.insuranceDays.toString(),
+                    )
+                )
+            }
+        }
+    }
+
     private fun spaceRows(spaces: List<SpaceEntity>) = listOf(SPACE_HEADER) + spaces.map {
         listOf(it.id, it.offerId, it.description, it.area.toString(), it.unitPrice.toString(), it.position.toString(), it.updatedAt.toString(), if (it.deleted) "1" else "0")
     }
@@ -262,7 +279,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         const val TAB_PEOPLE = "Εργαζόμενοι"
         const val TAB_EMPLOYEE_COSTS = "Κόστη_Εργαζομένων"
         val ALL_TABS = listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES, TAB_DEBTS, TAB_PEOPLE, TAB_EMPLOYEE_COSTS)
-        val EMPLOYEE_COST_HEADER = listOf("ID_Εργαζομένου", "Όνομα", "Έτος", "Μήνας", "Πληρωτέο", "Κόστος ενσήμων", "Αρχείο Drive", "Ενημερώθηκε")
+        val EMPLOYEE_COST_HEADER = listOf("ID_Εργαζομένου", "Όνομα", "Έτος", "Μήνας", "Πληρωτέο", "Κόστος ενσήμων", "Ένσημα")
         private val OFFER_HEADER = listOf("ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email", "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο", "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης", "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση", "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή", "Επώνυμο", "Φύλο", "ΦΠΑ", "Σκαλωσιά", "Κόστος σκαλωσιάς", "Άδεια", "Κόστος άδειας", "Πρόσθετο κόστος", "Τιμή πρόσθετου κόστους")
         private val DEBT_HEADER = listOf("ID_Οφειλής", "Φορέας", "Μήνα", "Έτος", "Λήξη", "Ποσό", "Ταυτότητα / RF", "Περιγραφή", "Εργαζόμενος", "Κωδικός", "Πληρώθηκε", "Ημ. πληρωμής", "Πηγή", "Αρχείο Drive", "Δημιουργήθηκε", "Ενημερώθηκε", "Διαγραμμένο", "Ημ. εξόφλησης", "Καταχωρήθηκε από", "ΑΜ ΙΚΑ")
         private val PEOPLE_HEADER = listOf("ID_Εργαζόμενου", "Όνομα", "Ψευδώνυμο", "Κωδικός", "Ενημερώθηκε", "Διαγραμμένο", "Αποχώρηση", "ΑΜ ΙΚΑ")
