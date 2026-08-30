@@ -33,10 +33,12 @@ object PayrollEmployeeSnapshotStore {
 
                 val key = "%04d-%02d".format(year, month)
                 val previous = current.optJSONObject(key)
-                val metrics = PayrollMetricsExtractor.find(ocrText, periodRows.first())
+                val metrics = PayrollMetricsExtractor.findAggregate(ocrText, periodRows)
 
-                // The PDF is authoritative. If OCR was incomplete for one metric,
-                // preserve the previous valid value instead of replacing it with 0.
+                // The payroll PDF is authoritative. Multiple payroll rows for
+                // the same employee/month (for example TA + ΔΧ + EA) are one
+                // monthly snapshot and MUST be accumulated, not overwritten.
+                // If OCR misses one metric, preserve the previous valid value.
                 val payable = metrics.payable
                     ?: previous?.optDouble("payable", Double.NaN)?.takeUnless { it.isNaN() }
                     ?: periodRows.sumOf { it.amount }
@@ -121,17 +123,71 @@ object PayrollEmployeeSnapshotStore {
             }
         }
 
-        fun find(text: String, debt: DebtEntity): Metrics {
+        /**
+         * Extract all matching payroll rows for one employee. The same person
+         * code may occur multiple times in one payroll PDF; each occurrence is
+         * a separate payroll record and must contribute to the monthly totals.
+         */
+        fun findAggregate(text: String, debts: List<DebtEntity>): Metrics {
+            if (text.isBlank() || debts.isEmpty()) return Metrics(null, null, null)
+
+            val occurrencesByCode = mutableMapOf<String, Int>()
+            var payableSum = 0.0
+            var payableFound = false
+            var insuranceSum = 0.0
+            var insuranceFound = false
+            var daysSum = 0
+            var daysFound = false
+
+            debts.forEach { debt ->
+                val code = debt.personCode.trim()
+                if (code.isBlank()) return@forEach
+                val normalizedCode = code.trimStart('0').ifBlank { code }
+                val occurrence = occurrencesByCode.getOrDefault(normalizedCode, 0)
+                occurrencesByCode[normalizedCode] = occurrence + 1
+
+                val metrics = find(text, debt, occurrence)
+                metrics.payable?.let {
+                    payableSum += it
+                    payableFound = true
+                }
+                metrics.insuranceCost?.let {
+                    insuranceSum += it
+                    insuranceFound = true
+                }
+                metrics.insuranceDays?.let {
+                    daysSum += it
+                    daysFound = true
+                }
+            }
+
+            return Metrics(
+                payable = payableSum.takeIf { payableFound },
+                insuranceCost = insuranceSum.takeIf { insuranceFound },
+                insuranceDays = daysSum.takeIf { daysFound },
+            )
+        }
+
+        /** Find the Nth occurrence of the employee's payroll row in the PDF text. */
+        private fun find(text: String, debt: DebtEntity, occurrence: Int = 0): Metrics {
             val code = debt.personCode.trim()
             if (text.isBlank() || code.isBlank()) return Metrics(null, null, null)
 
             val normalizedCode = code.trimStart('0').ifBlank { code }
             val lines = text.lines()
-            val start = lines.indexOfFirst { raw ->
-                val line = raw.removePrefix("\uFEFF").trim()
-                val row = rowStart.find(line) ?: return@indexOfFirst false
+            var seen = 0
+            var start = -1
+            for (index in lines.indices) {
+                val line = lines[index].removePrefix("\uFEFF").trim()
+                val row = rowStart.find(line) ?: continue
                 val rowCode = row.groupValues[1].trimStart('0').ifBlank { row.groupValues[1] }
-                rowCode == normalizedCode
+                if (rowCode == normalizedCode) {
+                    if (seen == occurrence) {
+                        start = index
+                        break
+                    }
+                    seen++
+                }
             }
             if (start < 0) return Metrics(null, null, null)
 
@@ -159,6 +215,8 @@ object PayrollEmployeeSnapshotStore {
 
             if (total != null) {
                 val numbers = total.numbers
+                // The standard payroll total row is:
+                // gross, employee insurance, employer insurance, total insurance, ... payable
                 val insuranceCost = when {
                     numbers.size >= 4 -> numbers[3]
                     numbers.size >= 3 -> numbers[1] + numbers[2]
