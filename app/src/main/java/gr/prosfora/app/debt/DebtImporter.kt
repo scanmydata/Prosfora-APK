@@ -98,6 +98,12 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
                         found += result
                         DebugLog.log("debt-scan", "parsed ${file.id}: afmMismatch=${result.afmMismatch}, debts=${result.debts.size}, plan=${result.installmentPlan != null}")
                         if (!result.afmMismatch && (result.debts.isNotEmpty() || result.installmentPlan != null)) {
+                            // Stage payroll OCR for both automatic Drive imports and direct/manual imports.
+                            // DebtRepository.saveAll() consumes this exactly once, so employee payroll
+                            // snapshots are created from the original OCR without another scan.
+                            if (result.debts.any { it.kind.perPerson }) {
+                                PayrollImportSession.stage(result.ocrText, result.debts)
+                            }
                             runCatching { onFound(result) }.onFailure { DebugLog.log("debt-scan", "onFound failed ${file.id}: ${it.stackTraceToString()}") }
                         }
                         moveRecognised(file.id, file.name, result)
