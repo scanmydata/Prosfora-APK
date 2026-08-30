@@ -22,36 +22,23 @@ enum class SendMethod(val label: String, val hint: String) {
     ),
 }
 
-/** Τα έτοιμα πρότυπα που έρχονται μαζί με την εφαρμογή. */
 enum class BuiltInTemplate(val asset: String, val label: String, val hint: String) {
-    CLASSIC(
-        "template-classic.docx",
-        "Κλασικό",
-        "Με λογότυπα, φωτογραφίες έργων και δείγματα εργασιών",
-    ),
-    COMPACT(
-        "template-compact.docx",
-        "Συμπτυγμένο",
-        "Λιτό, χωρίς εικόνες — χωράει σε μία σελίδα όπου γίνεται",
-    ),
+    CLASSIC("template-classic.docx", "Κλασικό", "Με λογότυπα, φωτογραφίες έργων και δείγματα εργασιών"),
+    COMPACT("template-compact.docx", "Συμπτυγμένο", "Λιτό, χωρίς εικόνες — χωράει σε μία σελίδα όπου γίνεται"),
 }
 
 class GoogleSettings(context: Context) {
-
     private val prefs = context.applicationContext
         .getSharedPreferences("google_settings", Context.MODE_PRIVATE)
 
-    /** Ο φάκελος «Προσφορές» στο Drive του χρήστη. */
     var folderId: String?
         get() = prefs.getString(KEY_FOLDER, null)
         set(value) = prefs.edit().putString(KEY_FOLDER, value).apply()
 
-    /** Το Google Doc πρότυπο — αυτό που ο χρήστης επεξεργάζεται ελεύθερα. */
     var templateFileId: String?
         get() = prefs.getString(KEY_TEMPLATE, null)
         set(value) = prefs.edit().putString(KEY_TEMPLATE, value).apply()
 
-    /** Το κοινόχρηστο Google Sheet που παίζει τον ρόλο της βάσης. */
     var spreadsheetId: String?
         get() = prefs.getString(KEY_SPREADSHEET, null)
         set(value) = prefs.edit().putString(KEY_SPREADSHEET, value).apply()
@@ -95,9 +82,7 @@ class GoogleSettings(context: Context) {
 
     fun pdfFolderForYear(year: Int): String? =
         runCatching { JSONObject(prefs.getString(KEY_PDF_YEARS, "{}").orEmpty()) }
-            .getOrNull()
-            ?.optString(year.toString())
-            ?.takeIf { it.isNotBlank() }
+            .getOrNull()?.optString(year.toString())?.takeIf { it.isNotBlank() }
 
     fun rememberPdfFolderForYear(year: Int, folderId: String) {
         val json = runCatching { JSONObject(prefs.getString(KEY_PDF_YEARS, "{}").orEmpty()) }
@@ -112,9 +97,7 @@ class GoogleSettings(context: Context) {
 
     fun debtsFolderFor(agency: String): String? =
         runCatching { JSONObject(prefs.getString(KEY_DEBTS_SUBFOLDERS, "{}").orEmpty()) }
-            .getOrNull()
-            ?.optString(agency)
-            ?.takeIf { it.isNotBlank() }
+            .getOrNull()?.optString(agency)?.takeIf { it.isNotBlank() }
 
     fun rememberDebtsFolder(agency: String, folderId: String) {
         val json = runCatching { JSONObject(prefs.getString(KEY_DEBTS_SUBFOLDERS, "{}").orEmpty()) }
@@ -161,7 +144,6 @@ class GoogleSettings(context: Context) {
         knownDriveIds = knownDriveIds - ids.toSet()
     }
 
-    /** Employee ids deleted permanently from the local DB. Sync must not recreate them. */
     var deletedEmployeeIds: Set<String>
         get() = prefs.getStringSet(KEY_DELETED_EMPLOYEES, emptySet()).orEmpty()
         set(value) = prefs.edit().putStringSet(KEY_DELETED_EMPLOYEES, value.toSet()).apply()
@@ -185,14 +167,35 @@ class GoogleSettings(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_STATS_IMPORTED, value).apply()
 
     var builtInTemplate: BuiltInTemplate
-        get() = runCatching {
-            BuiltInTemplate.valueOf(prefs.getString(KEY_BUILTIN, null) ?: "")
-        }.getOrDefault(BuiltInTemplate.CLASSIC)
+        get() = runCatching { BuiltInTemplate.valueOf(prefs.getString(KEY_BUILTIN, null) ?: "") }
+            .getOrDefault(BuiltInTemplate.CLASSIC)
         set(value) = prefs.edit().putString(KEY_BUILTIN, value.name).apply()
 
     var ownerEmail: String
         get() = prefs.getString(KEY_OWNER_EMAIL, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_OWNER_EMAIL, value.trim()).apply()
+
+    var googleConnected: Boolean
+        get() = prefs.getBoolean(KEY_CONNECTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_CONNECTED, value).apply()
+
+    var greetingOptions: GreetingOptions
+        get() = GreetingOptions(
+            style = runCatching { GreetingStyle.valueOf(prefs.getString(KEY_GREETING_STYLE, null) ?: "") }
+                .getOrDefault(GreetingStyle.FIRST_NAME),
+            useTitle = prefs.getBoolean(KEY_GREETING_TITLE, true),
+        )
+        set(value) = prefs.edit()
+            .putString(KEY_GREETING_STYLE, value.style.name)
+            .putBoolean(KEY_GREETING_TITLE, value.useTitle)
+            .apply()
+
+    fun clearPdfFolders() = prefs.edit()
+        .remove(KEY_PDF_FOLDER)
+        .remove(KEY_PDF_YEARS)
+        .remove(KEY_DEBTS_FOLDER)
+        .remove(KEY_DEBTS_SUBFOLDERS)
+        .apply()
 
     var reviewDelayDays: Int
         get() = prefs.getInt(KEY_REVIEW_DELAY, 3)
@@ -255,17 +258,14 @@ class GoogleSettings(context: Context) {
 
         const val DEFAULT_OCR_KEY = "K88425303488957"
         const val DRIVE_FOLDER_NAME = "Προσφορές"
-        const val DEFAULT_REVIEW_LINK =
-            "https://www.google.com/search?sca_esv=faef517198de48e6&sxsrf=APpeQnsNZphqJuT4MHKHXH44GKCkHZnD4g:1787396921174&q=tovapsimo&si=APenkKm7iecQ4G6P-TsbSMFKIQtv3EFIqRAFw-i8uEbk55Z-_zMIB2TTEOESsRGZcitMJR4C6ZCfQDHpOm-TOHvLnX5KJ7--tzuev5vDfGjwf4BlCN7vN4Y%3D&uds=AJ5uw192rzALllUuaB2bJuLcuxCm6NkqFwo97LiWIr3XYWdW96aegZObi6cVFnchLgADHbfT1SmVu-TAALPaBzg-VlTWay0u-WFs88GF57hvtogFQK4pGvg&sa=X"
+        const val DEFAULT_REVIEW_LINK = "https://www.google.com/search?q=tovapsimo"
         const val TEMPLATE_NAME = "ΠΡΟΣΦΟΡΑ ΕΛΑΙΟΧΡΩΜΑΤΙΣΜΩΝ — πρότυπο"
-
         val DEFAULT_PAYMENT_TERMS = """
             20% του ποσού με την έναρξη των εργασιών
             30% με την πρόοδο των εργασιών
             30% με την πρόοδο των εργασιών
             20% με την παράδοση του έργου
         """.trimIndent()
-
         val DEFAULT_EMAIL_SUBJECT = MessageTemplates.DEFAULT_EMAIL_SUBJECT
         val DEFAULT_EMAIL_BODY = MessageTemplates.DEFAULT_EMAIL_BODY
     }
