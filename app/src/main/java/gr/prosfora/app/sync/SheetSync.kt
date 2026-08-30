@@ -81,10 +81,13 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
             }
         }
 
-        // Re-read employees after merge/upsert so the persistent payroll snapshot
-        // is always the source for the employee-cost sheet.
+        // Always read back the canonical local employee records after merge.
+        // Payroll snapshots are stored against AM IKA, while alias is only a
+        // display preference and must never become the employee name in Drive.
         val employeesForExport = db.employeeDao().allForSync()
             .filterNot { settings.deletedEmployeeIds.contains(it.id) }
+            .filter { it.amIka.isNotBlank() }
+            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
 
         sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))
         sheets.replaceRows(spreadsheetId, TAB_SPACES, spaceRows(mergedSpaces))
@@ -170,7 +173,14 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
                 byId[incoming.id] = incoming
             } else {
                 val merged = if (incoming.updatedAt > existing.updatedAt) {
-                    incoming.copy(payrollSummaryJson = existing.payrollSummaryJson)
+                    incoming.copy(
+                        // The monthly payroll snapshot is canonical local data;
+                        // do not erase it with the older/leaner Drive employee row.
+                        payrollSummaryJson = existing.payrollSummaryJson,
+                        name = incoming.name.ifBlank { existing.name },
+                        alias = incoming.alias.ifBlank { existing.alias },
+                        code = incoming.code.ifBlank { existing.code },
+                    )
                 } else {
                     existing.copy(
                         name = incoming.name.ifBlank { existing.name },
@@ -251,13 +261,15 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
                 add(
                     listOf(
                         employee.id,
-                        employee.display,
+                        // NEVER use EmployeeEntity.display here: display prefers alias.
+                        // The costs tab must always carry the canonical payroll name.
+                        employee.name,
                         month.year.toString(),
                         month.month.toString(),
                         month.payable.toString(),
                         month.insuranceCost.toString(),
                         month.insuranceDays.toString(),
-                    )
+                    ),
                 )
             }
         }
