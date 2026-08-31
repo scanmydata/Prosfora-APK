@@ -42,8 +42,8 @@ jobs:
             NAME="${GITHUB_REF#refs/tags/v}"
             TAG="${GITHUB_REF#refs/tags/}"
           else
-            NAME="0.1.${GITHUB_RUN_NUMBER}"
-            TAG="v0.1.${GITHUB_RUN_NUMBER}"
+            NAME="0.2.${GITHUB_RUN_NUMBER}"
+            TAG="v0.2.${GITHUB_RUN_NUMBER}"
           fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
