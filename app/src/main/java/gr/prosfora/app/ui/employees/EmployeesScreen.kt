@@ -227,7 +227,6 @@ private fun EmployeeDetailScreen(
                     Column {
                         Text(employee.display, fontWeight = FontWeight.Bold)
                         if (employee.alias.isNotBlank()) Text(employee.name, style = MaterialTheme.typography.labelSmall)
-                        Text("ΑΜ ΙΚΑ ${employee.amIka}", style = MaterialTheme.typography.labelSmall, color = BrandGreen)
                     }
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Πίσω") } },
@@ -255,41 +254,31 @@ private fun EmployeeDetailScreen(
                 }
             }
 
+            // Τα σύνολα του έτους σε μία σειρά, χωρίς κάρτα: τρεις αριθμοί δεν
+            // χρειάζονται μισή οθόνη, και η ανάλυση των μηνών από κάτω τους
+            // επαναλαμβάνει ούτως ή άλλως
             item {
-                Card(
-                    colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant),
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "ΣΥΝΟΛΑ $year",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = BrandGreen,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Switch(
-                                checked = showAnnualTotals,
-                                onCheckedChange = { showAnnualTotals = it },
-                            )
-                        }
-
-                        if (showAnnualTotals) {
-                            val ofYear = PayrollEmployeeSnapshotStore.totals(employee, year)
-                            Text("Πληρωτέα: ${ofYear.payable.asMoney()}", fontWeight = FontWeight.Bold)
-                            Text("Ένσημα: ${ofYear.insuranceDays}", fontWeight = FontWeight.Bold)
-                            Text("Κόστος ενσήμων: ${ofYear.insuranceCost.asMoney()}", fontWeight = FontWeight.Bold)
-                            if (years.size > 1) {
-                                Text(
-                                    "Όλα τα έτη: ${totals.payable.asMoney()} · " +
-                                        "${totals.insuranceDays} ένσημα · ${totals.insuranceCost.asMoney()}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
-                        } else {
-                            Text("Τα σύνολα είναι κρυφά", style = MaterialTheme.typography.bodyMedium)
-                        }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Σύνολα $year",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = BrandGreen,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = showAnnualTotals,
+                            onCheckedChange = { showAnnualTotals = it },
+                        )
+                    }
+                    if (showAnnualTotals) {
+                        val ofYear = PayrollEmployeeSnapshotStore.totals(employee, year)
+                        Text(
+                            "${ofYear.payable.asMoney()} · ${ofYear.insuranceDays} ένσημα · " +
+                                "κόστος ${ofYear.insuranceCost.asMoney()}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
             }
@@ -309,15 +298,25 @@ private fun EmployeeDetailScreen(
                         colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant),
                         shape = RoundedCornerShape(14.dp),
                     ) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    monthLabel(month.month, month.year),
+                                    color = BrandGreen,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    month.payable.asMoney(),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
                             Text(
-                                monthLabel(month.month, month.year),
-                                color = BrandGreen,
-                                fontWeight = FontWeight.Bold,
+                                "${month.insuranceDays} ένσημα · κόστος ${month.insuranceCost.asMoney()}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Text("Πληρωτέο: ${month.payable.asMoney()}", fontWeight = FontWeight.SemiBold)
-                            Text("Ένσημα: ${month.insuranceDays}", fontWeight = FontWeight.SemiBold)
-                            Text("Κόστος ενσήμων: ${month.insuranceCost.asMoney()}", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }

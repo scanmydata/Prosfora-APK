@@ -9,6 +9,7 @@ import gr.prosfora.app.data.db.OfferEntity
 import gr.prosfora.app.data.db.OfferStatus
 import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.data.db.SpaceEntity
+import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.notify.DriveNotifier
@@ -89,13 +90,11 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
             }
         }
 
-        // Employees are canonical by stable ID/AM IKA. Alias is only a UI field.
-        val employeesForExport = db.employeeDao().allForSync()
-            .filterNot { settings.deletedEmployeeIds.contains(it.id) }
-            // Χωρίς φίλτρο ΑΜ ΙΚΑ: κάθε εργαζόμενος της βάσης γράφεται στο
-            // φύλλο, ανεξάρτητα από το αν το OCR έβγαλε καθαρά τον αριθμό του
-            .filter { it.id.isNotBlank() }
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name.ifBlank { it.amIka } })
+        // Ο κατάλογος δεν κρέμεται από το αν χτίστηκε σωστά ο δείκτης
+        // εργαζομένων. Όποιος έχει μισθοδοσία **υπάρχει**, ακόμη κι αν η
+        // καρτέλα του δεν πρόλαβε να δημιουργηθεί: αυτό ήταν που άφηνε στο
+        // φύλλο μόνο όσους είχε ανοίξει ο χρήστης με το χέρι.
+        val employeesForExport = rosterForExport(db, mergedDebts)
 
         sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))
         sheets.replaceRows(spreadsheetId, TAB_SPACES, spaceRows(mergedSpaces))
@@ -113,7 +112,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         sheets.syncRowsCrud(
             spreadsheetId,
             TAB_EMPLOYEE_COSTS,
-            employeeCostRows(employeesForExport),
+            employeeCostRows(employeesForExport, mergedDebts),
             key = { row ->
                 "${row.getOrElse(0) { "" }}|${row.getOrElse(2) { "" }}|${row.getOrElse(3) { "" }}"
             },
@@ -185,6 +184,69 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         }
         return byId.values.toList()
     }
+
+    /**
+     * Κάθε εργαζόμενος που πρέπει να φτάσει στο φύλλο.
+     *
+     * Δύο πηγές, με αυτή τη σειρά: οι καρτέλες της βάσης, και όποιος
+     * εμφανίζεται σε **μισθοδοσία** χωρίς να έχει καρτέλα. Η δεύτερη πηγή
+     * είναι το δίχτυ: ο δείκτης εργαζομένων χτίζεται από τις οφειλές και
+     * μπορεί να αποτύχει σιωπηλά· οι ίδιες οι οφειλές δεν λένε ψέματα.
+     */
+    private suspend fun rosterForExport(
+        db: ProsforaDatabase,
+        debts: List<DebtEntity>,
+    ): List<EmployeeEntity> {
+        val stored = db.employeeDao().allForSync()
+            .filterNot { settings.deletedEmployeeIds.contains(it.id) }
+            .filter { it.id.isNotBlank() }
+        val known = stored.map { it.id }.toMutableSet()
+        val roster = stored.toMutableList()
+
+        debts.asSequence()
+            .filter { !it.deleted && it.kind.perPerson && it.personName.isNotBlank() }
+            .groupBy { EmployeeEntity.keyFor(it.amIka, it.personCode, it.personName) }
+            .forEach { (key, rows) ->
+                if (key.isBlank() || key in known) return@forEach
+                if (settings.deletedEmployeeIds.contains(key)) return@forEach
+                val latest = rows.maxByOrNull { it.updatedAt } ?: rows.first()
+                known += key
+                roster += EmployeeEntity(
+                    id = key,
+                    amIka = EmployeeEntity.normalizeIka(latest.amIka),
+                    name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim().orEmpty(),
+                    code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim().orEmpty(),
+                    updatedAt = latest.updatedAt,
+                )
+            }
+
+        DebugLog.log("employees") {
+            "εξαγωγή καταλόγου · καρτέλες=${stored.size} · " +
+                "από μισθοδοσίες χωρίς καρτέλα=${roster.size - stored.size} · σύνολο=${roster.size}"
+        }
+        return roster.sortedWith(
+            compareBy(String.CASE_INSENSITIVE_ORDER) { it.name.ifBlank { it.amIka.ifBlank { it.id } } },
+        )
+    }
+
+    /**
+     * Μηνιαία στοιχεία από τις ίδιες τις οφειλές, όταν λείπει το αποθηκευμένο
+     * ιστορικό. Το ποσό είναι βέβαιο· τα ένσημα δεν τα ξέρει η οφειλή, οπότε
+     * μένουν μηδέν αντί να μαντευτούν.
+     */
+    private fun monthsFromDebts(
+        employee: EmployeeEntity,
+        debts: List<DebtEntity>,
+    ): List<PayrollEmployeeSnapshotStore.Monthly> = debts
+        .filter { !it.deleted && it.kind.perPerson }
+        .filter { EmployeeEntity.keyFor(it.amIka, it.personCode, it.personName) == employee.id }
+        .groupBy { it.periodYear to it.periodMonth }
+        .mapNotNull { (period, rows) ->
+            val (year, month) = period
+            if (year <= 0 || month !in 1..12) return@mapNotNull null
+            PayrollEmployeeSnapshotStore.Monthly(year, month, rows.sumOf { it.amount }, 0.0, 0)
+        }
+        .sortedWith(compareByDescending<PayrollEmployeeSnapshotStore.Monthly> { it.year }.thenByDescending { it.month })
 
     private fun mergeEmployees(local: List<EmployeeEntity>, remote: List<EmployeeEntity>): List<EmployeeEntity> {
         val byId = LinkedHashMap<String, EmployeeEntity>()
@@ -283,10 +345,14 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         listOf(it.id, it.name, it.alias, it.code, it.updatedAt.toString(), if (it.deleted) "1" else "0", it.leftDay?.toString().orEmpty(), it.amIka)
     }
 
-    private fun employeeCostRows(people: List<EmployeeEntity>): List<List<String>> = buildList {
+    private fun employeeCostRows(
+        people: List<EmployeeEntity>,
+        debts: List<DebtEntity> = emptyList(),
+    ): List<List<String>> = buildList {
         add(EMPLOYEE_COST_HEADER)
         people.forEach { employee ->
             val history = PayrollEmployeeSnapshotStore.history(employee)
+                .ifEmpty { monthsFromDebts(employee, debts) }
             if (history.isEmpty()) {
                 add(listOf(employee.id, employee.name, "", "", "0.0", "0.0", "0"))
             } else {
