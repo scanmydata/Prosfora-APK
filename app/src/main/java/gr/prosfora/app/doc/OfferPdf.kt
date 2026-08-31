@@ -54,7 +54,11 @@ object OfferPdf {
         settings: GoogleSettings,
         choice: BuiltInTemplate = settings.builtInTemplate,
     ): String = withContext(Dispatchers.IO) {
-        val bundled = context.assets.open(choice.asset).use { it.readBytes() }
+        // Το πρότυπο περνάει από την ίδια διάταξη συνόλων που τυπώνεται, ώστε
+        // αυτό που εγκαθίσταται στο Drive να είναι αυτό που βλέπει ο πελάτης
+        val bundled = DocxTemplate.withFullTotals(
+            context.assets.open(choice.asset).use { it.readBytes() },
+        )
         val folderId = DriveWorkspace(drive, settings).rootFolder()
 
         settings.templateFileId?.let { old -> runCatching { drive.delete(old) } }

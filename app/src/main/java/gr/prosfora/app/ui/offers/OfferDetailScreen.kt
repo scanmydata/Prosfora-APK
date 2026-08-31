@@ -608,6 +608,10 @@ private fun ExtraCost(
     }
 }
 
+/** Λέει η παρατήρηση ότι ο ΦΠΑ **δεν** περιλαμβάνεται; */
+private fun String.denesVat(): Boolean =
+    contains("δεν περιλαμβάνεται ο ΦΠΑ", ignoreCase = true)
+
 // ------------------------------------------------------------------- ΦΠΑ -----
 
 /**
@@ -621,9 +625,7 @@ private fun ExtraCost(
 private fun VatCard(details: OfferWithDetails, viewModel: OffersViewModel) {
     val offer = details.offer
     // Η έτοιμη παρατήρηση λέει το αντίθετο· με αναμμένο ΦΠΑ πρέπει να φύγει
-    val contradicting = details.notes.firstOrNull {
-        it.text.contains("δεν περιλαμβάνεται ο ΦΠΑ", ignoreCase = true)
-    }
+    val contradicting = details.notes.firstOrNull { it.text.denesVat() }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -714,6 +716,11 @@ private fun NotesCard(
 
             presets.forEach { text ->
                 val checked = text in selected
+                // Μια τσεκαρισμένη παρατήρηση που λέει «δεν περιλαμβάνεται ΦΠΑ»
+                // ενώ ο ΦΠΑ υπολογίζεται είναι αντίφαση, και θα τυπωνόταν και
+                // η μία και η άλλη. Η προειδοποίηση μπαίνει εδώ, δίπλα στην
+                // επιλογή που τη δημιούργησε, όχι μόνο στα σύνολα.
+                val clashes = checked && details.offer.vatIncluded && text.denesVat()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -725,11 +732,29 @@ private fun NotesCard(
                         checked = checked,
                         onCheckedChange = { viewModel.toggleNote(details.offer.id, text, it) },
                     )
-                    Text(
-                        text,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f).padding(start = 4.dp),
-                    )
+                    Column(Modifier.weight(1f).padding(start = 4.dp)) {
+                        Text(
+                            text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (clashes) DeleteRed else MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (clashes) {
+                            Text(
+                                "Ο ΦΠΑ υπολογίζεται πιο πάνω — διάλεξε το ένα από τα δύο.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = DeleteRed,
+                            )
+                        }
+                    }
+                    if (clashes) {
+                        TextButton(
+                            onClick = {
+                                viewModel.updateOffer(
+                                    details.offer.copy(vatIncluded = false),
+                                )
+                            },
+                        ) { Text("Χωρίς ΦΠΑ") }
+                    }
                 }
             }
 

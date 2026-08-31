@@ -29,6 +29,7 @@ import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.rememberGoogleAuthorizer
+import gr.prosfora.app.sync.DriveAutoSyncWorker
 import gr.prosfora.app.sync.DriveSyncCoordinator
 import gr.prosfora.app.ui.offers.UpdateDialog
 import gr.prosfora.app.update.UpdateChecker
@@ -85,6 +86,9 @@ fun EnsureGoogleAccess() {
                         "Δεν έγινε συγχρονισμός Google: ${it.reason()}",
                         Toast.LENGTH_LONG,
                     ).show()
+                    // Η τοπική βάση κρατάει τα πάντα ώσπου να ξαναϋπάρξει
+                    // δίκτυο· το work περιμένει σύνδεση και ανεβάζει μόνο του
+                    DriveAutoSyncWorker.enqueueNow(context)
                 }
                 .getOrNull()
                 ?: return@launch
@@ -113,6 +117,7 @@ fun EnsureGoogleAccess() {
                         "Ο συγχρονισμός απέτυχε: ${it.reason()}",
                         Toast.LENGTH_LONG,
                     ).show()
+                    DriveAutoSyncWorker.enqueueNow(context)
                 }
 
                 runCatching {

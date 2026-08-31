@@ -31,6 +31,23 @@ object DocxTemplate {
         return writeZip(entries)
     }
 
+    /**
+     * Το πρότυπο όπως πρέπει να το δει ο χρήστης όταν εγκατασταθεί στο Drive.
+     *
+     * Ο [render] ξαναχτίζει τα σύνολα κάθε φορά, οπότε το PDF έβγαινε σωστό
+     * ακόμη κι από παλιό πρότυπο. Το ίδιο το αρχείο όμως —αυτό που ανοίγει ο
+     * χρήστης για να το πειράξει— έμενε χωρίς σκαλωσιά, άδεια, πρόσθετο κόστος
+     * και χωρίς γενικό σύνολο. Εδώ γράφεται μία φορά ολόκληρη η διάταξη, με
+     * τους δείκτες συνθήκης πάνω στις προαιρετικές γραμμές, ώστε το
+     * εγκατεστημένο πρότυπο να μη μπορεί να αποκλίνει από ό,τι τυπώνεται.
+     */
+    fun withFullTotals(templateDocx: ByteArray): ByteArray {
+        val entries = readZip(templateDocx)
+        val document = entries[DOCUMENT_ENTRY]?.toString(Charsets.UTF_8) ?: return templateDocx
+        entries[DOCUMENT_ENTRY] = fullTotalsLayout(document).toByteArray(Charsets.UTF_8)
+        return writeZip(entries)
+    }
+
     internal fun renderXml(xml: String, details: OfferWithDetails): String {
         var result = expandSpaceRows(xml, details)
         result = expandNoteBullets(result, details)
@@ -181,6 +198,65 @@ object DocxTemplate {
         }
 
         return result.replace(anchor, totalsRows)
+    }
+
+    /**
+     * Η ίδια σειρά με τον [normalizeTotalsLayout], αλλά με **όλες** τις γραμμές
+     * παρούσες: οι προαιρετικές φέρουν τον δείκτη συνθήκης τους και σβήνονται
+     * κατά την εκτύπωση όταν δεν ισχύουν.
+     */
+    internal fun fullTotalsLayout(xml: String): String {
+        val baseMarker = listOf(
+            "&lt;&lt;[Καθαρή Αξία]&gt;&gt;",
+            "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;",
+            "&lt;&lt;[Σύνολο]&gt;&gt;",
+        ).mapNotNull { marker -> xml.indexOf(marker).takeIf { it >= 0 } }.minOrNull() ?: return xml
+
+        val (baseOpen, baseClose) = enclosingTag(xml, baseMarker, "w:tr")
+        val baseRow = xml.substring(baseOpen, baseClose)
+            .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;")
+            .replace("&lt;&lt;[Σύνολο]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;")
+            .replaceFirst("ΚΑΘΑΡΗ ΑΞΙΑ</w:t>", "ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>")
+            .replaceFirst("Καθαρή Αξία</w:t>", "Σύνολο Χώρων</w:t>")
+            .replaceFirst("ΣΥΝΟΛΟ</w:t>", "ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>")
+            .replaceFirst("Σύνολο</w:t>", "Σύνολο Χώρων</w:t>")
+
+        val anchor = "__PROSFORA_TEMPLATE_TOTALS__"
+        var result = xml.substring(0, baseOpen) + anchor + xml.substring(baseClose)
+        listOf(
+            "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;",
+            "&lt;&lt;[Σύνολο]&gt;&gt;",
+            "&lt;&lt;[Σκαλωσιά]&gt;&gt;",
+            "&lt;&lt;[Άδεια]&gt;&gt;",
+            "&lt;&lt;[Πρόσθετο Κόστος]&gt;&gt;",
+            "&lt;&lt;[ΦΠΑ]&gt;&gt;",
+            "&lt;&lt;[Γενικό Σύνολο Live]&gt;&gt;",
+            "&lt;&lt;[Γενικό Σύνολο]&gt;&gt;",
+        ).forEach { marker ->
+            while (true) {
+                val at = result.indexOf(marker)
+                if (at < 0) break
+                result = dropBlock(result, at)
+            }
+        }
+
+        fun row(label: String, marker: String, guard: String = "", bold: Boolean = false): String {
+            val built = baseRow
+                .replace("&lt;&lt;[Σύνολο Χώρων]&gt;&gt;", "&lt;&lt;[$marker]&gt;&gt;")
+                .replaceFirst("ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>", "$guard$label</w:t>")
+                .replaceFirst("Σύνολο Χώρων</w:t>", "$guard$label</w:t>")
+            return if (bold) boldRow(built) else built
+        }
+
+        val block = buildString {
+            append(boldRow(baseRow))
+            append(row("ΣΚΑΛΩΣΙΑ", "Σκαλωσιά", SCAFFOLDING_ONLY))
+            append(row("ΑΔΕΙΑ ΜΙΚΡΗΣ ΚΛΙΜΑΚΑΣ", "Άδεια", PERMIT_ONLY))
+            append(row("ΠΡΟΣΘΕΤΟ ΚΟΣΤΟΣ", "Πρόσθετο Κόστος"))
+            append(row("ΦΠΑ 24%", "ΦΠΑ", VAT_ONLY))
+            append(row("ΓΕΝΙΚΟ ΣΥΝΟΛΟ", "Γενικό Σύνολο Live", bold = true))
+        }
+        return result.replace(anchor, block)
     }
 
     /** Bold the generated totals rows without relying on how the source template was formatted. */

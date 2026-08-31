@@ -37,10 +37,18 @@ class DriveAutoSyncWorker(
             DebugLog.log("auto-sync", "daily unpaid reminder απέτυχε: ${it.stackTraceToString()}")
         }
 
-        val token = runCatching { accessTokenWithoutUi(applicationContext) }
-            .onFailure { DebugLog.log("auto-sync", "δεν πήρα token: ${it.stackTraceToString()}") }
-            .getOrNull()
-            ?: return Result.success()
+        // Δύο διαφορετικές αποτυχίες, δύο διαφορετικές απαντήσεις: όταν η
+        // Google ζητάει έγκριση από τον χρήστη, καμία επανάληψη δεν θα τη
+        // δώσει και το work κλείνει. Όταν όμως σκάει το δίκτυο, το work πρέπει
+        // να ξαναδοκιμάσει — αλλιώς ό,τι γράφτηκε offline μένει στη συσκευή.
+        val attempt = runCatching { accessTokenWithoutUi(applicationContext) }
+        val token = attempt.getOrElse { error ->
+            DebugLog.log("auto-sync", "δεν πήρα token: ${error.stackTraceToString()}")
+            return Result.retry()
+        } ?: run {
+            DebugLog.log("auto-sync", "χρειάζεται έγκριση χρήστη· το background sync σταματά")
+            return Result.success()
+        }
 
         return runCatching {
             val result = DriveSyncCoordinator.sync(
