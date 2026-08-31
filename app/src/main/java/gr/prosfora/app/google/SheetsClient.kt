@@ -128,6 +128,10 @@ class SheetsClient(private val accessToken: String) {
      * UPDATE ενημερώνει την υπάρχουσα γραμμή, CREATE κάνει append τη νέα,
      * DELETE σβήνει μόνο obsolete rows. Το key μπορεί να είναι σύνθετο για
      * tabs όπου ένα ID έχει πολλές εγγραφές, όπως το Κόστη_Εργαζομένων.
+     *
+     * Το Κόστη_Εργαζομένων είναι όμως παράγωγο tab: η εφαρμογή πρέπει να το
+     * αναδημιουργεί από ολόκληρο το canonical employee roster ώστε να μη μένει
+     * ποτέ μερικώς ενημερωμένο. Το tab Εργαζόμενοι παραμένει κανονικό CRUD.
      */
     suspend fun syncRowsCrud(
         spreadsheetId: String,
@@ -136,6 +140,12 @@ class SheetsClient(private val accessToken: String) {
         key: (List<String>) -> String = { it.firstOrNull().orEmpty() },
     ) = withContext(Dispatchers.IO) {
         require(desiredRows.isNotEmpty()) { "Το CRUD sync χρειάζεται τουλάχιστον header row." }
+
+        if (tab == "Κόστη_Εργαζομένων") {
+            replaceRows(spreadsheetId, tab, desiredRows)
+            return@withContext
+        }
+
         val existing = readRows(spreadsheetId, tab)
         val header = desiredRows.first()
         val desired = desiredRows.drop(1).filter { key(it).isNotBlank() }
