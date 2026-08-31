@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.BuildConfig
 import gr.prosfora.app.google.DriveWatch
+import gr.prosfora.app.notify.NewDebtsBadge
 import gr.prosfora.app.ui.offers.DeleteRed
 import gr.prosfora.app.ui.offers.EditBlue
 import gr.prosfora.app.ui.offers.EmailAmber
@@ -59,6 +60,7 @@ enum class TopDestination(
 @Composable
 fun AppDrawer(current: String?, onSelect: (TopDestination) -> Unit) {
     val changes by DriveWatch.changes.collectAsState()
+    val newDebts by NewDebtsBadge.count.collectAsState()
 
     ModalDrawerSheet {
         Column(
@@ -80,7 +82,14 @@ fun AppDrawer(current: String?, onSelect: (TopDestination) -> Unit) {
                 },
                 label = { Text(destination.label, maxLines = 1) },
                 badge = {
-                    val pending = destination.watches?.let { area -> changes.count { it.area == area } } ?: 0
+                    // Στις Οφειλές μετράνε οι ίδιες οι οφειλές που μπήκαν, όχι
+                    // τα αρχεία: ένα αρχείο μισθοδοσίας φέρνει δέκα γραμμές
+                    val files = destination.watches?.let { area -> changes.count { it.area == area } } ?: 0
+                    val pending = if (destination == TopDestination.DEBTS) {
+                        maxOf(newDebts, files)
+                    } else {
+                        files
+                    }
                     if (pending > 0) Badge { Text("+$pending") }
                 },
                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),

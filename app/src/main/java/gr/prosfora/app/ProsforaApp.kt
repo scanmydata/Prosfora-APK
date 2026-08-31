@@ -2,6 +2,7 @@ package gr.prosfora.app
 
 import android.app.Application
 import gr.prosfora.app.debug.DebugLog
+import gr.prosfora.app.notify.NewDebtsBadge
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.sync.DriveAutoSyncWorker
 
@@ -9,6 +10,7 @@ class ProsforaApp : Application() {
     override fun onCreate() {
         super.onCreate()
         val settings = GoogleSettings(this)
+        NewDebtsBadge.restore(this)
         DebugLog.configure(this, settings.debugLogging)
 
         val previous = Thread.getDefaultUncaughtExceptionHandler()

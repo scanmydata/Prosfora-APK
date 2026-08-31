@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +31,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -205,15 +207,18 @@ private fun EmployeeDetailScreen(
     var alias by remember(employee) { mutableStateOf(employee.alias) }
     var leftDay by remember(employee) { mutableStateOf(employee.leftDay) }
     var pickingLeft by remember { mutableStateOf(false) }
-    var showAnnualTotals by remember { mutableStateOf(false) }
+    var showAnnualTotals by remember { mutableStateOf(true) }
 
     val history = PayrollEmployeeSnapshotStore.history(employee)
     val totals = PayrollEmployeeSnapshotStore.totals(employee)
     val rows = debts
         .filter { it.kind.perPerson && it.amIka == employee.amIka }
         .sortedWith(compareByDescending<DebtEntity> { it.periodYear }.thenByDescending { it.periodMonth }.thenBy { it.kind.ordinal })
-    val byYear = history.groupBy { it.year }.toSortedMap(compareByDescending { it })
     val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+    val years = history.map { it.year }.distinct().sortedDescending()
+    var year by remember(employee, years) {
+        mutableStateOf(years.firstOrNull { it == currentYear } ?: years.firstOrNull() ?: currentYear)
+    }
 
     Scaffold(
         topBar = {
@@ -235,48 +240,81 @@ private fun EmployeeDetailScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item {
-                Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(16.dp)) {
-                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("ΑΠΟΘΗΚΕΥΜΕΝΑ ΣΤΟΙΧΕΙΑ ΚΑΡΤΕΛΑΣ", style = MaterialTheme.typography.labelLarge, color = BrandGreen, fontWeight = FontWeight.Bold)
-                                Text("Τα μηνιαία στοιχεία παραμένουν ανεξάρτητα από τις ενεργές οφειλές.", style = MaterialTheme.typography.bodySmall)
-                            }
-                            Switch(checked = showAnnualTotals, onCheckedChange = { showAnnualTotals = it })
-                        }
-
-                        if (showAnnualTotals) {
-                            Text("ΣΥΝΟΛΑ ΕΤΟΥΣ", style = MaterialTheme.typography.titleMedium, color = BrandGreen, fontWeight = FontWeight.Bold)
-                            byYear.forEach { (year, months) ->
-                                val yearTotals = PayrollEmployeeSnapshotStore.Totals(
-                                    payable = months.sumOf { it.payable },
-                                    insuranceCost = months.sumOf { it.insuranceCost },
-                                    insuranceDays = months.sumOf { it.insuranceDays },
-                                )
-                                Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(12.dp)) {
-                                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                        Text(year.toString(), fontWeight = FontWeight.Bold, color = BrandGreen)
-                                        Text("Πληρωτέο: ${yearTotals.payable.asMoney()}")
-                                        Text("Ένσημα: ${yearTotals.insuranceDays}")
-                                        Text("Κόστος ενσήμων: ${yearTotals.insuranceCost.asMoney()}")
-                                    }
-                                }
-                            }
-                            Text("Συνολικά αποθηκευμένα: ${totals.payable.asMoney()} · ${totals.insuranceDays} ένσημα · ${totals.insuranceCost.asMoney()} κόστος", fontWeight = FontWeight.Bold)
-                        } else {
-                            Text("Τα ετήσια σύνολα είναι κρυφά", style = MaterialTheme.typography.bodyMedium)
+            // Έτη σε chips, όπως στις Οφειλές: μία χρονιά τη φορά, νεότερη πρώτα
+            if (years.isNotEmpty()) {
+                item {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(years) { candidate ->
+                            FilterChip(
+                                selected = year == candidate,
+                                onClick = { year = candidate },
+                                label = { Text(candidate.toString(), maxLines = 1) },
+                            )
                         }
                     }
                 }
             }
 
-            if (history.isNotEmpty()) {
-                item { Text("ΑΝΑΛΥΣΗ ΑΝΑ ΜΗΝΑ", style = MaterialTheme.typography.titleMedium, color = BrandGreen, fontWeight = FontWeight.Bold) }
-                items(history, key = { "snapshot-${it.year}-${it.month}" }) { month ->
-                    Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(14.dp)) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "ΣΥΝΟΛΑ $year",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = BrandGreen,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Switch(
+                                checked = showAnnualTotals,
+                                onCheckedChange = { showAnnualTotals = it },
+                            )
+                        }
+
+                        if (showAnnualTotals) {
+                            val ofYear = PayrollEmployeeSnapshotStore.totals(employee, year)
+                            Text("Πληρωτέα: ${ofYear.payable.asMoney()}", fontWeight = FontWeight.Bold)
+                            Text("Ένσημα: ${ofYear.insuranceDays}", fontWeight = FontWeight.Bold)
+                            Text("Κόστος ενσήμων: ${ofYear.insuranceCost.asMoney()}", fontWeight = FontWeight.Bold)
+                            if (years.size > 1) {
+                                Text(
+                                    "Όλα τα έτη: ${totals.payable.asMoney()} · " +
+                                        "${totals.insuranceDays} ένσημα · ${totals.insuranceCost.asMoney()}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        } else {
+                            Text("Τα σύνολα είναι κρυφά", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+
+            val monthsOfYear = history.filter { it.year == year }
+            if (monthsOfYear.isNotEmpty()) {
+                item {
+                    Text(
+                        "ΑΝΑΛΥΣΗ ΑΝΑ ΜΗΝΑ",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = BrandGreen,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                items(monthsOfYear, key = { "snapshot-${it.year}-${it.month}" }) { month ->
+                    Card(
+                        colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("%02d/%04d".format(month.month, month.year), color = BrandGreen, fontWeight = FontWeight.Bold)
+                            Text(
+                                monthLabel(month.month, month.year),
+                                color = BrandGreen,
+                                fontWeight = FontWeight.Bold,
+                            )
                             Text("Πληρωτέο: ${month.payable.asMoney()}", fontWeight = FontWeight.SemiBold)
                             Text("Ένσημα: ${month.insuranceDays}", fontWeight = FontWeight.SemiBold)
                             Text("Κόστος ενσήμων: ${month.insuranceCost.asMoney()}", fontWeight = FontWeight.SemiBold)

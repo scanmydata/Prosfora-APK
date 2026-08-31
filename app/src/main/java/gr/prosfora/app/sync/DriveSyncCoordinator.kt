@@ -9,6 +9,7 @@ import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.notify.DriveNotifier
+import gr.prosfora.app.notify.NewDebtsBadge
 import gr.prosfora.app.notify.PendingDebtNotificationStore
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -137,6 +138,7 @@ object DriveSyncCoordinator {
                 .onFailure { DebugLog.log("employees", "Sheet employee sanitizer failed: ${it.stackTraceToString()}") }
         }
 
+        NewDebtsBadge.record(app, savedDebts.distinctBy { it.id })
         DebugLog.log("sync", "τέλος · scanned=${report.scanned}, skipped=${report.skipped}, saved=${savedDebts.size}, pendingInstallments=${pendingFiles.size}, notifications=${notifiedFiles.size}")
         Result(finalSheetSummary, savedDebts.distinctBy { it.id }, report.unreadable.size)
     }

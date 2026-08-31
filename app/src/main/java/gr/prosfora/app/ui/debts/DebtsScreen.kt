@@ -55,6 +55,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +78,7 @@ import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.notify.NewDebtsBadge
 import gr.prosfora.app.sync.SheetSync
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.ui.MenuButton
@@ -122,6 +124,9 @@ fun DebtsScreen(onMenu: () -> Unit) {
         debts.map { it.periodYear }.filter { it > 0 }.distinct().sortedDescending().ifEmpty { listOf(LocalDate.now().year) }
     }
     var year by remember(years) { mutableStateOf(years.first()) }
+
+    // Ο χρήστης άνοιξε τις Οφειλές: είδε ό,τι μπήκε, το σηματάκι σβήνει
+    LaunchedEffect(Unit) { NewDebtsBadge.clear(context) }
 
     fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 
@@ -361,7 +366,15 @@ fun DebtsScreen(onMenu: () -> Unit) {
         DebtImportDialog(
             report = report,
             onDismiss = { pending = null },
-            onConfirm = { chosen -> pending = null; scope.launch { repository.saveAll(chosen); toast("Αποθηκεύτηκαν ${chosen.size} οφειλές") } },
+            onConfirm = { chosen ->
+                pending = null
+                scope.launch {
+                    repository.saveAll(chosen)
+                    // Ο χρήστης τις μόλις είδε και τις ενέκρινε — δεν χρειάζεται σηματάκι
+                    NewDebtsBadge.clear(context)
+                    toast("Αποθηκεύτηκαν ${chosen.size} οφειλές")
+                }
+            },
         )
     }
 }
