@@ -51,6 +51,12 @@ object DebtParser {
     private val ANY_AMOUNT = Regex("""[0-9][0-9.]*,[0-9]{2}""")
     private val DATE = Regex("""(\d{1,2})/(\d{1,2})/(\d{4})""")
 
+    /** Οι ετικέτες που ακολουθούν το «Είδος Φόρου» στο σημείωμα της ΑΑΔΕ. */
+    private val FOLLOWING_LABELS = listOf(
+        "Ημερολογιακή", "Συνολικό", "Ποσό", "Ταυτότητα", "Ημ/νία",
+        "Προσοχή", "ΔΟΥ", "Τύπος",
+    )
+
     /** «Ν.4172/2013», «ΑΡ64Ν4172/13» — κάθε είδος φόρου κλείνει με νόμο. */
     private val LAW_REFERENCE = Regex("""Ν\.?\s?\d{4}\s*/\s*\d{2,4}""")
     private val PERIOD_SLASH = Regex("""(\d{1,2})\s*/\s*(\d{4})""")
@@ -355,19 +361,25 @@ object DebtParser {
     }
 
     private fun labelledTaxKind(text: String): String? {
-        val next = listOf(
-            "Ημερολογιακή", "Συνολικό", "Ποσό", "Ταυτότητα", "Ημ/νία",
-            "Προσοχή", "ΔΟΥ", "Τύπος",
-        ).joinToString("|") { anchor(it) }
+        val next = FOLLOWING_LABELS.joinToString("|") { anchor(it) }
         val match = Regex(
             anchor("Είδος Φόρου") + """\s*:?\s*([\s\S]{1,140}?)\s*(?=$next|$)""",
         ).find(text) ?: return null
-        return match.groupValues[1]
+        val value = match.groupValues[1]
             .replace(Regex("""\s+"""), " ")
             .trim()
             .trimEnd(',', '.', ':')
             .take(90)
             .ifBlank { null }
+            ?: return null
+
+        // Σε διάταξη στηλών η τιμή δεν βρίσκεται κάτω από την ετικέτα της: από
+        // κάτω κάθεται η **επόμενη ετικέτα**. Χωρίς αυτόν τον έλεγχο, το είδος
+        // φόρου έβγαινε «ΗΜΕΡΟΛΟΓΙΑΚΗ ΠΕΡΙΟΔΟΣ» και η εφεδρεία δεν έτρεχε ποτέ.
+        val isLabel = FOLLOWING_LABELS.any { label ->
+            Regex("^" + anchor(label)).containsMatchIn(value)
+        }
+        return if (isLabel) null else value
     }
 
     // ----------------------------------------------- διαφημιστικά τέλη ---
