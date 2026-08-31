@@ -1,5 +1,6 @@
 package gr.prosfora.app.ui.jobs
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,15 +14,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -78,6 +84,14 @@ fun JobsScreen(
         .sortedByDescending { it.offer.workEndDay ?: 0 }
 
     var picking by remember { mutableStateOf<DateTarget?>(null) }
+    var adding by remember { mutableStateOf(false) }
+
+    // Υποψήφιες: όσες δεν είναι ήδη δουλειά και δεν έχουν ημερομηνία έναρξης
+    val candidates = remember(offers) {
+        offers
+            .filter { it.jobStage == JobStage.NOT_A_JOB && it.offer.workStartDay == null }
+            .sortedByDescending { it.offer.dateEpochDay }
+    }
 
     Scaffold(
         topBar = {
@@ -86,17 +100,27 @@ fun JobsScreen(
                 navigationIcon = { gr.prosfora.app.ui.MenuButton(onMenu) },
             )
         },
+        floatingActionButton = {
+            if (candidates.isNotEmpty()) {
+                FloatingActionButton(onClick = { adding = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Προσθήκη εργασίας")
+                }
+            }
+        },
     ) { padding ->
         if (jobs.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text(
-                    "Δεν υπάρχουν ολοκληρωμένες προσφορές ακόμη",
+                    if (candidates.isEmpty()) {
+                        "Δεν υπάρχουν προσφορές για να γίνουν εργασίες"
+                    } else {
+                        "Καμία εργασία ακόμη — πρόσθεσε με το +"
+                    },
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            return@Scaffold
-        }
+        } else {
 
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -107,6 +131,18 @@ fun JobsScreen(
             section("Χωρίς έναρξη", pending, settings, viewModel, { picking = it }, onRequestReview)
             section("Ολοκληρωμένες", finished, settings, viewModel, { picking = it }, onRequestReview)
         }
+        }
+    }
+
+    if (adding) {
+        AddJobDialog(
+            candidates = candidates,
+            onDismiss = { adding = false },
+            onPick = { chosen ->
+                adding = false
+                viewModel.updateOffer(chosen.offer.copy(inJobs = true))
+            },
+        )
     }
 
     picking?.let { target ->
@@ -251,4 +287,55 @@ private fun JobCard(
             }
         }
     }
+}
+
+/**
+ * Ποια προσφορά γίνεται εργασία.
+ *
+ * Δείχνει μόνο όσες δεν έχουν ημερομηνία έναρξης και δεν είναι ήδη στη λίστα —
+ * αυτές ακριβώς που έχει νόημα να προστεθούν. Η επιλογή γράφεται στην προσφορά
+ * και ταξιδεύει στην κοινόχρηστη βάση όπως κάθε άλλη αλλαγή της.
+ */
+@Composable
+private fun AddJobDialog(
+    candidates: List<OfferWithDetails>,
+    onDismiss: () -> Unit,
+    onPick: (OfferWithDetails) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Προσθήκη εργασίας") },
+        text = {
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                items(candidates, key = { it.offer.id }) { candidate ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(candidate) }
+                            .padding(vertical = 10.dp),
+                    ) {
+                        Text(
+                            candidate.offer.address.ifBlank { "Χωρίς διεύθυνση" },
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            listOfNotNull(
+                                candidate.fullName.ifBlank { null },
+                                candidate.offer.dateEpochDay.asOfferDate(),
+                                candidate.offer.status.label,
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Κλείσιμο") } },
+    )
 }

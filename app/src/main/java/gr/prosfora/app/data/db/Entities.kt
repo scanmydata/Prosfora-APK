@@ -39,6 +39,13 @@ data class OfferEntity(
     /** Προαιρετικό νέο πρόσθετο κόστος που ορίζει ο χρήστης με όνομα και τιμή. */
     val customExtraName: String = "",
     val customExtraCost: Double = 0.0,
+    /**
+     * Αν η προσφορά έχει μπει ρητά στις Εργασίες.
+     *
+     * Πριν, κάθε ολοκληρωμένη προσφορά εμφανιζόταν εκεί μόνη της και η λίστα
+     * γέμιζε με δουλειές που δεν έγιναν ποτέ. Η επιλογή είναι πλέον του χρήστη.
+     */
+    val inJobs: Boolean = false,
     val source: String = "",
     val deleted: Boolean = false,
 )
@@ -129,7 +136,10 @@ data class OfferWithDetails(
     val grandTotal: Double get() = total + vatAmount
     val year: Int get() = java.time.LocalDate.ofEpochDay(offer.dateEpochDay).year
     val jobStage: JobStage get() = when {
-        offer.status != OfferStatus.COMPLETED -> JobStage.NOT_A_JOB
+        // Οι παλιές δουλειές —όσες έχουν ήδη ημερομηνίες— μένουν ορατές χωρίς
+        // να χρειαστεί ο χρήστης να τις ξαναδιαλέξει μία προς μία
+        !offer.inJobs && offer.workStartDay == null && offer.workEndDay == null ->
+            JobStage.NOT_A_JOB
         offer.workEndDay != null -> JobStage.FINISHED
         offer.workStartDay != null -> JobStage.IN_PROGRESS
         else -> JobStage.PENDING

@@ -24,7 +24,7 @@ class Converters {
 
 @Database(
     entities = [OfferEntity::class, SpaceEntity::class, NoteEntity::class, NotePresetEntity::class, DebtEntity::class, EmployeeEntity::class],
-    version = 15,
+    version = 16,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -133,6 +133,17 @@ abstract class ProsforaDatabase : RoomDatabase() {
             }
         }
 
+        /** v16: η προσφορά μπαίνει στις Εργασίες μόνο όταν το ζητήσει ο χρήστης. */
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(connection: SupportSQLiteDatabase) {
+                connection.execSQL("ALTER TABLE offers ADD COLUMN inJobs INTEGER NOT NULL DEFAULT 0")
+                // Ό,τι έχει ήδη ημερομηνία εργασιών ήταν όντως δουλειά
+                connection.execSQL(
+                    "UPDATE offers SET inJobs = 1 WHERE workStartDay IS NOT NULL OR workEndDay IS NOT NULL",
+                )
+            }
+        }
+
         val DEFAULT_PRESETS = listOf(
             "Στην προσφορά δεν περιλαμβάνεται ο ΦΠΑ τιμολογίου.",
             "Η προσφορά περιλαμβάνει την εργασία και τα υλικά.",
@@ -150,7 +161,7 @@ abstract class ProsforaDatabase : RoomDatabase() {
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                     MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                     MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
-                    MIGRATION_13_14, MIGRATION_14_15,
+                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
                 )
                 .addCallback(object : Callback() {
                     override fun onCreate(connection: SupportSQLiteDatabase) {

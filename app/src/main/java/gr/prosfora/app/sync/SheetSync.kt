@@ -227,6 +227,10 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
             vatIncluded = row[22] == "1", scaffolding = row[23] == "1", scaffoldingCost = row[24].toDoubleOrNull() ?: 0.0,
             permit = row[25] == "1", permitCost = row[26].toDoubleOrNull() ?: 0.0,
             customExtraName = row.getOrElse(27) { "" }, customExtraCost = row.getOrElse(28) { "" }.toDoubleOrNull() ?: 0.0,
+            // Παλιά φύλλα δεν έχουν τη στήλη· τότε μετράνε οι ημερομηνίες
+            inJobs = row.getOrElse(29) { "" }.let { flag ->
+                if (flag.isBlank()) row[14].isNotBlank() || row[15].isNotBlank() else flag == "1"
+            },
         )
     }
 
@@ -268,7 +272,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
     }
 
     private fun offerRows(offers: List<OfferEntity>) = listOf(OFFER_HEADER) + offers.map {
-        listOf(it.id, it.address, it.dateEpochDay.toString(), it.kind, it.email, it.status.name, it.createdAt.toString(), it.updatedAt.toString(), it.lastSentAt?.toString().orEmpty(), if (it.deleted) "1" else "0", it.customerName, it.customerPhone, it.notifiedAt?.toString().orEmpty(), it.notifiedVia.orEmpty(), it.workStartDay?.toString().orEmpty(), it.workEndDay?.toString().orEmpty(), it.reviewSentAt?.toString().orEmpty(), it.validUntilDay?.toString().orEmpty(), it.paymentTerms, it.source, it.customerLastName, it.customerGender.name, if (it.vatIncluded) "1" else "0", if (it.scaffolding) "1" else "0", it.scaffoldingCost.toString(), if (it.permit) "1" else "0", it.permitCost.toString(), it.customExtraName, it.customExtraCost.toString())
+        listOf(it.id, it.address, it.dateEpochDay.toString(), it.kind, it.email, it.status.name, it.createdAt.toString(), it.updatedAt.toString(), it.lastSentAt?.toString().orEmpty(), if (it.deleted) "1" else "0", it.customerName, it.customerPhone, it.notifiedAt?.toString().orEmpty(), it.notifiedVia.orEmpty(), it.workStartDay?.toString().orEmpty(), it.workEndDay?.toString().orEmpty(), it.reviewSentAt?.toString().orEmpty(), it.validUntilDay?.toString().orEmpty(), it.paymentTerms, it.source, it.customerLastName, it.customerGender.name, if (it.vatIncluded) "1" else "0", if (it.scaffolding) "1" else "0", it.scaffoldingCost.toString(), if (it.permit) "1" else "0", it.permitCost.toString(), it.customExtraName, it.customExtraCost.toString(), if (it.inJobs) "1" else "0")
     }
 
     private fun debtRows(debts: List<DebtEntity>) = listOf(DEBT_HEADER) + debts.map {
@@ -320,7 +324,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         const val TAB_EMPLOYEE_COSTS = "Κόστη_Εργαζομένων"
         val ALL_TABS = listOf(TAB_OFFERS, TAB_SPACES, TAB_NOTES, TAB_DEBTS, TAB_PEOPLE, TAB_EMPLOYEE_COSTS)
         val EMPLOYEE_COST_HEADER = listOf("ID_Εργαζομένου", "Όνομα", "Έτος", "Μήνας", "Πληρωτέο", "Κόστος ενσήμων", "Ένσημα")
-        private val OFFER_HEADER = listOf("ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email", "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο", "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης", "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση", "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή", "Επώνυμο", "Φύλο", "ΦΠΑ", "Σκαλωσιά", "Κόστος σκαλωσιάς", "Άδεια", "Κόστος άδειας", "Πρόσθετο κόστος", "Τιμή πρόσθετου κόστους")
+        private val OFFER_HEADER = listOf("ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email", "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο", "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης", "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση", "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή", "Επώνυμο", "Φύλο", "ΦΠΑ", "Σκαλωσιά", "Κόστος σκαλωσιάς", "Άδεια", "Κόστος άδειας", "Πρόσθετο κόστος", "Τιμή πρόσθετου κόστους", "Στις εργασίες")
         private val DEBT_HEADER = listOf("ID_Οφειλής", "Φορέας", "Μήνα", "Έτος", "Λήξη", "Ποσό", "Ταυτότητα / RF", "Περιγραφή", "Εργαζόμενος", "Κωδικός", "Πληρώθηκε", "Ημ. πληρωμής", "Πηγή", "Αρχείο Drive", "Δημιουργήθηκε", "Ενημερώθηκε", "Διαγραμμένο", "Ημ. εξόφλησης", "Καταχωρήθηκε από", "ΑΜ ΙΚΑ")
         private val PEOPLE_HEADER = listOf("ID_Εργαζόμενου", "Όνομα", "Ψευδώνυμο", "Κωδικός", "Ενημερώθηκε", "Διαγραμμένο", "Αποχώρηση", "ΑΜ ΙΚΑ")
         private val SPACE_HEADER = listOf("ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)", "Τιμή Μονάδος", "Σειρά", "Ενημερώθηκε", "Διαγραμμένο")
