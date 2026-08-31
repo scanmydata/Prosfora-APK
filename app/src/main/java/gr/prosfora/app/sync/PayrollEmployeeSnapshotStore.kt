@@ -26,6 +26,12 @@ object PayrollEmployeeSnapshotStore {
                 if (year <= 0 || month !in 1..12) return@forEach
                 val key = "%04d-%02d".format(year, month)
                 val previous = current.optJSONObject(key)
+
+                // Payable already comes from the canonical merged DebtEntity rows.
+                // Insurance cost is different: the same employee can appear more than
+                // once in the imported payroll PDF while DebtParser merges those rows.
+                // Therefore we must inspect ALL employee blocks in this same PDF and
+                // sum their insurance costs, independently of the number of DebtEntity rows.
                 val extracted = PayrollMetricsExtractor.aggregate(ocrText, periodRows)
                 val payable = periodRows.sumOf { it.amount }
                 val insuranceCost = extracted.insuranceCost
@@ -34,6 +40,7 @@ object PayrollEmployeeSnapshotStore {
                 val insuranceDays = extracted.insuranceDays
                     ?: previous?.optInt("insuranceDays", 0)?.takeIf { it > 0 }
                     ?: PayrollInsuranceDaysStore.daysFor(context.applicationContext, ika, year, month)
+
                 current.put(key, JSONObject().apply {
                     put("payable", payable)
                     put("insuranceCost", insuranceCost)
@@ -41,6 +48,7 @@ object PayrollEmployeeSnapshotStore {
                     previous?.optString("source")?.takeIf { it.isNotBlank() }?.let { put("source", it) }
                 })
             }
+
             val employee = old ?: EmployeeEntity(
                 id = ika,
                 amIka = ika,
@@ -72,14 +80,24 @@ object PayrollEmployeeSnapshotStore {
                 val month = parts[1].toIntOrNull() ?: return@forEach
                 if (year <= 0 || month !in 1..12) return@forEach
                 val row = root.optJSONObject(key) ?: return@forEach
-                add(Monthly(year, month, row.optDouble("payable", 0.0), row.optDouble("insuranceCost", 0.0), row.optInt("insuranceDays", 0)))
+                add(Monthly(
+                    year,
+                    month,
+                    row.optDouble("payable", 0.0),
+                    row.optDouble("insuranceCost", 0.0),
+                    row.optInt("insuranceDays", 0),
+                ))
             }
         }.sortedWith(compareByDescending<Monthly> { it.year }.thenByDescending { it.month })
     }
 
     fun totals(employee: EmployeeEntity, year: Int? = null): Totals {
         val rows = history(employee).filter { year == null || it.year == year }
-        return Totals(rows.sumOf { it.payable }, rows.sumOf { it.insuranceCost }, rows.sumOf { it.insuranceDays })
+        return Totals(
+            payable = rows.sumOf { it.payable },
+            insuranceCost = rows.sumOf { it.insuranceCost },
+            insuranceDays = rows.sumOf { it.insuranceDays },
+        )
     }
 
     private object PayrollMetricsExtractor {
@@ -89,61 +107,96 @@ object PayrollEmployeeSnapshotStore {
             Regex("""\bΤΑ\s*[:=\-]?\s*(\d{1,2})(?:[.,]\d+)?\b""", RegexOption.IGNORE_CASE),
             Regex("""\b(\d{1,2})(?:[.,]\d+)?\s+ΤΑ\b""", RegexOption.IGNORE_CASE),
         )
+
         data class Metrics(val insuranceCost: Double?, val insuranceDays: Int?)
         private data class Candidate(val lineIndex: Int, val numbers: List<Double>)
 
-        private fun parseMoney(raw: String): Double? = if (raw.contains(',')) raw.replace(".", "").replace(',', '.').toDoubleOrNull() else raw.replace(",", "").toDoubleOrNull()
+        private fun parseMoney(raw: String): Double? =
+            if (raw.contains(',')) raw.replace(".", "").replace(',', '.').toDoubleOrNull()
+            else raw.replace(",", "").toDoubleOrNull()
 
+        /**
+         * Reads every occurrence of each employee code in the same imported PDF.
+         * This is intentionally independent from the number of DebtEntity rows:
+         * DebtParser may merge several payroll records into one payable debt.
+         */
         fun aggregate(text: String, debts: List<DebtEntity>): Metrics {
             if (text.isBlank() || debts.isEmpty()) return Metrics(null, null)
-            val occurrenceByCode = mutableMapOf<String, Int>()
+
+            val employeeCodes = debts.map { it.personCode.trim() }
+                .filter { it.isNotBlank() }
+                .map { it.trimStart('0').ifBlank { it } }
+                .distinct()
+
+            if (employeeCodes.isEmpty()) return Metrics(null, null)
+
             var insuranceSum = 0.0
             var insuranceFound = false
             var maxDays: Int? = null
-            debts.forEach { debt ->
-                val code = debt.personCode.trim()
-                if (code.isBlank()) return@forEach
-                val normalized = code.trimStart('0').ifBlank { code }
-                val occurrence = occurrenceByCode.getOrDefault(normalized, 0)
-                occurrenceByCode[normalized] = occurrence + 1
-                val row = find(text, debt, occurrence)
-                row.insuranceCost?.let { insuranceSum += it; insuranceFound = true }
-                row.insuranceDays?.let { maxDays = maxDays?.let { old -> maxOf(old, it) } ?: it }
-            }
-            return Metrics(insuranceSum.takeIf { insuranceFound }, maxDays)
-        }
 
-        private fun find(text: String, debt: DebtEntity, occurrence: Int): Metrics {
-            val code = debt.personCode.trim()
-            if (code.isBlank()) return Metrics(null, null)
-            val normalized = code.trimStart('0').ifBlank { code }
-            val lines = text.lines()
-            var seen = 0
-            var start = -1
-            for (i in lines.indices) {
-                val line = lines[i].removePrefix("\uFEFF").trim()
-                val row = rowStart.find(line) ?: continue
-                val rowCode = row.groupValues[1].trimStart('0').ifBlank { row.groupValues[1] }
-                if (rowCode == normalized) {
-                    if (seen == occurrence) { start = i; break }
-                    seen++
+            employeeCodes.forEach { code ->
+                val occurrences = findAll(text, code)
+                occurrences.forEach { metrics ->
+                    metrics.insuranceCost?.let {
+                        insuranceSum += it
+                        insuranceFound = true
+                    }
+                    metrics.insuranceDays?.let {
+                        maxDays = maxDays?.let { old -> maxOf(old, it) } ?: it
+                    }
                 }
             }
-            if (start < 0) return Metrics(null, null)
-            val end = (start + 1 until lines.size).firstOrNull { rowStart.containsMatchIn(lines[it].removePrefix("\uFEFF").trim()) } ?: lines.size
-            val block = lines.subList(start, end)
+
+            return Metrics(
+                insuranceCost = insuranceSum.takeIf { insuranceFound },
+                insuranceDays = maxDays,
+            )
+        }
+
+        private fun findAll(text: String, normalizedCode: String): List<Metrics> {
+            val lines = text.lines()
+            val starts = buildList {
+                lines.forEachIndexed { index, rawLine ->
+                    val line = rawLine.removePrefix("\uFEFF").trim()
+                    val row = rowStart.find(line) ?: return@forEachIndexed
+                    val rowCode = row.groupValues[1].trimStart('0').ifBlank { row.groupValues[1] }
+                    if (rowCode == normalizedCode) add(index)
+                }
+            }
+
+            if (starts.isEmpty()) return emptyList()
+
+            return starts.mapIndexed { occurrenceIndex, start ->
+                val end = starts.getOrNull(occurrenceIndex + 1)
+                    ?: lines.size
+                extractBlock(lines.subList(start, end), start)
+            }
+        }
+
+        private fun extractBlock(block: List<String>, absoluteStart: Int): Metrics {
             val days = block.asSequence()
-                .flatMap { line -> daysPatterns.asSequence().mapNotNull { it.find(line)?.groupValues?.get(1) } }
+                .flatMap { line ->
+                    daysPatterns.asSequence().mapNotNull { pattern ->
+                        pattern.find(line)?.groupValues?.get(1)
+                    }
+                }
                 .mapNotNull { it.replace(',', '.').toDoubleOrNull()?.toInt() }
                 .filter { it in 0..31 }
                 .firstOrNull()
+
             val candidates = block.mapIndexedNotNull { index, line ->
                 val nums = moneyToken.findAll(line).mapNotNull { parseMoney(it.value) }.toList()
-                nums.takeIf { it.size >= 8 }?.let { Candidate(start + index, it) }
+                nums.takeIf { it.size >= 8 }?.let { Candidate(absoluteStart + index, it) }
             }
-            val total = candidates.maxWithOrNull(compareBy<Candidate> { it.numbers.size }.thenBy { it.lineIndex })
+
+            val total = candidates.maxWithOrNull(
+                compareBy<Candidate> { it.numbers.size }.thenBy { it.lineIndex }
+            )
+
             if (total != null) {
                 val n = total.numbers
+                // In the payroll total-insurance row the 4th amount is the
+                // combined employee + employer insurance cost (e.g. 118,86).
                 val insurance = when {
                     n.size >= 4 -> n[3]
                     n.size >= 3 -> n[1] + n[2]
@@ -151,6 +204,7 @@ object PayrollEmployeeSnapshotStore {
                 }
                 return Metrics(insurance, days)
             }
+
             return Metrics(null, days)
         }
     }
