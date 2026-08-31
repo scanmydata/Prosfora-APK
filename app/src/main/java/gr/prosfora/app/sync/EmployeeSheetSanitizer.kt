@@ -24,7 +24,7 @@ object EmployeeSheetSanitizer {
         if (SheetSync.TAB_PEOPLE !in titles) client.addSheet(spreadsheetId, SheetSync.TAB_PEOPLE)
 
         val people = ProsforaDatabase.get(app).employeeDao().allForSync()
-            .filter { it.amIka.isNotBlank() && !it.deleted }
+            .filter { !it.deleted }
             .sortedBy { it.name.uppercase() }
 
         val rows = listOf(HEADER) + people.map {

@@ -49,7 +49,7 @@ class DebtRepository(context: Context) {
     }
 
     suspend fun deleteLegacyPayrollRows(fileIds: Collection<String>) {
-        if (fileIds.isNotEmpty()) debts.deleteLegacyPayrollRows(fileIds.toList())
+        if (fileIds.isNotEmpty()) debts.deleteLegacyPayrollRows(fileIds.toList(), System.currentTimeMillis())
     }
 
     suspend fun unpaidDebts(): List<DebtEntity> {
@@ -77,7 +77,10 @@ class DebtRepository(context: Context) {
         val employee = employees.allForSync().firstOrNull { it.id == id }
         val ika = EmployeeEntity.normalizeIka(employee?.amIka ?: id)
         settings.rememberDeletedEmployee(if (ika.isNotBlank()) ika else id)
-        if (ika.isNotBlank()) debts.hardDeletePayrollForEmployee(ika)
+        // Ο εργαζόμενος φεύγει, οι μισθοδοσίες του μένουν σημειωμένες ως
+        // διαγραμμένες: είναι πληρωμές που έγιναν, και το φύλλο του Drive
+        // πρέπει να τις δείχνει σβησμένες, όχι να μην τις έχει ποτέ δει
+        if (ika.isNotBlank()) debts.retirePayrollForEmployee(ika, System.currentTimeMillis())
         employees.hardDelete(id)
         EmployeeAliasRegistry.refresh(employees.allForSync())
     }
@@ -139,11 +142,14 @@ class DebtRepository(context: Context) {
             if (ika.isBlank()) null else ika to employee
         }.groupBy({ it.first }, { it.second })
 
+        // Κλειδί κατά προτίμηση ο ΑΜ ΙΚΑ· όταν λείπει, ο κωδικός μισθοδοσίας.
+        // Απαιτώντας τον, όποιος δεν τον έδωσε καθαρά στο OCR έμενε χωρίς
+        // καρτέλα και έλειπε και από το φύλλο των κοστών.
         val payrollByIka = debts.allForSync().asSequence()
             .filter { !it.deleted && it.kind.perPerson }
             .mapNotNull { debt ->
-                val ika = EmployeeEntity.normalizeIka(debt.amIka)
-                if (ika.isBlank()) null else ika to debt
+                val key = EmployeeEntity.keyFor(debt.amIka, debt.personCode, debt.personName)
+                if (key.isBlank()) null else key to debt
             }.groupBy({ it.first }, { it.second })
 
         var hardDeletedDuplicates = 0
@@ -157,14 +163,20 @@ class DebtRepository(context: Context) {
         }
 
         val updates = payrollByIka.map { (ika, rows) ->
-            val existing = storedByIka[ika]?.firstOrNull { it.id == ika } ?: storedByIka[ika]?.maxByOrNull { it.updatedAt }
+            val existing = storedByIka[ika]?.firstOrNull { it.id == ika }
+                ?: storedByIka[ika]?.maxByOrNull { it.updatedAt }
+                ?: stored.firstOrNull { it.id == ika }
             val latest = rows.maxByOrNull { it.updatedAt } ?: rows.first()
             val summary = existing?.payrollSummaryJson?.takeIf { it.isNotBlank() && it != "{}" }
                 ?: ensureSnapshotPeriods("{}", rows, ika)
 
             EmployeeEntity(
                 id = ika,
-                amIka = ika,
+                // Το πεδίο μένει κενό όταν όντως δεν ξέρουμε τον ΑΜ ΙΚΑ, αντί
+                // να γεμίσει με τον κωδικό και να περάσει για ΑΜ ΙΚΑ
+                amIka = EmployeeEntity.normalizeIka(
+                    rows.firstOrNull { it.amIka.isNotBlank() }?.amIka.orEmpty(),
+                ).ifBlank { existing?.amIka.orEmpty() },
                 name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim() ?: existing?.name.orEmpty(),
                 alias = existing?.alias.orEmpty(),
                 code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim() ?: existing?.code.orEmpty(),

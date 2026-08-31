@@ -50,12 +50,14 @@ object EmployeeIndexReconciler {
             }
             .groupBy({ it.first }, { it.second })
 
+        // Ο ΑΜ ΙΚΑ προτιμάται αλλά δεν απαιτείται: όποιος δεν τον έδωσε καθαρά
+        // στο OCR έμενε χωρίς καρτέλα και έλειπε από το φύλλο των κοστών.
         val payrollByIka = debtDao.allForSync()
             .asSequence()
             .filter { !it.deleted && it.kind.perPerson }
             .mapNotNull { debt ->
-                val ika = EmployeeEntity.normalizeIka(debt.amIka)
-                if (ika.isBlank()) null else ika to debt
+                val key = EmployeeEntity.keyFor(debt.amIka, debt.personCode, debt.personName)
+                if (key.isBlank()) null else key to debt
             }
             .groupBy({ it.first }, { it.second })
 
@@ -63,11 +65,14 @@ object EmployeeIndexReconciler {
             val existing = currentByIka[ika]
                 ?.firstOrNull { it.id == ika }
                 ?: currentByIka[ika]?.maxByOrNull { it.updatedAt }
+                ?: stored.firstOrNull { it.id == ika }
             val latest = rows.maxByOrNull { it.updatedAt } ?: rows.first()
 
             EmployeeEntity(
                 id = ika,
-                amIka = ika,
+                amIka = EmployeeEntity.normalizeIka(
+                    rows.firstOrNull { it.amIka.isNotBlank() }?.amIka.orEmpty(),
+                ).ifBlank { existing?.amIka.orEmpty() },
                 name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim()
                     ?: existing?.name.orEmpty(),
                 alias = existing?.alias.orEmpty(),

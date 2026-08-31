@@ -4,14 +4,20 @@ import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -20,8 +26,13 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialogDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +40,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -42,7 +54,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeEntity
@@ -50,8 +64,13 @@ import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.sync.EmployeeIndexReconciler
 import gr.prosfora.app.sync.PayrollEmployeeSnapshotStore
 import gr.prosfora.app.ui.MenuButton
+import gr.prosfora.app.ui.debts.monthLabel
 import gr.prosfora.app.util.asMoney
+import gr.prosfora.app.util.asOfferDate
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.Calendar
 
 private val BrandGreen = Color(0xFF00E2A2)
@@ -81,12 +100,16 @@ fun EmployeesScreen(onMenu: () -> Unit) {
 
     val filtered = remember(people, query) {
         val q = query.trim().lowercase()
-        people.filter {
-            q.isBlank() ||
-                it.name.lowercase().contains(q) ||
-                it.alias.lowercase().contains(q) ||
-                it.amIka.contains(q)
-        }
+        people
+            .filter {
+                q.isBlank() ||
+                    it.name.lowercase().contains(q) ||
+                    it.alias.lowercase().contains(q) ||
+                    it.amIka.contains(q)
+            }
+            // Όποιος αποχώρησε πέφτει στο τέλος: δεν κρύβεται, αλλά ούτε
+            // στέκεται ανάμεσα σε αυτούς που πληρώνονται κάθε μήνα
+            .sortedWith(compareBy({ it.gone() }, { it.display.uppercase() }))
     }
 
     Scaffold(
@@ -114,40 +137,11 @@ fun EmployeesScreen(onMenu: () -> Unit) {
             }
 
             items(filtered, key = { it.id }) { employee ->
-                val totals = PayrollEmployeeSnapshotStore.totals(employee)
-                Card(
-                    onClick = { selected = employee },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant),
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    employee.display,
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (employee.alias.isNotBlank()) BrandGreen else MaterialTheme.colorScheme.onSurface,
-                                )
-                                if (employee.alias.isNotBlank()) {
-                                    Text(employee.name, style = MaterialTheme.typography.bodyMedium)
-                                }
-                                Text("ΑΜ ΙΚΑ: ${employee.amIka}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                Text("Κωδικός: ${employee.code.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall)
-                            }
-                            IconButton(onClick = { selected = employee }) {
-                                Icon(Icons.Default.Edit, contentDescription = "Άνοιγμα καρτέλας", tint = BrandGreen)
-                            }
-                            IconButton(onClick = { deleting = employee }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Διαγραφή εργαζομένου", tint = DeleteRed)
-                            }
-                        }
-                        Text("Σύνολο ενσήμων: ${totals.insuranceDays}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-                        Text("Συνολικά πληρωτέα: ${totals.payable.asMoney()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-                        Text("Κόστος ενσήμων: ${totals.insuranceCost.asMoney()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-                    }
-                }
+                EmployeeCard(
+                    employee = employee,
+                    onOpen = { selected = employee },
+                    onDelete = { deleting = employee },
+                )
             }
 
             if (filtered.isEmpty()) {
@@ -211,6 +205,8 @@ private fun EmployeeDetailScreen(
     val debts by repository.observeAll().collectAsState(initial = emptyList())
     var showEdit by remember { mutableStateOf(false) }
     var alias by remember(employee) { mutableStateOf(employee.alias) }
+    var leftDay by remember(employee) { mutableStateOf(employee.leftDay) }
+    var pickingLeft by remember { mutableStateOf(false) }
     var showAnnualTotals by remember { mutableStateOf(false) }
 
     val history = PayrollEmployeeSnapshotStore.history(employee)
@@ -315,8 +311,7 @@ private fun EmployeeDetailScreen(
             title = { Text("Επεξεργασία εργαζομένου") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("ΑΜ ΙΚΑ: ${employee.amIka}", color = BrandGreen, fontWeight = FontWeight.Bold)
-                    Text(employee.name)
+                    Text(employee.name, fontWeight = FontWeight.Bold)
                     OutlinedTextField(
                         value = alias,
                         onValueChange = { alias = it },
@@ -324,19 +319,153 @@ private fun EmployeeDetailScreen(
                         singleLine = true,
                         label = { Text("Ψευδώνυμο") },
                     )
+                    // Η αποχώρηση δεν κρύβει τον εργαζόμενο και δεν αγγίζει
+                    // τις μισθοδοσίες του: τον στέλνει στο τέλος της λίστας
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            leftDay?.let { "Αποχώρησε ${it.asOfferDate()}" } ?: "Χωρίς αποχώρηση",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { pickingLeft = true }) { Text("Ορισμός", color = BrandGreen) }
+                        if (leftDay != null) {
+                            TextButton(onClick = { leftDay = null }) { Text("Καθαρισμός", color = BrandGreen) }
+                        }
+                    }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val newEmployee = employee.copy(alias = alias.trim())
+                    val newEmployee = employee.copy(alias = alias.trim(), leftDay = leftDay)
                     scope.launch {
                         repository.saveEmployee(newEmployee)
                         showEdit = false
-                        Toast.makeText(context, "Αποθηκεύτηκε το ψευδώνυμο.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Η καρτέλα αποθηκεύτηκε.", Toast.LENGTH_SHORT).show()
                     }
                 }) { Text("Αποθήκευση", color = BrandGreen) }
             },
             dismissButton = { TextButton(onClick = { showEdit = false }) { Text("Άκυρο", color = BrandGreen) } },
         )
+    }
+
+    if (pickingLeft) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = (leftDay ?: LocalDate.now().toEpochDay()) * 86_400_000L,
+        )
+        DatePickerDialog(
+            onDismissRequest = { pickingLeft = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    // Ο επιλογέας δουλεύει σε UTC· η μετατροπή γίνεται εκεί,
+                    // αλλιώς η τοπική ζώνη μετακινεί τη μέρα κατά μία
+                    state.selectedDateMillis?.let { millis ->
+                        leftDay = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC)
+                            .toLocalDate().toEpochDay()
+                    }
+                    pickingLeft = false
+                }) { Text("Επιλογή", color = BrandGreen) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pickingLeft = false }) { Text("Άκυρο", color = BrandGreen) }
+            },
+        ) { DatePicker(state = state) }
+    }
+}
+
+/**
+ * Η καρτέλα ενός εργαζόμενου στη λίστα, με το ίδιο σχήμα που έχουν οι οφειλές:
+ * κουκκίδα κατάστασης, όνομα και περίοδος αριστερά, ποσό δεξιά.
+ *
+ * **Ο τρέχων μήνας κυριαρχεί.** Αυτό ρωτάει κανείς ανοίγοντας τη λίστα — τι
+ * τρέχει τώρα, όχι τι αθροίστηκε μέσα στη χρονιά. Τα σύνολα του έτους μένουν
+ * από κάτω, σε μικρότερο μέγεθος.
+ *
+ * Ο ΑΜ ΙΚΑ δεν εμφανίζεται: είναι ο σύνδεσμος της καρτέλας, όχι πληροφορία που
+ * χρειάζεται κανείς να διαβάσει. Η αναζήτηση εξακολουθεί να τον δέχεται.
+ */
+@Composable
+private fun EmployeeCard(
+    employee: EmployeeEntity,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val history = PayrollEmployeeSnapshotStore.history(employee)
+    val now = Calendar.getInstance()
+    val thisYear = now.get(Calendar.YEAR)
+    val thisMonth = now.get(Calendar.MONTH) + 1
+
+    // Ο τρέχων μήνας αν υπάρχει· αλλιώς ο πιο πρόσφατος που έχει καταγραφεί,
+    // ώστε η καρτέλα να μη δείχνει ποτέ άδεια όταν η μισθοδοσία αργεί
+    val current = history.firstOrNull { it.year == thisYear && it.month == thisMonth }
+        ?: history.maxByOrNull { it.year * 100 + it.month }
+    val yearly = PayrollEmployeeSnapshotStore.totals(employee, current?.year ?: thisYear)
+    val away = employee.gone()
+    val faded = MaterialTheme.colorScheme.onSurfaceVariant
+
+    Card(
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(if (away) faded else BrandGreen),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        employee.display,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (away) faded else MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        buildString {
+                            append(current?.let { monthLabel(it.month, it.year) } ?: "Καμία μισθοδοσία")
+                            current?.let { append(" · ${it.insuranceDays} ένσημα") }
+                            employee.leftDay?.let { append(" · αποχώρησε ${it.asOfferDate()}") }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = faded,
+                    )
+                }
+                Text(
+                    (current?.payable ?: 0.0).asMoney(),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (away) faded else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+
+            if (current != null) {
+                Text(
+                    "Κόστος ενσήμων μήνα ${current.insuranceCost.asMoney()}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                HorizontalDivider()
+                Text(
+                    "Έτος ${current.year} · πληρωτέα ${yearly.payable.asMoney()} · " +
+                        "ένσημα ${yearly.insuranceDays} · κόστος ${yearly.insuranceCost.asMoney()}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = faded,
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                IconButton(onClick = onOpen) {
+                    Icon(Icons.Default.Edit, contentDescription = "Άνοιγμα καρτέλας", tint = BrandGreen)
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Διαγραφή εργαζομένου", tint = DeleteRed)
+                }
+            }
+        }
     }
 }

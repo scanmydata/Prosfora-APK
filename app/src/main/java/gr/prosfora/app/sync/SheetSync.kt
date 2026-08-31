@@ -92,7 +92,9 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         // Employees are canonical by stable ID/AM IKA. Alias is only a UI field.
         val employeesForExport = db.employeeDao().allForSync()
             .filterNot { settings.deletedEmployeeIds.contains(it.id) }
-            .filter { it.id.isNotBlank() && it.amIka.isNotBlank() }
+            // Χωρίς φίλτρο ΑΜ ΙΚΑ: κάθε εργαζόμενος της βάσης γράφεται στο
+            // φύλλο, ανεξάρτητα από το αν το OCR έβγαλε καθαρά τον αριθμό του
+            .filter { it.id.isNotBlank() }
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name.ifBlank { it.amIka } })
 
         sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))

@@ -75,8 +75,12 @@ interface DebtDao {
     @Query("SELECT * FROM debts WHERE deleted = 0 AND paid = 0 ORDER BY periodYear DESC, periodMonth DESC, dueDay, kind") suspend fun unpaid(): List<DebtEntity>
     @Query("SELECT DISTINCT driveFileId FROM debts WHERE driveFileId != '' AND NOT ((kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = '')") suspend fun importedFileIds(): List<String>
     @Query("SELECT DISTINCT driveFileId FROM debts WHERE driveFileId != '' AND (kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = ''") suspend fun legacyPayrollFileIdsMissingIka(): List<String>
-    @Query("DELETE FROM debts WHERE driveFileId IN (:fileIds) AND (kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = ''") suspend fun deleteLegacyPayrollRows(fileIds: List<String>)
-    @Query("DELETE FROM debts WHERE amIka = :amIka AND (kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS')") suspend fun hardDeletePayrollForEmployee(amIka: String)
+    // Οι οφειλές μισθοδοσίας δεν φεύγουν ποτέ από τη βάση: μπαίνει 1 στο
+    // «Διαγραμμένο», όπως σε κάθε άλλη εγγραφή. Έτσι η διαγραφή ταξιδεύει στις
+    // άλλες συσκευές αντί να επιστρέφει με τον επόμενο συγχρονισμό, και το
+    // ιστορικό του εργαζόμενου παραμένει αναγνώσιμο.
+    @Query("UPDATE debts SET deleted = 1, updatedAt = :at WHERE driveFileId IN (:fileIds) AND (kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = ''") suspend fun deleteLegacyPayrollRows(fileIds: List<String>, at: Long)
+    @Query("UPDATE debts SET deleted = 1, updatedAt = :at WHERE amIka = :amIka AND (kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS')") suspend fun retirePayrollForEmployee(amIka: String, at: Long)
 }
 
 @Dao

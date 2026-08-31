@@ -105,6 +105,21 @@ data class EmployeeEntity(
     companion object {
         fun normalizeIka(raw: String): String = raw.filter(Char::isDigit)
         fun idForAmIka(amIka: String): String = normalizeIka(amIka)
+
+        /**
+         * Η ταυτότητα μιας καρτέλας.
+         *
+         * Ο ΑΜ ΙΚΑ είναι ο καλύτερος σύνδεσμος και προτιμάται πάντα. Δεν
+         * **απαιτείται** όμως: όταν λείπει, η καρτέλα κρέμεται από τον κωδικό
+         * μισθοδοσίας και τελευταία από το όνομα. Απαιτώντας τον, όποιος
+         * εργαζόμενος δεν τον έδινε καθαρά στο OCR δεν αποκτούσε καρτέλα
+         * καθόλου, και έλειπε και από το φύλλο του Drive.
+         */
+        fun keyFor(amIka: String, code: String, name: String): String {
+            normalizeIka(amIka).takeIf { it.isNotBlank() }?.let { return it }
+            code.trim().trimStart('0').takeIf { it.isNotBlank() }?.let { return "Κ$it" }
+            return legacyIdFor(name)
+        }
         @Deprecated("Use idForAmIka(amIka) for employee identity")
         fun idFor(name: String): String = legacyIdFor(name)
         fun legacyIdFor(name: String): String =
