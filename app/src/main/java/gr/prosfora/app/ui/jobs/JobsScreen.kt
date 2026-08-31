@@ -124,7 +124,8 @@ fun JobsScreen(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
+            // Χώρος για το FAB: αλλιώς σκεπάζει την τελευταία εργασία
+            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 112.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             section("Σε εξέλιξη", running, settings, viewModel, { picking = it }, onRequestReview)

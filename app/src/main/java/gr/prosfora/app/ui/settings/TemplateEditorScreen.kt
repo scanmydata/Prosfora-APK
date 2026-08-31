@@ -130,7 +130,8 @@ fun TemplateEditorScreen(onBack: () -> Unit) {
 
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(16.dp),
+                // Χώρος για το κουμπί αποθήκευσης
+                contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 112.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {

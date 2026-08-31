@@ -124,7 +124,7 @@ fun OffersListScreen(viewModel: OffersViewModel, onMenu: () -> Unit, onOpenOffer
                         Text(if (query.isBlank()) "Καμία προσφορά ακόμη" else "Κανένα αποτέλεσμα", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(offers, key = { it.offer.id }) { details ->
                             OfferRow(details, onClick = { onOpenOffer(details.offer.id) }, onLongPress = { pendingDelete = details })
                         }
