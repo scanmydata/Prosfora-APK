@@ -50,6 +50,9 @@ object DebtParser {
 
     private val ANY_AMOUNT = Regex("""[0-9][0-9.]*,[0-9]{2}""")
     private val DATE = Regex("""(\d{1,2})/(\d{1,2})/(\d{4})""")
+
+    /** «Ν.4172/2013», «ΑΡ64Ν4172/13» — κάθε είδος φόρου κλείνει με νόμο. */
+    private val LAW_REFERENCE = Regex("""Ν\.?\s?\d{4}\s*/\s*\d{2,4}""")
     private val PERIOD_SLASH = Regex("""(\d{1,2})\s*/\s*(\d{4})""")
 
     /**
@@ -166,9 +169,10 @@ object DebtParser {
             ?: amountAfter(text, anchor("Καταβλητέες Εισφορές"))
             ?: return emptyList()
 
-        val submission = Regex(
-            anchor("Αριθμ") + """\.?\s*""" + anchor("Υποβολής") + """\s*:?\s*(\d+)""",
+        val days = Regex(
+            anchor("Σύνολο Ημερών Ασφάλισης") + """\s*:?\s*(\d{1,4})""",
         ).find(text)?.groupValues?.get(1)
+        val wages = amountAfter(text, anchor("Σύνολο Αποδοχών"))
 
         return listOf(
             debt(
@@ -176,9 +180,14 @@ object DebtParser {
                 period = period,
                 amount = amount,
                 reference = rfCode(text),
+                // Το έντυπο λέει τι πληρώνεται και για πόση ασφάλιση. Και τα
+                // δύο χωράνε, και μαζί εξηγούν το ποσό — σκέτο «ΑΠΔ ΙΚΑ» δεν
+                // ξεχώριζε καν τον έναν μήνα από τον άλλο.
                 description = buildString {
-                    append(if (teka) "ΑΠΔ ΤΕΚΑ" else "ΑΠΔ ΙΚΑ")
-                    if (submission != null) append(" · υποβολή $submission")
+                    append(if (teka) "Εισφορές ΤΕΚΑ" else "Εισφορές ΙΚΑ")
+                    if (days != null) append(" · $days ημέρες ασφάλισης")
+                    if (wages != null) append(" · αποδοχές ${wages.asMoney()}")
+                    submissionNumber(text)?.let { append(" · υποβολή $it") }
                 },
                 fileName = fileName,
                 driveFileId = driveFileId,
@@ -305,7 +314,47 @@ object DebtParser {
      * Διαβάζεται ως ό,τι υπάρχει μέχρι την **επόμενη ετικέτα** και όχι μέχρι το
      * τέλος της γραμμής, αλλιώς έμενε μισό — «ΑΜΟΙΒΕΣ ΑΠΟ» χωρίς τη συνέχεια.
      */
-    internal fun taxKind(text: String): String? {
+    internal fun taxKind(text: String): String? = labelledTaxKind(text) ?: taxKindAboveRange(text)
+
+    /**
+     * Το είδος φόρου όταν χάθηκε η ετικέτα του.
+     *
+     * Δύο σταθερά του εντύπου το πιάνουν χωρίς αυτήν: κάθεται **ακριβώς πάνω**
+     * από την ημερολογιακή περίοδο, και τελειώνει σε παραπομπή νόμου
+     * («Ν.4172/2013», «ΑΡ64Ν4172/13»). Ισχύουν και στις δύο διατάξεις που
+     * βγάζει το OCR — και με την τιμή δίπλα στην ετικέτα, και σε στήλες.
+     *
+     * Όταν η γραμμή του νόμου έχει λιγότερες από τρεις λέξεις είναι συνέχεια
+     * της από πάνω, οπότε παίρνονται και οι δύο· αλλιώς στέκει μόνη της. Έτσι
+     * δεν κολλάει από πάνω το όνομα της ΔΟΥ.
+     */
+    private fun taxKindAboveRange(text: String): String? {
+        val lines = text.lines()
+        val range = lines.indexOfFirst { DATE_RANGE.containsMatchIn(it) }
+        if (range <= 0) return null
+
+        var at = range - 1
+        while (at >= 0 && lines[at].isBlank()) at--
+        if (at < 0) return null
+
+        val lawLine = lines[at].trim()
+        if (!LAW_REFERENCE.containsMatchIn(lawLine)) return null
+
+        val parts = mutableListOf(lawLine)
+        if (lawLine.split(Regex("""\s+""")).size < 3) {
+            var above = at - 1
+            while (above >= 0 && lines[above].isBlank()) above--
+            val previous = lines.getOrNull(above)?.trim().orEmpty()
+            val usable = previous.isNotBlank() &&
+                !ANY_AMOUNT.containsMatchIn(previous) &&
+                !DATE.containsMatchIn(previous) &&
+                previous.any { it.isLetter() }
+            if (usable) parts.add(0, previous)
+        }
+        return parts.joinToString(" ").replace(Regex("""\s+"""), " ").take(90).ifBlank { null }
+    }
+
+    private fun labelledTaxKind(text: String): String? {
         val next = listOf(
             "Ημερολογιακή", "Συνολικό", "Ποσό", "Ταυτότητα", "Ημ/νία",
             "Προσοχή", "ΔΟΥ", "Τύπος",
@@ -334,6 +383,7 @@ object DebtParser {
         ) ?: fromFileName(fileName)
 
         val cost = amountAfter(text, anchor("Κόστος Διαφήμισης") + """\s*€?""")
+        val rate = amountAfter(text, anchor("Ποσοστό Εισφορών"))
 
         return listOf(
             debt(
@@ -342,8 +392,10 @@ object DebtParser {
                 amount = amount,
                 reference = rfCode(text),
                 description = buildString {
-                    append("Εισφορές διαφήμισης")
-                    if (cost != null) append(" · κόστος ${cost.asMoney()}")
+                    append("Εισφορές διαφήμισης ΕΔΟΕΑΠ")
+                    if (rate != null) append(" ${trimZeros(rate)}%")
+                    if (cost != null) append(" · κόστος διαφήμισης ${cost.asMoney()}")
+                    submissionNumber(text)?.let { append(" · υποβολή $it") }
                 },
                 fileName = fileName,
                 driveFileId = driveFileId,
@@ -577,6 +629,15 @@ object DebtParser {
         source = fileName,
         driveFileId = driveFileId,
     )
+
+    /** «Αριθμ. Υποβολής» και «Αριθμός Υποβολής» — το ίδιο πράγμα. */
+    private fun submissionNumber(text: String): String? = Regex(
+        anchor("Αριθμ") + """[Α-Ω]*\.?\s*""" + anchor("Υποβολής") + """\s*:?\s*(\d+)""",
+    ).find(text)?.groupValues?.get(1)
+
+    /** «2,00» → «2». Το ποσοστό διαβάζεται καλύτερα χωρίς μηδενικά. */
+    private fun trimZeros(value: Double): String =
+        if (value == Math.floor(value)) value.toInt().toString() else value.asMoney().removeSuffix(" €")
 
     private fun periodOf(match: MatchResult?): Period? {
         if (match == null) return null
