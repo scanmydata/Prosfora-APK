@@ -30,20 +30,17 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         val remoteSpaces = readSpaces(spreadsheetId)
         val remoteNotes = readNotes(spreadsheetId)
         val remoteDebts = readDebts(spreadsheetId)
-        val remoteEmployees = readEmployees(spreadsheetId)
-            .filterNot { settings.deletedEmployeeIds.contains(it.id) }
+            .filterNot { settings.deletedEmployeeIds.contains(it.amIka) }
 
         val localOffers = db.offerDao().allForSync()
         val localSpaces = db.spaceDao().allForSync()
         val localNotes = db.noteDao().allForSync()
         val localDebts = db.debtDao().allForSync()
-        val localEmployees = db.employeeDao().allForSync()
 
         val mergedOffers = merge(localOffers, remoteOffers, { it.id }, { it.updatedAt })
         val mergedSpaces = merge(localSpaces, remoteSpaces, { it.id }, { it.updatedAt })
         val mergedNotes = merge(localNotes, remoteNotes, { it.id }, { it.updatedAt })
         val mergedDebts = mergeDeletedWins(localDebts, remoteDebts, { it.id }, { it.updatedAt })
-        val mergedEmployees = mergeEmployees(localEmployees, remoteEmployees)
 
         var pulledOffers = 0
         mergedOffers.forEach { merged ->
@@ -75,6 +72,17 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         }
         announceForeignDebts(localDebts, mergedDebts)
 
+        // Rebuild the employee index from canonical employee IDs / AM IKA before
+        // exporting. This makes the employee-cost tab independent of aliases and
+        // also repairs employees that originated from payroll debts but have not
+        // yet been edited manually.
+        EmployeeIndexReconciler.rebuild(context)
+
+        val remoteEmployees = readEmployees(spreadsheetId)
+            .filterNot { settings.deletedEmployeeIds.contains(it.id) }
+        val localEmployees = db.employeeDao().allForSync()
+        val mergedEmployees = mergeEmployees(localEmployees, remoteEmployees)
+
         mergedEmployees.forEach { merged ->
             if (localEmployees.none { it.id == merged.id && it == merged }) {
                 db.employeeDao().upsert(merged)
@@ -84,8 +92,8 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         // Employees are canonical by stable ID/AM IKA. Alias is only a UI field.
         val employeesForExport = db.employeeDao().allForSync()
             .filterNot { settings.deletedEmployeeIds.contains(it.id) }
-            .filter { it.amIka.isNotBlank() }
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+            .filter { it.id.isNotBlank() && it.amIka.isNotBlank() }
+            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name.ifBlank { it.amIka } })
 
         sheets.replaceRows(spreadsheetId, TAB_OFFERS, offerRows(mergedOffers))
         sheets.replaceRows(spreadsheetId, TAB_SPACES, spaceRows(mergedSpaces))
@@ -274,19 +282,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         people.forEach { employee ->
             val history = PayrollEmployeeSnapshotStore.history(employee)
             if (history.isEmpty()) {
-                // Every employee gets a stable presence in the costs tab, even
-                // before the first payroll PDF for that employee is imported.
-                add(
-                    listOf(
-                        employee.id,
-                        employee.name,
-                        "",
-                        "",
-                        "0.0",
-                        "0.0",
-                        "0",
-                    ),
-                )
+                add(listOf(employee.id, employee.name, "", "", "0.0", "0.0", "0"))
             } else {
                 history.forEach { month ->
                     add(
