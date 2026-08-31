@@ -56,10 +56,18 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
 
     suspend fun scan(alreadyImported: Set<String>, onProgress: (String) -> Unit): Report = scan(alreadyImported, onProgress, false)
 
+    /**
+     * @param knownDebtIds ό,τι υπάρχει ήδη στη βάση. Το φίλτρο αρχείου δεν
+     * αρκεί: ένα αρχείο που μετακινήθηκε σε υποφάκελο έτους, που ξαναδιαβάζεται
+     * μετά από επιδιόρθωση, ή που ανέβασε άλλος χρήστης, ξαναπερνάει από τη
+     * σάρωση. Το αναγνωριστικό της ίδιας της οφειλής είναι σταθερό και λέει με
+     * βεβαιότητα αν την έχουμε ήδη δει.
+     */
     suspend fun scan(
         alreadyImported: Set<String>,
         onProgress: (String) -> Unit = {},
         includePdfArchive: Boolean = false,
+        knownDebtIds: Set<String> = emptySet(),
         onFound: suspend (Found) -> Unit = {},
     ): Report = withContext(Dispatchers.IO) {
         DebugLog.log("debt-scan", "Έναρξη scan · alreadyImported=${alreadyImported.size} · includePdfArchive=$includePdfArchive")
@@ -94,7 +102,17 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
                     .onFailure { DebugLog.log("debt-scan", "download failed ${file.id}: ${it.stackTraceToString()}") }
                     .getOrNull()
                 try {
-                    read(file.name, file.id, bytes).also { result ->
+                    read(file.name, file.id, bytes).let { raw ->
+                        val fresh = raw.debts.filterNot { it.id in knownDebtIds }
+                        if (raw.debts.isNotEmpty() && fresh.isEmpty() && raw.installmentPlan == null) {
+                            // Το αρχείο διαβάστηκε, αλλά όλες του οι οφειλές
+                            // υπάρχουν ήδη. Δεν είναι εύρημα, ούτε είδηση.
+                            skipped++
+                            DebugLog.log("debt-scan", "SKIP διπλότυπο περιεχόμενο fileId=${file.id}, name=${file.name}, οφειλές=${raw.debts.size}")
+                            moveRecognised(file.id, file.name, raw)
+                            return@forEach
+                        }
+                        val result = raw.copy(debts = fresh)
                         found += result
                         DebugLog.log("debt-scan", "parsed ${file.id}: afmMismatch=${result.afmMismatch}, debts=${result.debts.size}, plan=${result.installmentPlan != null}")
                         if (!result.afmMismatch && (result.debts.isNotEmpty() || result.installmentPlan != null)) {

@@ -74,6 +74,14 @@ interface DebtDao {
     @Query("SELECT * FROM debts") suspend fun allForSync(): List<DebtEntity>
     @Query("SELECT * FROM debts WHERE deleted = 0 AND paid = 0 ORDER BY periodYear DESC, periodMonth DESC, dueDay, kind") suspend fun unpaid(): List<DebtEntity>
     @Query("SELECT DISTINCT driveFileId FROM debts WHERE driveFileId != '' AND NOT ((kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = '')") suspend fun importedFileIds(): List<String>
+
+    /**
+     * Κάθε οφειλή που έχει δει ποτέ αυτή η βάση — **μαζί με τις διαγραμμένες**.
+     *
+     * Οι διαγραμμένες μετράνε κι αυτές: μια οφειλή που έσβησε ο χρήστης δεν
+     * πρέπει να επιστρέφει ως εύρημα με την επόμενη σάρωση.
+     */
+    @Query("SELECT id FROM debts") suspend fun knownDebtIds(): List<String>
     @Query("SELECT DISTINCT driveFileId FROM debts WHERE driveFileId != '' AND (kind = 'PAYROLL' OR kind = 'PAYROLL_BONUS') AND amIka = ''") suspend fun legacyPayrollFileIdsMissingIka(): List<String>
     // Οι οφειλές μισθοδοσίας δεν φεύγουν ποτέ από τη βάση: μπαίνει 1 στο
     // «Διαγραμμένο», όπως σε κάθε άλλη εγγραφή. Έτσι η διαγραφή ταξιδεύει στις

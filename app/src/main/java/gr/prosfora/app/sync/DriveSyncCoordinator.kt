@@ -57,6 +57,9 @@ object DriveSyncCoordinator {
                 alreadyImported = alreadyImported,
                 onProgress = { message -> DebugLog.log("sync", message) },
                 includePdfArchive = true,
+                // Ό,τι ξέρει ήδη η βάση — από οποιονδήποτε χρήστη της — δεν
+                // ξαναπροτείνεται ούτε ξαναειδοποιεί
+                knownDebtIds = repository.knownDebtIds(),
                 onFound = { found ->
                     if (found.afmMismatch || found.debts.isEmpty()) return@scan
 

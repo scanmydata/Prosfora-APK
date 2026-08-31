@@ -179,9 +179,10 @@ fun DebtsScreen(onMenu: () -> Unit) {
             busy = "Αναζήτηση στον φάκελο Οφειλές…"
             val result = runCatching {
                 DebtImporter(DriveClient(token ?: authorizer.accessToken()), settings).scan(
-                    repository.importedFileIds(),
-                    { name -> busy = "Ανάγνωση $name…" },
+                    alreadyImported = repository.importedFileIds(),
+                    onProgress = { name -> busy = "Ανάγνωση $name…" },
                     includePdfArchive = false,
+                    knownDebtIds = repository.knownDebtIds(),
                 )
             }
             busy = null
@@ -370,6 +371,9 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 pending = null
                 scope.launch {
                     repository.saveAll(chosen)
+                    // Το αρχείο μπαίνει στο ευρετήριο με την έγκριση, ώστε να
+                    // μη ξαναδιαβαστεί ακόμη κι αν η οφειλή διαγραφεί αργότερα
+                    settings.rememberDriveFiles(chosen.mapNotNull { it.driveFileId.ifBlank { null } })
                     // Ο χρήστης τις μόλις είδε και τις ενέκρινε — δεν χρειάζεται σηματάκι
                     NewDebtsBadge.clear(context)
                     toast("Αποθηκεύτηκαν ${chosen.size} οφειλές")

@@ -25,6 +25,9 @@ class DebtRepository(context: Context) {
     fun observeEmployees(): Flow<List<EmployeeEntity>> = employees.observeAll().onEach(EmployeeAliasRegistry::refresh)
 
     suspend fun importedFileIds(): Set<String> = debts.importedFileIds().toSet()
+
+    /** Ό,τι υπάρχει ήδη στη βάση, από οποιονδήποτε χρήστη της. */
+    suspend fun knownDebtIds(): Set<String> = debts.knownDebtIds().toSet()
     suspend fun legacyPayrollFileIdsMissingIka(): List<String> = debts.legacyPayrollFileIdsMissingIka()
 
     /** Only incomplete payroll files are allowed through the already-imported gate. */
