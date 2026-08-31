@@ -129,9 +129,9 @@ class SheetsClient(private val accessToken: String) {
      * DELETE σβήνει μόνο obsolete rows. Το key μπορεί να είναι σύνθετο για
      * tabs όπου ένα ID έχει πολλές εγγραφές, όπως το Κόστη_Εργαζομένων.
      *
-     * Το Κόστη_Εργαζομένων είναι όμως παράγωγο tab: η εφαρμογή πρέπει να το
-     * αναδημιουργεί από ολόκληρο το canonical employee roster ώστε να μη μένει
-     * ποτέ μερικώς ενημερωμένο. Το tab Εργαζόμενοι παραμένει κανονικό CRUD.
+     * Το Κόστη_Εργαζομένων είναι παράγωγο tab: συμπληρώνεται από το ίδιο
+     * canonical employee roster που βρίσκεται στο tab Εργαζόμενοι, ακόμη και
+     * όταν η τοπική βάση έχει προσωρινά μόνο μέρος του ιστορικού κόστους.
      */
     suspend fun syncRowsCrud(
         spreadsheetId: String,
@@ -142,7 +142,37 @@ class SheetsClient(private val accessToken: String) {
         require(desiredRows.isNotEmpty()) { "Το CRUD sync χρειάζεται τουλάχιστον header row." }
 
         if (tab == "Κόστη_Εργαζομένων") {
-            replaceRows(spreadsheetId, tab, desiredRows)
+            val employeeRoster = readRows(spreadsheetId, "Εργαζόμενοι")
+                .drop(1)
+                .filter { it.firstOrNull()?.isNotBlank() == true }
+
+            val desired = desiredRows.drop(1).filter { key(it).isNotBlank() }
+            val desiredByEmployee = desired
+                .groupBy { it.getOrElse(0) { "" }.trim() }
+                .filterKeys { it.isNotBlank() }
+
+            val complete = ArrayList<List<String>>(desired.size + employeeRoster.size + 1)
+            complete += desiredRows.first()
+
+            val writtenIds = linkedSetOf<String>()
+            desired.forEach { row ->
+                val id = row.getOrElse(0) { "" }.trim()
+                if (id.isNotBlank()) writtenIds += id
+                complete += row
+            }
+
+            // The Employee tab is authoritative for the employee roster. For
+            // every employee that has no payroll-history row yet, create a stable
+            // zero row so the employee is present in Κόστη_Εργαζομένων immediately.
+            employeeRoster.forEach { employeeRow ->
+                val id = employeeRow.getOrElse(0) { "" }.trim()
+                if (id.isBlank() || id in writtenIds) return@forEach
+                val name = employeeRow.getOrElse(1) { "" }.trim()
+                complete += listOf(id, name, "", "", "0.0", "0.0", "0")
+                writtenIds += id
+            }
+
+            replaceRows(spreadsheetId, tab, complete)
             return@withContext
         }
 
