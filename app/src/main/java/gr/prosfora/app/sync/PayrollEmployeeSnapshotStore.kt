@@ -11,15 +11,30 @@ import org.json.JSONObject
 /** Canonical monthly payroll history. */
 object PayrollEmployeeSnapshotStore {
     suspend fun record(context: Context, ocrText: String, debts: List<DebtEntity>) = withContext(Dispatchers.IO) {
-        val payroll = debts.filter { it.kind.perPerson && EmployeeEntity.normalizeIka(it.amIka).isNotBlank() }
+        val payroll = debts.filter { it.kind.perPerson }
         if (payroll.isEmpty()) return@withContext
-        val db = ProsforaDatabase.get(context.applicationContext)
-        val byEmployee = payroll.groupBy { EmployeeEntity.normalizeIka(it.amIka) }
-        val people = db.employeeDao().allForSync().associateBy { EmployeeEntity.normalizeIka(it.amIka) }
 
-        byEmployee.forEach { (ika, rows) ->
-            val old = people[ika]
+        val db = ProsforaDatabase.get(context.applicationContext)
+        val storedEmployees = db.employeeDao().allForSync().associateBy { EmployeeEntity.normalizeIka(it.amIka) }
+
+        // A payroll DebtEntity may not have amIka yet. Resolve it directly from
+        // the imported PDF by employee code, so employee cards and Drive export
+        // never depend on an alias being assigned first.
+        val grouped = payroll.groupBy { row ->
+            EmployeeEntity.normalizeIka(row.amIka).takeIf { it.isNotBlank() }
+                ?: "CODE:${row.personCode.trimStart('0').ifBlank { row.personCode.trim() }}"
+        }
+
+        grouped.forEach { (_, rows) ->
+            val representative = rows.firstOrNull() ?: return@forEach
+            val resolvedIka = EmployeeEntity.normalizeIka(representative.amIka)
+                .takeIf { it.isNotBlank() }
+                ?: PayrollMetricsExtractor.resolveIka(ocrText, representative.personCode)
+                ?: return@forEach
+
+            val old = storedEmployees[resolvedIka]
             val current = runCatching { JSONObject(old?.payrollSummaryJson ?: "{}") }.getOrElse { JSONObject() }
+
             rows.groupBy { it.periodYear to it.periodMonth }.forEach { (period, periodRows) ->
                 val year = period.first
                 val month = period.second
@@ -34,7 +49,7 @@ object PayrollEmployeeSnapshotStore {
                     ?: 0.0
                 val insuranceDays = extracted.insuranceDays
                     ?: previous?.optInt("insuranceDays", 0)?.takeIf { it > 0 }
-                    ?: PayrollInsuranceDaysStore.daysFor(context.applicationContext, ika, year, month)
+                    ?: PayrollInsuranceDaysStore.daysFor(context.applicationContext, resolvedIka, year, month)
 
                 current.put(key, JSONObject().apply {
                     put("payable", payable)
@@ -45,20 +60,22 @@ object PayrollEmployeeSnapshotStore {
             }
 
             val employee = old ?: EmployeeEntity(
-                id = ika,
-                amIka = ika,
-                name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim().orEmpty(),
-                code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim().orEmpty(),
+                id = resolvedIka,
+                amIka = resolvedIka,
+                name = representative.personName.trim(),
+                code = representative.personCode.trim(),
             )
-            db.employeeDao().upsert(employee.copy(
-                id = ika,
-                amIka = ika,
-                name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim()?.ifBlank { employee.name } ?: employee.name,
-                code = rows.firstOrNull { it.personCode.isNotBlank() }?.personCode?.trim()?.ifBlank { employee.code } ?: employee.code,
-                payrollSummaryJson = current.toString(),
-                updatedAt = System.currentTimeMillis(),
-                deleted = false,
-            ))
+            db.employeeDao().upsert(
+                employee.copy(
+                    id = resolvedIka,
+                    amIka = resolvedIka,
+                    name = representative.personName.trim().ifBlank { employee.name },
+                    code = representative.personCode.trim().ifBlank { employee.code },
+                    payrollSummaryJson = current.toString(),
+                    updatedAt = System.currentTimeMillis(),
+                    deleted = false,
+                ),
+            )
         }
     }
 
@@ -98,6 +115,7 @@ object PayrollEmployeeSnapshotStore {
     private object PayrollMetricsExtractor {
         private val rowStart = Regex("""^\s*\d{1,3}\s+([0-9]{2,6})\b""")
         private val moneyToken = Regex("""(?<!\d)(?:[0-9][0-9.]*,[0-9]{2}|[0-9][0-9,]*\.[0-9]{2})(?!\d)""")
+        private val ikaToken = Regex("""(?<!\d)\d{9}(?!\d)""")
         private val daysPatterns = listOf(
             Regex("""\bΤΑ\s*[:=\-]?\s*(\d{1,2})(?:[.,]\d+)?\b""", RegexOption.IGNORE_CASE),
             Regex("""\b(\d{1,2})(?:[.,]\d+)?\s+ΤΑ\b""", RegexOption.IGNORE_CASE),
@@ -109,6 +127,23 @@ object PayrollEmployeeSnapshotStore {
         private fun parseMoney(raw: String): Double? =
             if (raw.contains(',')) raw.replace(".", "").replace(',', '.').toDoubleOrNull()
             else raw.replace(",", "").toDoubleOrNull()
+
+        fun resolveIka(text: String, personCode: String): String? {
+            val normalizedCode = personCode.trim().trimStart('0').ifBlank { personCode.trim() }
+            if (normalizedCode.isBlank() || text.isBlank()) return null
+            val lines = text.lines()
+            val starts = lines.indices.filter { index ->
+                val line = lines[index].removePrefix("\uFEFF").trim()
+                val row = rowStart.find(line) ?: return@filter false
+                row.groupValues[1].trimStart('0').ifBlank { row.groupValues[1] } == normalizedCode
+            }
+            starts.forEachIndexed { occurrenceIndex, start ->
+                val end = starts.getOrNull(occurrenceIndex + 1) ?: lines.size
+                val block = lines.subList(start, end)
+                ikaToken.find(block.joinToString(" "))?.value?.let { return EmployeeEntity.normalizeIka(it) }
+            }
+            return null
+        }
 
         fun aggregate(text: String, debts: List<DebtEntity>): Metrics {
             if (text.isBlank() || debts.isEmpty()) return Metrics(null, null)
@@ -134,15 +169,17 @@ object PayrollEmployeeSnapshotStore {
                 }
             }
 
-            return Metrics(insuranceSum.takeIf { insuranceFound }, maxDays)
+            return Metrics(
+                insuranceCost = insuranceSum.takeIf { insuranceFound },
+                insuranceDays = maxDays,
+            )
         }
 
         private fun findAll(text: String, normalizedCode: String): List<Metrics> {
             val lines = text.lines()
             val allStarts = lines.mapIndexedNotNull { index, rawLine ->
                 val line = rawLine.removePrefix("\uFEFF").trim()
-                val row = rowStart.find(line) ?: return@mapIndexedNotNull null
-                index
+                if (rowStart.containsMatchIn(line)) index else null
             }
             val starts = allStarts.filter { index ->
                 val line = lines[index].removePrefix("\uFEFF").trim()
@@ -164,10 +201,8 @@ object PayrollEmployeeSnapshotStore {
                 .filter { it in 0..31 }
                 .firstOrNull()
 
-            // The employee's own total line is numeric-only. This deliberately
-            // excludes the payroll grand-total line, which contains the project
-            // name (e.g. "ΠΑΡΑΔΕΙΣΟΥ"). Use the FIRST valid total in this block,
-            // never the widest/last numeric row.
+            // The employee total line is numeric-only. The payroll grand total
+            // contains the project name and is therefore excluded.
             val total = block.mapIndexedNotNull { index, line ->
                 if (line.any { it.isLetter() }) return@mapIndexedNotNull null
                 val nums = moneyToken.findAll(line).mapNotNull { parseMoney(it.value) }.toList()
@@ -183,7 +218,6 @@ object PayrollEmployeeSnapshotStore {
                 }
                 return Metrics(insurance, days)
             }
-
             return Metrics(null, days)
         }
     }
