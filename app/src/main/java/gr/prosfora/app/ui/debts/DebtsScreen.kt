@@ -74,8 +74,10 @@ import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.debt.DebtImporter
 import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.google.DriveClient
+import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.google.DriveWatch
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.sync.SheetSync
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.ui.MenuButton
 import gr.prosfora.app.ui.components.ConfirmDialog
@@ -161,12 +163,20 @@ fun DebtsScreen(onMenu: () -> Unit) {
 
     fun scanDrive() {
         scope.launch {
-            busy = "Αναζήτηση στο Drive…"
+            busy = "Συγχρονισμός βάσης…"
+            val token = runCatching { authorizer.accessToken() }.getOrNull()
+            // Πρώτα η κοινόχρηστη βάση, μετά ο φάκελος των οφειλών. Το αρχείο
+            // PDF των προσφορών **δεν** μπαίνει: εδώ ο χρήστης ζητάει οφειλές,
+            // και το OCR σε δεκάδες προσφορές κρατούσε λεπτά χωρίς λόγο.
+            if (token != null && settings.spreadsheetId?.isNotBlank() == true) {
+                runCatching { SheetSync(context, SheetsClient(token), settings).sync() }
+            }
+            busy = "Αναζήτηση στον φάκελο Οφειλές…"
             val result = runCatching {
-                DebtImporter(DriveClient(authorizer.accessToken()), settings).scan(
+                DebtImporter(DriveClient(token ?: authorizer.accessToken()), settings).scan(
                     repository.importedFileIds(),
                     { name -> busy = "Ανάγνωση $name…" },
-                    includePdfArchive = true,
+                    includePdfArchive = false,
                 )
             }
             busy = null

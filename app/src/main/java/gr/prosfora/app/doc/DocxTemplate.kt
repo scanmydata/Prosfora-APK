@@ -21,6 +21,10 @@ object DocxTemplate {
     private const val PAYMENT_LINE = "&lt;&lt;[Τρόπος Πληρωμής]&gt;&gt;"
     private const val VAT_ONLY = "&lt;&lt;[Αν ΦΠΑ]&gt;&gt;"
     private const val SCAFFOLDING_ONLY = "&lt;&lt;[Αν Σκαλωσιά]&gt;&gt;"
+    private const val RUN_CLOSE = "</w:r>"
+
+    /** Ανοίγματα run· δεν πιάνει τα `<w:rPr>`, `<w:rFonts>`, `<w:rStyle>`. */
+    private val RUN_OPEN = Regex("""<w:r(?:\s[^>]*)?>""")
     private const val PERMIT_ONLY = "&lt;&lt;[Αν Άδεια]&gt;&gt;"
 
     fun render(templateDocx: ByteArray, details: OfferWithDetails): ByteArray {
@@ -259,14 +263,63 @@ object DocxTemplate {
         return result.replace(anchor, block)
     }
 
-    /** Bold the generated totals rows without relying on how the source template was formatted. */
-    private fun boldRow(row: String): String {
-        if (row.contains("<w:b/>") || row.contains("<w:b ")) return row
-        return if (row.contains("<w:rPr>")) {
-            row.replaceFirst("<w:rPr>", "<w:rPr><w:b/>")
-        } else {
-            row.replaceFirst("<w:r>", "<w:r><w:rPr><w:b/></w:rPr>")
+    /**
+     * Κάνει έντονη **κάθε** λέξη της γραμμής, ό,τι μορφοποίηση κι αν είχε το
+     * πρότυπο.
+     *
+     * Η προηγούμενη εκδοχή απέτυχε με τρεις τρόπους ταυτόχρονα: έπιανε μόνο το
+     * πρώτο run —δηλαδή την ετικέτα, ποτέ το ποσό δίπλα της— σταματούσε αν
+     * έβρισκε `<w:b/>` οπουδήποτε στη γραμμή, και έβαζε το `<w:b/>` αμέσως μετά
+     * το `<w:rPr>`. Το τελευταίο είναι που το έκανε να μη φαίνεται καθόλου: το
+     * OOXML ορίζει **σειρά** για τα παιδιά του `<w:rPr>`, και το `<w:b/>`
+     * πρέπει να έρθει μετά τα `<w:rStyle>` και `<w:rFonts>`. Εκτός σειράς, ο
+     * επεξεργαστής το πετάει.
+     */
+    internal fun boldRow(row: String): String {
+        val out = StringBuilder()
+        var at = 0
+        while (true) {
+            val open = RUN_OPEN.find(row, at) ?: break
+            val bodyStart = open.range.last + 1
+            val close = row.indexOf(RUN_CLOSE, bodyStart)
+            if (close < 0) break
+            out.append(row, at, bodyStart)
+            out.append(boldRun(row.substring(bodyStart, close)))
+            at = close
         }
+        out.append(row, at, row.length)
+        return out.toString()
+    }
+
+    /** Το περιεχόμενο ενός `<w:r>`, με εξασφαλισμένο `<w:b/>`. */
+    private fun boldRun(body: String): String {
+        // Runs χωρίς κείμενο —εικόνες, διαστήματα σελιδοποίησης— μένουν ως έχουν
+        if (!body.contains("<w:t")) return body
+
+        val propsOpen = body.indexOf("<w:rPr>")
+        if (propsOpen < 0) {
+            val empty = body.indexOf("<w:rPr/>")
+            if (empty >= 0) return body.replaceFirst("<w:rPr/>", "<w:rPr><w:b/></w:rPr>")
+            // Το <w:rPr> πρέπει να είναι το πρώτο παιδί του run
+            return "<w:rPr><w:b/></w:rPr>$body"
+        }
+
+        val propsClose = body.indexOf("</w:rPr>", propsOpen)
+        if (propsClose < 0) return body
+        val inner = body.substring(propsOpen + "<w:rPr>".length, propsClose)
+        if (inner.contains("<w:b/>") || inner.contains("<w:b ")) return body
+
+        // Μετά τα rStyle/rFonts, όπως ορίζει η σειρά του CT_RPr
+        var insertAt = 0
+        listOf("<w:rStyle", "<w:rFonts").forEach { tag ->
+            val start = inner.indexOf(tag)
+            if (start >= 0) {
+                val end = inner.indexOf('>', start)
+                if (end >= 0) insertAt = maxOf(insertAt, end + 1)
+            }
+        }
+        val patched = inner.substring(0, insertAt) + "<w:b/>" + inner.substring(insertAt)
+        return body.substring(0, propsOpen + "<w:rPr>".length) + patched + body.substring(propsClose)
     }
 
     private fun fillSimpleFields(xml: String, details: OfferWithDetails): String {

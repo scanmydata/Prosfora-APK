@@ -135,7 +135,10 @@ object DriveWatch {
         val all = added + removed
         _changes.value = all
         if (all.isNotEmpty() && settings.notifyDriveChanges) {
-            DriveNotifier.notify(context, all)
+            // Μόνο οι οφειλές ειδοποιούν. Ένα PDF προσφοράς που ανέβηκε στο
+            // αρχείο δεν είναι κάτι που πρέπει να διακόψει τον χρήστη· το
+            // σηματάκι στο μενού αρκεί.
+            DriveNotifier.notify(context, all.filter { it.area == Area.DEBTS })
         }
         all
     }
