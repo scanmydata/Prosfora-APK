@@ -136,10 +136,10 @@ object DriveSyncCoordinator {
             firstSheetSummary
         }
 
-        if (syncSheet && settings.spreadsheetId?.isNotBlank() == true) {
-            runCatching { EmployeeSheetSanitizer.sync(app, accessToken) }
-                .onFailure { DebugLog.log("employees", "Sheet employee sanitizer failed: ${it.stackTraceToString()}") }
-        }
+        // Ο καθαριστής της καρτέλας «Εργαζόμενοι» αφαιρέθηκε επίτηδες.
+        // Έγραφε την ίδια καρτέλα αμέσως μετά το SheetSync, από στενότερη πηγή
+        // —μόνο τον πίνακα καρτελών— και έσβηνε όσους είχε μόλις γράψει ο
+        // κατάλογος. Μία καρτέλα, ένας συγγραφέας.
 
         NewDebtsBadge.record(app, savedDebts.distinctBy { it.id })
         DebugLog.log("sync", "τέλος · scanned=${report.scanned}, skipped=${report.skipped}, saved=${savedDebts.size}, pendingInstallments=${pendingFiles.size}, notifications=${notifiedFiles.size}")

@@ -103,16 +103,23 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
 
         // Employee data is intentionally row-level CRUD: editing one employee
         // must never clear/rewrite the whole shared employee tab.
+        val peopleRows = employeeRows(employeesForExport)
+        val costRows = employeeCostRows(employeesForExport, mergedDebts)
+        DebugLog.log("employees") {
+            "γράφονται στο φύλλο · Εργαζόμενοι=${peopleRows.size - 1} γραμμές · " +
+                "Κόστη=${costRows.size - 1} γραμμές"
+        }
+
         sheets.syncRowsCrud(
             spreadsheetId,
             TAB_PEOPLE,
-            employeeRows(employeesForExport),
+            peopleRows,
             key = { it.firstOrNull().orEmpty() },
         )
         sheets.syncRowsCrud(
             spreadsheetId,
             TAB_EMPLOYEE_COSTS,
-            employeeCostRows(employeesForExport, mergedDebts),
+            costRows,
             key = { row ->
                 "${row.getOrElse(0) { "" }}|${row.getOrElse(2) { "" }}|${row.getOrElse(3) { "" }}"
             },
@@ -203,6 +210,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         val known = stored.map { it.id }.toMutableSet()
         val roster = stored.toMutableList()
 
+        val discovered = mutableListOf<EmployeeEntity>()
         debts.asSequence()
             .filter { !it.deleted && it.kind.perPerson && it.personName.isNotBlank() }
             .groupBy { EmployeeEntity.keyFor(it.amIka, it.personCode, it.personName) }
@@ -211,7 +219,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
                 if (settings.deletedEmployeeIds.contains(key)) return@forEach
                 val latest = rows.maxByOrNull { it.updatedAt } ?: rows.first()
                 known += key
-                roster += EmployeeEntity(
+                discovered += EmployeeEntity(
                     id = key,
                     amIka = EmployeeEntity.normalizeIka(latest.amIka),
                     name = rows.firstOrNull { it.personName.isNotBlank() }?.personName?.trim().orEmpty(),
@@ -220,9 +228,15 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
                 )
             }
 
+        // Μπαίνουν και στον πίνακα, όχι μόνο στο φύλλο. Αλλιώς η εφαρμογή, η
+        // τοπική βάση και το Drive λένε τρία διαφορετικά πράγματα, και όποιος
+        // γράψει τελευταίος σβήνει τους υπόλοιπους.
+        discovered.forEach { db.employeeDao().upsert(it) }
+        roster += discovered
+
         DebugLog.log("employees") {
             "εξαγωγή καταλόγου · καρτέλες=${stored.size} · " +
-                "από μισθοδοσίες χωρίς καρτέλα=${roster.size - stored.size} · σύνολο=${roster.size}"
+                "από μισθοδοσίες χωρίς καρτέλα=${discovered.size} · σύνολο=${roster.size}"
         }
         return roster.sortedWith(
             compareBy(String.CASE_INSENSITIVE_ORDER) { it.name.ifBlank { it.amIka.ifBlank { it.id } } },
