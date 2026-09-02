@@ -100,6 +100,17 @@ interface EmployeeDao {
     @Query("SELECT * FROM employees") suspend fun allForSync(): List<EmployeeEntity>
     @Query("UPDATE employees SET deleted = 1, updatedAt = :at WHERE id = :id") suspend fun softDelete(id: String, at: Long)
     @Query("UPDATE employees SET deleted = 1, updatedAt = :at") suspend fun softDeleteAll(at: Long)
-    /** Permanent delete by canonical AM IKA as well as legacy row id. */
-    @Query("DELETE FROM employees WHERE id = :id OR amIka = (SELECT amIka FROM employees WHERE id = :id LIMIT 1)") suspend fun hardDelete(id: String)
+    /**
+     * Οριστική διαγραφή, και με τον ΑΜ ΙΚΑ ώστε να φύγουν και οι διπλότυπες
+     * γραμμές του ίδιου ανθρώπου.
+     *
+     * Ο έλεγχος `amIka != ''` δεν είναι διακοσμητικός: όταν ο στόχος δεν έχει
+     * ΑΜ ΙΚΑ, το `amIka = ''` ταίριαζε με **κάθε** εργαζόμενο χωρίς ΑΜ ΙΚΑ και
+     * τους έσβηνε όλους μαζί.
+     */
+    @Query(
+        "DELETE FROM employees WHERE id = :id OR (amIka != '' AND " +
+            "amIka = (SELECT amIka FROM employees WHERE id = :id LIMIT 1))",
+    )
+    suspend fun hardDelete(id: String)
 }

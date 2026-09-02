@@ -3,7 +3,9 @@ package gr.prosfora.app.sync
 import android.content.Context
 import gr.prosfora.app.data.db.EmployeeAliasRegistry
 import gr.prosfora.app.data.db.EmployeeEntity
+import gr.prosfora.app.data.db.EmployeeTombstones
 import gr.prosfora.app.data.db.ProsforaDatabase
+import gr.prosfora.app.google.GoogleSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -89,6 +91,14 @@ object EmployeeIndexReconciler {
         }
 
         if (updates.isNotEmpty()) employeeDao.upsertAll(updates)
+
+        // Ίδιος κανόνας με το DebtRepository: όποιος ξαναεμφανίζεται σε ζωντανή
+        // μισθοδοσία παύει να είναι διαγραμμένος, αλλιώς τον κόβουν τα φίλτρα
+        // της εξαγωγής και δεν φτάνει ποτέ στο κοινόχρηστο φύλλο.
+        val settings = GoogleSettings(context.applicationContext)
+        EmployeeTombstones.revived(settings.deletedEmployeeIds, updates)
+            .forEach(settings::forgetDeletedEmployee)
+
         EmployeeAliasRegistry.refresh(employeeDao.allForSync())
     }
 }

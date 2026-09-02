@@ -90,7 +90,37 @@ fun DiagnosticsSettings(settings: GoogleSettings) {
         ) { Text("Καθαρισμός") }
     }
 
+    BannedEmployees(settings)
+
     if (showing) LogViewer(onDismiss = { showing = false })
+}
+
+/**
+ * Η λίστα των εργαζομένων που έχουν διαγραφεί «και από τη βάση».
+ *
+ * Ήταν αόρατη, και ό,τι έμπαινε μέσα της δεν έβγαινε ποτέ: οι αποκλεισμένοι
+ * φαίνονταν κανονικά στην εφαρμογή αλλά δεν έφταναν ποτέ στο κοινόχρηστο
+ * φύλλο. Πλέον η λίστα αδειάζει μόνη της με κάθε νέα μισθοδοσία — αλλά όποιος
+ * δεν έχει καινούργια μισθοδοσία χρειάζεται και έναν διακόπτη με το χέρι.
+ */
+@Composable
+private fun BannedEmployees(settings: GoogleSettings) {
+    val context = LocalContext.current
+    var banned by remember { mutableStateOf(settings.deletedEmployeeIds) }
+    if (banned.isEmpty()) return
+
+    Text(
+        "Διαγραμμένοι εργαζόμενοι που δεν συγχρονίζονται: ${banned.size}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    TextButton(
+        onClick = {
+            settings.deletedEmployeeIds = emptySet()
+            banned = emptySet()
+            Toast.makeText(context, "Θα συγχρονιστούν όλοι στον επόμενο συγχρονισμό", Toast.LENGTH_SHORT).show()
+        },
+    ) { Text("Επαναφορά όλων") }
 }
 
 @Composable

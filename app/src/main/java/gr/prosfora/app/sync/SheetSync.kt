@@ -204,9 +204,9 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         db: ProsforaDatabase,
         debts: List<DebtEntity>,
     ): List<EmployeeEntity> {
-        val stored = db.employeeDao().allForSync()
-            .filterNot { settings.deletedEmployeeIds.contains(it.id) }
-            .filter { it.id.isNotBlank() }
+        val all = db.employeeDao().allForSync().filter { it.id.isNotBlank() }
+        val stored = all.filterNot { settings.deletedEmployeeIds.contains(it.id) }
+        val banned = all - stored.toSet()
         val known = stored.map { it.id }.toMutableSet()
         val roster = stored.toMutableList()
 
@@ -235,8 +235,18 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         roster += discovered
 
         DebugLog.log("employees") {
-            "εξαγωγή καταλόγου · καρτέλες=${stored.size} · " +
-                "από μισθοδοσίες χωρίς καρτέλα=${discovered.size} · σύνολο=${roster.size}"
+            buildString {
+                append("εξαγωγή καταλόγου · καρτέλες=${stored.size}")
+                append(" · από μισθοδοσίες χωρίς καρτέλα=${discovered.size}")
+                append(" · σύνολο=${roster.size}")
+                // Όποιος κόβεται εδώ πρέπει να φαίνεται με το όνομά του: αυτός
+                // ήταν ο αόρατος αποκλεισμός που άφηνε στο φύλλο μόνο όσους
+                // είχαν ψευδώνυμο.
+                if (banned.isNotEmpty()) {
+                    append(" · ΑΠΟΚΛΕΙΣΜΕΝΟΙ ως διαγραμμένοι=${banned.size}")
+                    append(" [${banned.joinToString(", ") { it.name.ifBlank { it.id } }}]")
+                }
+            }
         }
         return roster.sortedWith(
             compareBy(String.CASE_INSENSITIVE_ORDER) { it.name.ifBlank { it.amIka.ifBlank { it.id } } },

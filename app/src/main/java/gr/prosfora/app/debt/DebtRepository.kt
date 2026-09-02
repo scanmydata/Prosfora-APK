@@ -4,6 +4,7 @@ import android.content.Context
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeAliasRegistry
 import gr.prosfora.app.data.db.EmployeeEntity
+import gr.prosfora.app.data.db.EmployeeTombstones
 import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.GoogleSettings
@@ -191,8 +192,15 @@ class DebtRepository(context: Context) {
         }.sortedBy { it.name.uppercase() }
 
         if (updates.isNotEmpty()) employees.upsertAll(updates)
+
+        // Μια ζωντανή μισθοδοσία ακυρώνει μια παλιά διαγραφή. Χωρίς αυτό, όποιον
+        // είχες διαγράψει ποτέ «και από τη βάση» έμενε αποκλεισμένος από την
+        // εξαγωγή για πάντα, όσες μισθοδοσίες κι αν έμπαιναν μετά.
+        val revived = EmployeeTombstones.revived(settings.deletedEmployeeIds, updates)
+        revived.forEach(settings::forgetDeletedEmployee)
+
         EmployeeAliasRegistry.refresh(employees.allForSync())
-        DebugLog.log("employees", "employee DB rebuild complete · active payroll AM IKA=${updates.size} · preserved employees=${employees.allForSync().size} · hard-deleted duplicates=$hardDeletedDuplicates")
+        DebugLog.log("employees", "employee DB rebuild complete · active payroll AM IKA=${updates.size} · preserved employees=${employees.allForSync().size} · hard-deleted duplicates=$hardDeletedDuplicates · ταφόπλακες που σηκώθηκαν=${revived.size} · ενεργές ταφόπλακες=${settings.deletedEmployeeIds.size}")
     }
 
     private fun ensureSnapshotPeriods(json: String, rows: List<DebtEntity>, ika: String): String {
