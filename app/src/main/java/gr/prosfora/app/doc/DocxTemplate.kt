@@ -64,6 +64,17 @@ object DocxTemplate {
         return fillSimpleFields(result, details)
     }
 
+    /**
+     * Η γραμμή-πρότυπο των συνόλων, καθαρή από δείκτες συνθήκης.
+     *
+     * Στο συμπτυγμένο πρότυπο η πρώτη γραμμή συνόλων είναι η «ΚΑΘΑΡΗ ΑΞΙΑ», που
+     * φέρει `<<[Αν ΦΠΑ]>>`. Επειδή από αυτήν κλωνοποιούνται όλες οι υπόλοιπες,
+     * ο δείκτης ταξίδευε στο ΣΥΝΟΛΟ ΧΩΡΩΝ, στη ΣΚΑΛΩΣΙΑ και στο ΓΕΝΙΚΟ ΣΥΝΟΛΟ —
+     * και χωρίς ΦΠΑ έσβηναν όλα μαζί. Η γραμμή είναι σχήμα, όχι περιεχόμενο.
+     */
+    private fun withoutConditionals(row: String): String =
+        row.replace(VAT_ONLY, "").replace(SCAFFOLDING_ONLY, "").replace(PERMIT_ONLY, "")
+
     private fun applyConditional(xml: String, marker: String, keep: Boolean): String {
         if (keep) return xml.replace(marker, "")
         var result = xml
@@ -138,7 +149,7 @@ object DocxTemplate {
         ).mapNotNull { marker -> xml.indexOf(marker).takeIf { it >= 0 } }.minOrNull() ?: return xml
 
         val (baseOpen, baseClose) = enclosingTag(xml, baseMarker, "w:tr")
-        var baseRow = xml.substring(baseOpen, baseClose)
+        var baseRow = withoutConditionals(xml.substring(baseOpen, baseClose))
             .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;")
             .replace("&lt;&lt;[Σύνολο]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;")
             .replaceFirst("ΚΑΘΑΡΗ ΑΞΙΑ</w:t>", "ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>")
@@ -217,7 +228,7 @@ object DocxTemplate {
         ).mapNotNull { marker -> xml.indexOf(marker).takeIf { it >= 0 } }.minOrNull() ?: return xml
 
         val (baseOpen, baseClose) = enclosingTag(xml, baseMarker, "w:tr")
-        val baseRow = xml.substring(baseOpen, baseClose)
+        val baseRow = withoutConditionals(xml.substring(baseOpen, baseClose))
             .replace("&lt;&lt;[Καθαρή Αξία]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;")
             .replace("&lt;&lt;[Σύνολο]&gt;&gt;", "&lt;&lt;[Σύνολο Χώρων]&gt;&gt;")
             .replaceFirst("ΚΑΘΑΡΗ ΑΞΙΑ</w:t>", "ΣΥΝΟΛΟ ΧΩΡΩΝ</w:t>")
@@ -291,6 +302,12 @@ object DocxTemplate {
         return out.toString()
     }
 
+    /** `<w:b w:val="0"/>`, `w:val="false"`, `w:val="off"` — ρητό σβήσιμο. */
+    private val BOLD_OFF = Regex("""<w:b\s+w:val="(?:0|false|off)"\s*/>""")
+
+    /** `<w:b/>` ή `<w:b w:val="1"/>` — ήδη έντονο. */
+    private val BOLD_ON = Regex("""<w:b(?:\s+w:val="(?:1|true|on)")?\s*/>""")
+
     /** Το περιεχόμενο ενός `<w:r>`, με εξασφαλισμένο `<w:b/>`. */
     private fun boldRun(body: String): String {
         // Runs χωρίς κείμενο —εικόνες, διαστήματα σελιδοποίησης— μένουν ως έχουν
@@ -307,7 +324,16 @@ object DocxTemplate {
         val propsClose = body.indexOf("</w:rPr>", propsOpen)
         if (propsClose < 0) return body
         val inner = body.substring(propsOpen + "<w:rPr>".length, propsClose)
-        if (inner.contains("<w:b/>") || inner.contains("<w:b ")) return body
+
+        // Το πρότυπο γράφει ρητά «όχι έντονο»: <w:b w:val="0"/>. Ο παλιός
+        // έλεγχος έψαχνε το κείμενο «<w:b » και το περνούσε για ήδη έντονο,
+        // οπότε γύριζε τη γραμμή ανέγγιχτη — ακριβώς στις γραμμές που έπρεπε
+        // να γίνουν έντονες. Ο διακόπτης γυρίζει, δεν προστίθεται δεύτερος.
+        if (BOLD_OFF.containsMatchIn(inner)) {
+            val flipped = BOLD_OFF.replaceFirst(inner, "<w:b/>")
+            return body.substring(0, propsOpen + "<w:rPr>".length) + flipped + body.substring(propsClose)
+        }
+        if (BOLD_ON.containsMatchIn(inner)) return body
 
         // Μετά τα rStyle/rFonts, όπως ορίζει η σειρά του CT_RPr
         var insertAt = 0

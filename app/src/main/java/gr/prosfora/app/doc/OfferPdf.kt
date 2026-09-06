@@ -145,20 +145,68 @@ object OfferPdf {
             val target = pdfFile(context, details)
             target.parentFile?.mkdirs()
             target.writeBytes(pdfBytes)
+            dropLocalCopiesExcept(context, details, target)
 
             if (keepInDrive) {
                 // Το PDF μένει και στο Drive, όπως έκανε το AppSheet
-                drive.upload(
+                val uploaded = drive.upload(
                     name = "$documentName.pdf",
                     bytes = pdfBytes,
                     mimeType = DriveClient.PDF_MIME,
                     parentId = folderId,
                 )
+                // Πρώτα ανεβαίνει το καινούργιο και μετά φεύγει το παλιό: αν
+                // κοπεί το δίκτυο στη μέση, ο φάκελος μένει με δύο αρχεία και
+                // όχι με κανένα.
+                replacePrevious(drive, settings, details, folderId, documentName, uploaded)
+                settings.rememberPdfFile(details.offer.id, uploaded)
             }
             target
         } finally {
             runCatching { drive.delete(tempDocId) }
         }
+    }
+
+    /**
+     * Τα τοπικά PDF είναι οργανωμένα ανά έτος. Αν αλλάξει η ημερομηνία της
+     * προσφοράς, το καινούργιο γράφεται σε άλλον φάκελο και το παλιό έμενε
+     * πίσω — δύο αρχεία για την ίδια προσφορά μέσα στο τοπικό αρχείο.
+     */
+    private fun dropLocalCopiesExcept(context: Context, details: OfferWithDetails, keep: File) {
+        val name = "${details.offer.id}.pdf"
+        localArchiveRoot(context).walkTopDown()
+            .filter { it.isFile && it.name == name && it != keep }
+            .forEach { stale -> runCatching { stale.delete() } }
+    }
+
+    /**
+     * Σβήνει το προηγούμενο PDF της ίδιας προσφοράς.
+     *
+     * Δύο πηγές, γιατί καμία δεν αρκεί μόνη της. Το **όνομα** πιάνει και όσα
+     * ανέβασε άλλος χρήστης ή παλιότερη έκδοση της εφαρμογής, αλλά χάνεται μόλις
+     * αλλάξει η διεύθυνση της προσφοράς. Το **αποθηκευμένο id** αντέχει τη
+     * μετονομασία, αλλά το ξέρει μόνο η συσκευή που παρήγαγε το αρχείο.
+     *
+     * Οι αποτυχίες αγνοούνται επίτηδες: το καινούργιο PDF έχει ήδη ανέβει, και
+     * ένα ορφανό αρχείο στο Drive δεν είναι λόγος να αποτύχει η αποστολή.
+     */
+    private suspend fun replacePrevious(
+        drive: DriveClient,
+        settings: GoogleSettings,
+        details: OfferWithDetails,
+        folderId: String,
+        documentName: String,
+        keep: String,
+    ) {
+        val sameName = runCatching {
+            drive.filesNamed("$documentName.pdf", folderId).map { it.id }
+        }.getOrDefault(emptyList())
+
+        val remembered = settings.pdfFileFor(details.offer.id)
+        (sameName + listOfNotNull(remembered))
+            .distinct()
+            .filterNot { it == keep }
+            .forEach { old -> runCatching { drive.delete(old) } }
     }
 
     fun fileBaseName(details: OfferWithDetails): String =
@@ -175,6 +223,33 @@ object OfferPdf {
         val legacy = File(root, "${details.offer.id}.pdf")
         return if (legacy.exists()) legacy else current
     }
+
+    /**
+     * Πότε άλλαξε τελευταία φορά κάτι που τυπώνεται: η ίδια η προσφορά, οι
+     * χώροι της ή οι παρατηρήσεις της.
+     */
+    private fun lastChangedAt(details: OfferWithDetails): Long = maxOf(
+        details.offer.updatedAt,
+        details.spaces.maxOfOrNull { it.updatedAt } ?: 0L,
+        details.notes.maxOfOrNull { it.updatedAt } ?: 0L,
+    )
+
+    /**
+     * Το αποθηκευμένο PDF είναι ξεπερασμένο.
+     *
+     * Χωρίς αυτόν τον έλεγχο, μια προσφορά που είχε ήδη PDF στελνόταν με το
+     * **παλιό** αρχείο: το app έβλεπε ότι υπάρχει και δεν το ξανάφτιαχνε. Κάθε
+     * διόρθωση τιμής ή χώρου έφευγε στον πελάτη αόρατη.
+     */
+    fun isStale(context: Context, details: OfferWithDetails): Boolean {
+        val file = pdfFile(context, details)
+        if (!file.exists()) return true
+        return lastChangedAt(details) > file.lastModified()
+    }
+
+    /** Το τοπικό PDF, μόνο αν είναι ενημερωμένο. */
+    fun freshPdf(context: Context, details: OfferWithDetails): File? =
+        pdfFile(context, details).takeIf { it.exists() && !isStale(context, details) }
 
     /** Ο ριζικός φάκελος των τοπικών PDF, για την οθόνη αρχείου. */
     fun localArchiveRoot(context: Context): File = File(context.filesDir, "documents")

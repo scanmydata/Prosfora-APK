@@ -91,6 +91,24 @@ class GoogleSettings(context: Context) {
         prefs.edit().putString(KEY_PDF_YEARS, json.toString()).apply()
     }
 
+    /**
+     * Το PDF που ανέβηκε τελευταίο στο Drive για κάθε προσφορά.
+     *
+     * Χρειάζεται επειδή το όνομα του αρχείου περιέχει τη διεύθυνση: αν αλλάξει
+     * η διεύθυνση, το παλιό PDF δεν βρίσκεται πια με το όνομα και θα έμενε στο
+     * Drive για πάντα δίπλα στο καινούργιο.
+     */
+    fun pdfFileFor(offerId: String): String? =
+        runCatching { JSONObject(prefs.getString(KEY_PDF_FILES, "{}").orEmpty()) }
+            .getOrNull()?.optString(offerId)?.takeIf { it.isNotBlank() }
+
+    fun rememberPdfFile(offerId: String, fileId: String) {
+        val json = runCatching { JSONObject(prefs.getString(KEY_PDF_FILES, "{}").orEmpty()) }
+            .getOrDefault(JSONObject())
+        json.put(offerId, fileId)
+        prefs.edit().putString(KEY_PDF_FILES, json.toString()).apply()
+    }
+
     var debtsFolderId: String?
         get() = prefs.getString(KEY_DEBTS_FOLDER, null)
         set(value) = prefs.edit().putString(KEY_DEBTS_FOLDER, value).apply()
@@ -233,6 +251,7 @@ class GoogleSettings(context: Context) {
         private const val KEY_VIBER = "viber_template"
         private const val KEY_PDF_FOLDER = "pdf_folder_id"
         private const val KEY_PDF_YEARS = "pdf_year_folders"
+        private const val KEY_PDF_FILES = "pdf_file_per_offer"
         private const val KEY_REVIEW_DELAY = "review_delay_days"
         private const val KEY_REVIEW_LINK = "review_link"
         private const val KEY_REVIEW_TEMPLATE = "review_template"

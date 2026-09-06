@@ -75,7 +75,16 @@ class DriveClient(private val accessToken: String) {
     }
 
     suspend fun findInFolder(name: String, folderId: String): DriveFile? =
-        list("name='${name.escapeQuery()}' and '$folderId' in parents and trashed=false").firstOrNull()
+        filesNamed(name, folderId).firstOrNull()
+
+    /**
+     * **Όλα** τα αρχεία με αυτό το όνομα μέσα στον φάκελο.
+     *
+     * Το Drive επιτρέπει διπλά ονόματα, οπότε το «βρες ένα» δεν αρκεί όταν
+     * σκοπός είναι να μη μείνει κανένα παλιό αντίγραφο πίσω.
+     */
+    suspend fun filesNamed(name: String, folderId: String): List<DriveFile> =
+        list("name='${name.escapeQuery()}' and '$folderId' in parents and trashed=false")
 
     suspend fun upload(
         name: String,

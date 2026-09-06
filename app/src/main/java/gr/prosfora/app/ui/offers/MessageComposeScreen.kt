@@ -19,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -35,19 +36,27 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import gr.prosfora.app.data.db.OfferWithDetails
+import gr.prosfora.app.doc.OfferPdf
+import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.google.rememberGoogleAuthorizer
+import gr.prosfora.app.mail.OfferMail
 import gr.prosfora.app.message.MessageTemplates
+import gr.prosfora.app.settings.SmtpSettingsStore
 import gr.prosfora.app.notify.Channel
 import gr.prosfora.app.notify.ContactNotifier
 import gr.prosfora.app.notify.SmsSender
@@ -72,6 +81,7 @@ fun MessageComposeScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = remember { GoogleSettings(context) }
+    val authorizer = rememberGoogleAuthorizer()
 
     val details by viewModel.selectedOffer.collectAsState()
     val current = details ?: return
@@ -79,21 +89,50 @@ fun MessageComposeScreen(
     var phone by remember(current.offer.id) { mutableStateOf(current.offer.customerPhone) }
     var text by remember(current.offer.id, channel) {
         mutableStateOf(
-            MessageTemplates.render(
-                when (channel) {
-                    Channel.SMS -> settings.smsTemplate
-                    Channel.VIBER -> settings.viberTemplate
-                },
-                current,
-                greeting = settings.greetingOptions,
-            ),
+            when (channel) {
+                Channel.SMS -> render(settings.smsTemplate, current, settings)
+                Channel.VIBER -> render(settings.viberTemplate, current, settings)
+                // Με το PDF συνημμένο, το σωστό κείμενο είναι αυτό του email:
+                // λέει ότι επισυνάπτεται η προσφορά, όχι ότι στάλθηκε αλλού.
+                Channel.VIBER_PDF -> OfferMail.body(
+                    settings.emailBodyTemplate,
+                    current,
+                    SmtpSettingsStore(context).load(),
+                    settings.greetingOptions,
+                )
+            },
         )
     }
     var busy by remember { mutableStateOf(false) }
     var awaitingViberAnswer by remember { mutableStateOf(false) }
 
+    // Το συνημμένο ετοιμάζεται μόλις ανοίξει η οθόνη, ώστε το κουμπί αποστολής
+    // να μην περιμένει το Drive· ξαναφτιάχνεται αν η προσφορά άλλαξε από τότε
+    var pdf by remember(current.offer.id) {
+        mutableStateOf(if (channel.carriesPdf) OfferPdf.freshPdf(context, current) else null)
+    }
+    var preparing by remember { mutableStateOf(false) }
+    LaunchedEffect(current.offer.id, channel) {
+        if (!channel.carriesPdf || pdf != null) return@LaunchedEffect
+        preparing = true
+        runCatching {
+            OfferPdf.generate(context, DriveClient(authorizer.accessToken()), settings, current)
+        }.onSuccess { pdf = it }
+            .onFailure {
+                Toast.makeText(
+                    context,
+                    "Το PDF δεν δημιουργήθηκε: ${it.reason()}",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        preparing = false
+    }
+
     fun recordSent() {
         viewModel.markNotified(current.offer.id, channel.storedValue)
+        // Όταν έφυγε και η ίδια η προσφορά, η αποστολή είναι ισότιμη με το
+        // email: η προσφορά έφτασε στον πελάτη, όχι απλώς μια ειδοποίηση.
+        if (channel.carriesPdf) viewModel.markSent(current.offer.id)
         Toast.makeText(context, "Καταγράφηκε ως σταλμένο", Toast.LENGTH_SHORT).show()
         onBack()
     }
@@ -141,14 +180,18 @@ fun MessageComposeScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            OutlinedTextField(
-                value = phone,
-                onValueChange = { phone = it },
-                label = { Text("Κινητό παραλήπτη") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                modifier = Modifier.fillMaxWidth(),
-            )
+            // Με συνημμένο, τη συνομιλία τη διαλέγει ο χρήστης μέσα στο Viber —
+            // το κινητό δεν παίζει κανένα ρόλο, οπότε δεν ζητιέται
+            if (!channel.carriesPdf) {
+                OutlinedTextField(
+                    value = phone,
+                    onValueChange = { phone = it },
+                    label = { Text("Κινητό παραλήπτη") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
             OutlinedTextField(
                 value = text,
@@ -178,6 +221,36 @@ fun MessageComposeScreen(
                 }
             }
 
+            if (channel.carriesPdf) {
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("Συνημμένο", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                when {
+                                    preparing -> "Δημιουργία PDF…"
+                                    pdf != null -> "ΠΡΟΣΦΟΡΑ ${current.offer.address}.pdf"
+                                    else -> "Δεν δημιουργήθηκε PDF"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (preparing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    }
+                }
+            }
+
             Text(
                 when (channel) {
                     Channel.SMS ->
@@ -185,13 +258,20 @@ fun MessageComposeScreen(
                     Channel.VIBER ->
                         "Θα ανοίξει το Viber με το κείμενο έτοιμο. Το Viber δεν μας " +
                             "ενημερώνει αν πάτησες αποστολή, οπότε θα σε ρωτήσω μετά."
+                    Channel.VIBER_PDF ->
+                        "Θα ανοίξει το Viber με το PDF συνημμένο, για να διαλέξεις " +
+                            "συνομιλία. Το Viber συχνά αγνοεί το κείμενο που συνοδεύει " +
+                            "ένα αρχείο, γι' αυτό αντιγράφεται και στο πρόχειρο — " +
+                            "επικόλλησέ το αν δεν εμφανιστεί μόνο του."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             Button(
-                enabled = !busy && phone.isNotBlank() && text.isNotBlank(),
+                enabled = !busy && !preparing && text.isNotBlank() &&
+                    (phone.isNotBlank() || channel.carriesPdf) &&
+                    (!channel.carriesPdf || pdf != null),
                 onClick = {
                     when (channel) {
                         Channel.SMS -> {
@@ -218,6 +298,18 @@ fun MessageComposeScreen(
                         }
                         Channel.VIBER -> {
                             if (ContactNotifier.openViber(context, text)) {
+                                awaitingViberAnswer = true
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "Δεν βρέθηκε το Viber στη συσκευή",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }
+                        Channel.VIBER_PDF -> {
+                            val file = pdf
+                            if (file != null && ContactNotifier.sendPdfViaViber(context, file, text)) {
                                 awaitingViberAnswer = true
                             } else {
                                 Toast.makeText(
@@ -265,3 +357,10 @@ fun MessageComposeScreen(
         )
     }
 }
+
+/** Το πρότυπο μηνύματος με τα πεδία της προσφοράς συμπληρωμένα. */
+private fun render(
+    template: String,
+    details: OfferWithDetails,
+    settings: GoogleSettings,
+): String = MessageTemplates.render(template, details, greeting = settings.greetingOptions)

@@ -92,13 +92,16 @@ fun EmailComposeScreen(
         mutableStateOf(OfferMail.body(googleSettings.emailBodyTemplate, current, smtp, googleSettings.greetingOptions))
     }
 
+    // Μόνο ενημερωμένο PDF μετράει ως έτοιμο. Ένα παλιό αρχείο από πριν την
+    // τελευταία διόρθωση της προσφοράς είναι χειρότερο από κανένα.
     var pdf by remember(current.offer.id) {
-        mutableStateOf(OfferPdf.pdfFile(context, current).takeIf { it.exists() })
+        mutableStateOf(OfferPdf.freshPdf(context, current))
     }
     var busy by remember { mutableStateOf<String?>(null) }
     var showPreview by remember { mutableStateOf(false) }
 
-    // Το PDF παράγεται αυτόματα την πρώτη φορά ώστε να είναι έτοιμο ως συνημμένο
+    // Το PDF παράγεται αυτόματα ώστε να είναι έτοιμο ως συνημμένο — και
+    // ξαναπαράγεται όποτε η προσφορά άλλαξε μετά την τελευταία έκδοσή του
     LaunchedEffect(current.offer.id) {
         if (pdf == null) {
             busy = "Δημιουργία PDF…"

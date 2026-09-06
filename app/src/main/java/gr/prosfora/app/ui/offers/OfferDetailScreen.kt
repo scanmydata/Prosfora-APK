@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.Button
@@ -43,7 +44,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -151,7 +151,12 @@ fun OfferDetailScreen(
     }
 }
 
-/** Ένα κουμπί αποστολής, τρεις επιλογές: email, SMS, Viber. */
+/**
+ * Ένα κουμπί αποστολής: email, Viber με την προσφορά συνημμένη, SMS, Viber.
+ *
+ * Το Viber με το PDF δεν χρειάζεται ούτε email ούτε κινητό — τη συνομιλία τη
+ * διαλέγει ο χρήστης μέσα στο Viber — γι' αυτό το μενού ανοίγει πάντα.
+ */
 @Composable
 private fun SendMenu(
     details: OfferWithDetails,
@@ -163,12 +168,8 @@ private fun SendMenu(
     val hasPhone = details.offer.customerPhone.isNotBlank()
 
     Box {
-        IconButton(enabled = canEmail || hasPhone, onClick = { open = true }) {
-            Icon(
-                Icons.Default.Send,
-                contentDescription = "Αποστολή",
-                tint = if (canEmail || hasPhone) EmailAmber else LocalContentColor.current,
-            )
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Default.Send, contentDescription = "Αποστολή", tint = EmailAmber)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
@@ -182,6 +183,11 @@ private fun SendMenu(
                 enabled = hasPhone,
                 leadingIcon = { Icon(Icons.Default.Sms, null, tint = SmsBlue) },
                 onClick = { open = false; onComposeMessage(Channel.SMS) },
+            )
+            DropdownMenuItem(
+                text = { Text("Viber με το PDF") },
+                leadingIcon = { Icon(Icons.Default.PictureAsPdf, null, tint = ViberPurple) },
+                onClick = { open = false; onComposeMessage(Channel.VIBER_PDF) },
             )
             DropdownMenuItem(
                 text = { Text("Viber") },
