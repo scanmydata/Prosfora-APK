@@ -28,6 +28,7 @@ object DriveNotifier {
     private const val ID = 4711
     private const val DEBTS_ID = 4712
     private const val DAILY_UNPAID_ID = 4713
+    private const val EMPLOYEE_ID = 4800_000
     private const val PREFS = "debt_notifications"
     private const val LAST_UNPAID_NOTIFICATION_DATE = "last_unpaid_notification_date"
 
@@ -118,6 +119,57 @@ object DriveNotifier {
             )
         }.onFailure {
             DebugLog.log("notify", "Debt notification ΑΠΕΤΥΧΕ: ${it.stackTraceToString().take(900)}")
+        }
+    }
+
+    /**
+     * Ένας άλλος χρήστης όρισε αποχώρηση ή διακοπή εργασίας.
+     *
+     * Καλείται μόνο από τον συγχρονισμό, όταν η αλλαγή **ήρθε από το φύλλο** —
+     * ο συντάκτης την έχει ήδη στη συσκευή του και δεν τη βλέπει ποτέ να
+     * «έρχεται», οπότε δεν ειδοποιείται. Μία ειδοποίηση ανά εργαζόμενο: μια
+     * διόρθωση της ημερομηνίας αντικαθιστά την προηγούμενη αντί να στοιβάζεται.
+     */
+    fun notifyEmployeeDeparture(
+        context: Context,
+        employeeId: String,
+        who: String,
+        leftDay: Long,
+        author: String,
+    ) {
+        if (!allowed(context)) {
+            DebugLog.log("notify", "Ειδοποίηση αποχώρησης ΔΕΝ στάλθηκε: απενεργοποιημένες ειδοποιήσεις · $who")
+            return
+        }
+        ensureChannel(context)
+        val date = LocalDate.ofEpochDay(leftDay)
+        val past = !date.isAfter(LocalDate.now(ZoneId.of("Europe/Athens")))
+        val dateText = "%02d/%02d/%04d".format(date.dayOfMonth, date.monthValue, date.year)
+        val text = buildString {
+            append(if (past) "Αποχώρησε " else "Αποχωρεί ")
+            append(dateText)
+            if (author.isNotBlank()) append(" · καταχώρηση από $author")
+        }
+        val notificationId = EMPLOYEE_ID + employeeId.hashCode().absoluteValue % 100_000
+        val open = PendingIntent.getActivity(
+            context,
+            notificationId,
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val builder = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Διακοπή εργασίας: $who")
+            .setContentText(text)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+        runCatching {
+            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+            DebugLog.log("notify", "Ειδοποίηση αποχώρησης στάλθηκε · $who · $dateText · από=$author")
+        }.onFailure {
+            DebugLog.log("notify", "Ειδοποίηση αποχώρησης ΑΠΕΤΥΧΕ: ${it.stackTraceToString().take(900)}")
         }
     }
 

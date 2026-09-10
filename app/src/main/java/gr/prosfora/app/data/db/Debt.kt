@@ -98,6 +98,18 @@ data class EmployeeEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val deleted: Boolean = false,
     val payrollSummaryJson: String = "{}",
+    /** Περίοδοι απασχόλησης — βλ. [EmploymentPeriods] για τη μορφή. */
+    val periods: String = "",
+    /**
+     * Πότε άλλαξε ο **χρήστης** κάτι δικό του: ψευδώνυμο, αποχώρηση, περιόδους.
+     *
+     * Χωριστά από το [updatedAt], που το χτυπάνε και οι αυτόματες ενημερώσεις
+     * από τις μισθοδοσίες. Όσο ήταν ένα κοινό ρολόι, μια αυτόματη ενημέρωση
+     * έκανε το παλιό ψευδώνυμο να φαίνεται «νεότερο» από το καινούργιο.
+     */
+    val editedAt: Long = 0L,
+    /** Ποιος έκανε την τελευταία αλλαγή χρήστη — για να μην ειδοποιείται ο ίδιος. */
+    val editedBy: String = "",
 ) {
     val display: String get() = alias.ifBlank { name }
     fun gone(today: LocalDate = LocalDate.now()): Boolean = leftDay != null && leftDay <= today.toEpochDay()

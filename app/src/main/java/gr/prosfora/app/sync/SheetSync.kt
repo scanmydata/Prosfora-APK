@@ -3,6 +3,7 @@ package gr.prosfora.app.sync
 import android.content.Context
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.DebtKind
+import gr.prosfora.app.data.db.EmployeeEdits
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.NoteEntity
 import gr.prosfora.app.data.db.OfferEntity
@@ -14,6 +15,8 @@ import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.SheetsClient
 import gr.prosfora.app.notify.DriveNotifier
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class SheetSync(private val context: Context, private val sheets: SheetsClient, private val settings: GoogleSettings) {
@@ -23,7 +26,14 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
 
     private val db = ProsforaDatabase.get(context)
 
-    suspend fun sync(): Report = withContext(Dispatchers.IO) {
+    /**
+     * Ένας συγχρονισμός τη φορά. Τρέχουν από πολλά σημεία —εκκίνηση, κουμπί,
+     * παρασκήνιο, και δύο φορές μέσα στον ίδιο κύκλο του Drive— και δύο
+     * ταυτόχρονοι διάβαζαν την ίδια κατάσταση και έγραφαν ο ένας πάνω στον άλλο.
+     */
+    suspend fun sync(): Report = SYNC_LOCK.withLock { syncLocked() }
+
+    private suspend fun syncLocked(): Report = withContext(Dispatchers.IO) {
         val spreadsheetId = settings.spreadsheetId ?: error("Δεν έχει οριστεί κοινόχρηστο Sheet")
         ensureTabs(spreadsheetId)
 
@@ -79,16 +89,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         // yet been edited manually.
         EmployeeIndexReconciler.rebuild(context)
 
-        val remoteEmployees = readEmployees(spreadsheetId)
-            .filterNot { settings.deletedEmployeeIds.contains(it.id) }
-        val localEmployees = db.employeeDao().allForSync()
-        val mergedEmployees = mergeEmployees(localEmployees, remoteEmployees)
-
-        mergedEmployees.forEach { merged ->
-            if (localEmployees.none { it.id == merged.id && it == merged }) {
-                db.employeeDao().upsert(merged)
-            }
-        }
+        pullEmployees(spreadsheetId)
 
         // Ο κατάλογος δεν κρέμεται από το αν χτίστηκε σωστά ο δείκτης
         // εργαζομένων. Όποιος έχει μισθοδοσία **υπάρχει**, ακόμη κι αν η
@@ -231,7 +232,7 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         // Μπαίνουν και στον πίνακα, όχι μόνο στο φύλλο. Αλλιώς η εφαρμογή, η
         // τοπική βάση και το Drive λένε τρία διαφορετικά πράγματα, και όποιος
         // γράψει τελευταίος σβήνει τους υπόλοιπους.
-        discovered.forEach { db.employeeDao().upsert(it) }
+        discovered.forEach { db.employeeDao().insertIfMissing(it) }
         roster += discovered
 
         DebugLog.log("employees") {
@@ -272,33 +273,60 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         }
         .sortedWith(compareByDescending<PayrollEmployeeSnapshotStore.Monthly> { it.year }.thenByDescending { it.month })
 
-    private fun mergeEmployees(local: List<EmployeeEntity>, remote: List<EmployeeEntity>): List<EmployeeEntity> {
-        val byId = LinkedHashMap<String, EmployeeEntity>()
-        local.forEach { byId[it.id] = it }
+    /**
+     * Φέρνει στη συσκευή όσα άλλαξαν οι άλλοι χρήστες στους εργαζόμενους.
+     *
+     * Η παλιά συγχώνευση είχε δύο λάθη που μαζί έκαναν το «αλλάζω ψευδώνυμο και
+     * μου το ξαναφέρνει»: σύγκρινε με το κοινό `updatedAt` —που το χτυπάνε και
+     * οι μισθοδοσίες— και, ακόμη κι όταν η τοπική καρτέλα ήταν νεότερη, κρατούσε
+     * το ψευδώνυμο **του φύλλου** (`incoming.alias.ifBlank { existing.alias }`).
+     *
+     * Τώρα τα πεδία του χρήστη κρίνονται από το δικό τους ρολόι
+     * ([EmployeeEdits]) και γράφονται με έλεγχο μέσα στην ίδια εντολή SQL: αν ο
+     * χρήστης άλλαξε κάτι όσο έτρεχε ο συγχρονισμός, η δική του αλλαγή μένει.
+     */
+    private suspend fun pullEmployees(spreadsheetId: String) {
+        val dao = db.employeeDao()
+        val remote = readEmployees(spreadsheetId)
+            .filterNot { settings.deletedEmployeeIds.contains(it.id) }
+        val local = dao.allForSync().associateBy { it.id }
+        var applied = 0
+        var filled = 0
+
         remote.forEach { incoming ->
-            if (settings.deletedEmployeeIds.contains(incoming.id)) return@forEach
-            val existing = byId[incoming.id]
-            if (existing == null) {
-                byId[incoming.id] = incoming
-            } else {
-                val merged = if (incoming.updatedAt > existing.updatedAt) {
-                    incoming.copy(
-                        payrollSummaryJson = existing.payrollSummaryJson,
-                        name = incoming.name.ifBlank { existing.name },
-                        alias = incoming.alias.ifBlank { existing.alias },
-                        code = incoming.code.ifBlank { existing.code },
-                    )
-                } else {
-                    existing.copy(
-                        name = incoming.name.ifBlank { existing.name },
-                        alias = incoming.alias.ifBlank { existing.alias },
-                        code = incoming.code.ifBlank { existing.code },
-                    )
+            val mine = local[incoming.id]
+            if (mine == null) {
+                dao.insertIfMissing(incoming)
+                return@forEach
+            }
+
+            if (EmployeeEdits.remoteWins(mine, incoming)) {
+                val changed = dao.applyRemoteEdit(
+                    id = incoming.id,
+                    alias = incoming.alias,
+                    leftDay = incoming.leftDay,
+                    periods = incoming.periods,
+                    editedAt = incoming.editedAt,
+                    editedBy = incoming.editedBy,
+                )
+                if (changed > 0) {
+                    applied++
+                    EmployeeEdits.departureToAnnounce(mine, incoming, settings.ownerEmail)?.let { day ->
+                        val who = incoming.alias.ifBlank { mine.alias }.ifBlank { mine.name }
+                        DriveNotifier.notifyEmployeeDeparture(context, incoming.id, who, day, incoming.editedBy)
+                    }
                 }
-                byId[incoming.id] = merged
+            } else if (EmployeeEdits.fillBlanks(mine, incoming) != null) {
+                filled += dao.fillBlankEdits(incoming.id, incoming.alias, incoming.leftDay, incoming.periods)
+            }
+
+            if (incoming.updatedAt > mine.updatedAt && incoming.deleted != mine.deleted) {
+                dao.applyRemoteDeleted(incoming.id, incoming.deleted, incoming.updatedAt)
             }
         }
-        return byId.values.toList()
+        DebugLog.log("employees") {
+            "λήψη από φύλλο · γραμμές=${remote.size} · αλλαγές άλλων που εφαρμόστηκαν=$applied · κενά που γέμισαν=$filled"
+        }
     }
 
     private suspend fun readOffers(spreadsheetId: String): List<OfferEntity> = dataRows(spreadsheetId, TAB_OFFERS, OFFER_HEADER.size).map { row ->
@@ -329,10 +357,16 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         )
     }
 
+    /**
+     * Οι εργαζόμενοι του φύλλου. Το id είναι αυτό της πρώτης στήλης — όπως το
+     * γράφουμε. Παλιά ξαναχτιζόταν από τον ΑΜ ΙΚΑ και όποιος δεν είχε ΑΜ ΙΚΑ
+     * αγνοούνταν, οπότε το ψευδώνυμό του δεν έφτανε ποτέ στον άλλο χρήστη.
+     */
     private suspend fun readEmployees(spreadsheetId: String): List<EmployeeEntity> = dataRows(spreadsheetId, TAB_PEOPLE, PEOPLE_HEADER.size).mapNotNull { row ->
         val amIka = EmployeeEntity.normalizeIka(row.getOrElse(7) { "" })
-        if (amIka.isBlank()) null else EmployeeEntity(
-            id = EmployeeEntity.idForAmIka(amIka),
+        val id = row.getOrElse(0) { "" }.trim().ifBlank { EmployeeEntity.idForAmIka(amIka) }
+        if (id.isBlank()) null else EmployeeEntity(
+            id = id,
             amIka = amIka,
             name = row.getOrElse(1) { "" },
             alias = row.getOrElse(2) { "" },
@@ -340,6 +374,9 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
             updatedAt = row.getOrElse(4) { "" }.toLongOrNull() ?: 0L,
             deleted = row.getOrElse(5) { "" } == "1",
             leftDay = row.getOrElse(6) { "" }.toLongOrNull(),
+            periods = row.getOrElse(8) { "" }.trim(),
+            editedAt = row.getOrElse(9) { "" }.toLongOrNull() ?: 0L,
+            editedBy = row.getOrElse(10) { "" }.trim(),
         )
     }
 
@@ -366,7 +403,10 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
     }
 
     private fun employeeRows(people: List<EmployeeEntity>) = listOf(PEOPLE_HEADER) + people.map {
-        listOf(it.id, it.name, it.alias, it.code, it.updatedAt.toString(), if (it.deleted) "1" else "0", it.leftDay?.toString().orEmpty(), it.amIka)
+        listOf(
+            it.id, it.name, it.alias, it.code, it.updatedAt.toString(), if (it.deleted) "1" else "0",
+            it.leftDay?.toString().orEmpty(), it.amIka, it.periods, it.editedAt.toString(), it.editedBy,
+        )
     }
 
     private fun employeeCostRows(
@@ -416,7 +456,11 @@ class SheetSync(private val context: Context, private val sheets: SheetsClient, 
         val EMPLOYEE_COST_HEADER = listOf("ID_Εργαζομένου", "Όνομα", "Έτος", "Μήνας", "Πληρωτέο", "Κόστος ενσήμων", "Ένσημα")
         private val OFFER_HEADER = listOf("ID_Προσφοράς", "Οδός / Περιοχή", "Ημερομηνία", "Είδος", "Email", "Κατάσταση", "Δημιουργήθηκε", "Ενημερώθηκε", "Στάλθηκε", "Διαγραμμένο", "Ονοματεπώνυμο", "Κινητό", "Ειδοποιήθηκε", "Μέσο ειδοποίησης", "Έναρξη εργασιών", "Ολοκλήρωση εργασιών", "Αξιολόγηση", "Ισχύει έως", "Τρόπος πληρωμής", "Πηγή", "Επώνυμο", "Φύλο", "ΦΠΑ", "Σκαλωσιά", "Κόστος σκαλωσιάς", "Άδεια", "Κόστος άδειας", "Πρόσθετο κόστος", "Τιμή πρόσθετου κόστους", "Στις εργασίες")
         private val DEBT_HEADER = listOf("ID_Οφειλής", "Φορέας", "Μήνα", "Έτος", "Λήξη", "Ποσό", "Ταυτότητα / RF", "Περιγραφή", "Εργαζόμενος", "Κωδικός", "Πληρώθηκε", "Ημ. πληρωμής", "Πηγή", "Αρχείο Drive", "Δημιουργήθηκε", "Ενημερώθηκε", "Διαγραμμένο", "Ημ. εξόφλησης", "Καταχωρήθηκε από", "ΑΜ ΙΚΑ")
-        private val PEOPLE_HEADER = listOf("ID_Εργαζόμενου", "Όνομα", "Ψευδώνυμο", "Κωδικός", "Ενημερώθηκε", "Διαγραμμένο", "Αποχώρηση", "ΑΜ ΙΚΑ")
+        private val PEOPLE_HEADER = listOf(
+            "ID_Εργαζόμενου", "Όνομα", "Ψευδώνυμο", "Κωδικός", "Ενημερώθηκε", "Διαγραμμένο", "Αποχώρηση", "ΑΜ ΙΚΑ",
+            "Περίοδοι απασχόλησης", "Αλλαγή χρήστη", "Αλλαγή από",
+        )
+        private val SYNC_LOCK = Mutex()
         private val SPACE_HEADER = listOf("ID_Χώρου", "ID_Προσφοράς", "Περιγραφή Χώρου", "Επιφάνεια (τ.μ.)", "Τιμή Μονάδος", "Σειρά", "Ενημερώθηκε", "Διαγραμμένο")
         private val NOTE_HEADER = listOf("ID_Παρατήρησης", "ID_Προσφοράς", "Κείμενο", "Σειρά", "Ενημερώθηκε", "Διαγραμμένο")
     }

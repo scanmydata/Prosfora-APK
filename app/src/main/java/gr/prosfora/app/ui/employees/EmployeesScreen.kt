@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
@@ -70,6 +71,7 @@ import gr.prosfora.app.util.asOfferDate
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneOffset
 import java.util.Calendar
 
@@ -89,8 +91,12 @@ fun EmployeesScreen(onMenu: () -> Unit) {
     LaunchedEffect(Unit) { EmployeeIndexReconciler.rebuild(context) }
 
     if (selected != null) {
+        // Η καρτέλα διαβάζεται ζωντανά από τη βάση. Παλιά κρατούσε το αντίγραφο
+        // της στιγμής που πατήθηκε, οπότε μετά την αποθήκευση έδειχνε ακόμη το
+        // παλιό ψευδώνυμο — και η επόμενη αποθήκευση ξεκινούσε από αυτό.
+        val live = people.firstOrNull { it.id == selected!!.id } ?: selected!!
         EmployeeDetailScreen(
-            employee = selected!!,
+            employee = live,
             context = context,
             repository = repository,
             onBack = { selected = null },
@@ -204,12 +210,37 @@ private fun EmployeeDetailScreen(
     val scope = rememberCoroutineScope()
     val debts by repository.observeAll().collectAsState(initial = emptyList())
     var showEdit by remember { mutableStateOf(false) }
-    var alias by remember(employee) { mutableStateOf(employee.alias) }
-    var leftDay by remember(employee) { mutableStateOf(employee.leftDay) }
+    // Κλειδί το id, όχι ολόκληρη η καρτέλα: ο συγχρονισμός στο παρασκήνιο
+    // αλλάζει την καρτέλα και θα έσβηνε ό,τι πληκτρολογείται εκείνη τη στιγμή.
+    // Οι τιμές φρεσκάρονται όταν ανοίγει ο διάλογος.
+    var alias by remember(employee.id) { mutableStateOf(employee.alias) }
+    var leftDay by remember(employee.id) { mutableStateOf(employee.leftDay) }
     var pickingLeft by remember { mutableStateOf(false) }
     var showAnnualTotals by remember { mutableStateOf(true) }
+    var showCalendar by remember { mutableStateOf(false) }
 
     val history = PayrollEmployeeSnapshotStore.history(employee)
+
+    if (showCalendar) {
+        val months = (
+            history.map { YearMonth.of(it.year, it.month) } +
+                debts.filter { it.kind.perPerson && it.amIka == employee.amIka && it.periodYear > 0 && it.periodMonth in 1..12 }
+                    .map { YearMonth.of(it.periodYear, it.periodMonth) }
+            ).distinct()
+        EmploymentCalendarScreen(
+            employee = employee,
+            payrollMonths = months,
+            onSave = { periods ->
+                scope.launch {
+                    repository.saveEmploymentPeriods(employee, periods)
+                    showCalendar = false
+                    Toast.makeText(context, "Το ημερολόγιο αποθηκεύτηκε.", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onBack = { showCalendar = false },
+        )
+        return
+    }
     val totals = PayrollEmployeeSnapshotStore.totals(employee)
     val rows = debts
         .filter { it.kind.perPerson && it.amIka == employee.amIka }
@@ -230,7 +261,18 @@ private fun EmployeeDetailScreen(
                     }
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Πίσω") } },
-                actions = { IconButton(onClick = { showEdit = true }) { Icon(Icons.Default.Edit, contentDescription = "Επεξεργασία", tint = BrandGreen) } },
+                actions = {
+                    IconButton(onClick = { showCalendar = true }) {
+                        Icon(Icons.Default.CalendarMonth, contentDescription = "Ημερολόγιο απασχόλησης", tint = BrandGreen)
+                    }
+                    IconButton(onClick = {
+                        alias = employee.alias
+                        leftDay = employee.leftDay
+                        showEdit = true
+                    }) {
+                        Icon(Icons.Default.Edit, contentDescription = "Επεξεργασία", tint = BrandGreen)
+                    }
+                },
             )
         },
     ) { padding ->
@@ -371,9 +413,8 @@ private fun EmployeeDetailScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val newEmployee = employee.copy(alias = alias.trim(), leftDay = leftDay)
                     scope.launch {
-                        repository.saveEmployee(newEmployee)
+                        repository.saveEmployeeCard(employee, alias, leftDay)
                         showEdit = false
                         Toast.makeText(context, "Η καρτέλα αποθηκεύτηκε.", Toast.LENGTH_SHORT).show()
                     }

@@ -5,6 +5,7 @@ import gr.prosfora.app.data.db.EmployeeAliasRegistry
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.EmployeeTombstones
 import gr.prosfora.app.data.db.ProsforaDatabase
+import gr.prosfora.app.data.db.savePayrollFacts
 import gr.prosfora.app.google.GoogleSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -90,7 +91,12 @@ object EmployeeIndexReconciler {
             )
         }
 
-        if (updates.isNotEmpty()) employeeDao.upsertAll(updates)
+        // Μόνο τα πεδία της μισθοδοσίας, και το ρολόι δεν κατεβαίνει ποτέ: το
+        // `updatedAt = latest.updatedAt` παραπάνω ήταν η ώρα της τελευταίας
+        // οφειλής, συχνά παλιότερη από την αλλαγή ψευδωνύμου. Γραμμένο πάνω στην
+        // καρτέλα, έκανε την παλιά γραμμή του φύλλου να φαίνεται νεότερη και να
+        // ξαναφέρνει το παλιό ψευδώνυμο.
+        updates.forEach { employeeDao.savePayrollFacts(it) }
 
         // Ίδιος κανόνας με το DebtRepository: όποιος ξαναεμφανίζεται σε ζωντανή
         // μισθοδοσία παύει να είναι διαγραμμένος, αλλιώς τον κόβουν τα φίλτρα

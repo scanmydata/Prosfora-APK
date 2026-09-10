@@ -98,6 +98,79 @@ interface EmployeeDao {
     @Upsert suspend fun upsert(employee: EmployeeEntity)
     @Upsert suspend fun upsertAll(employees: List<EmployeeEntity>)
     @Query("SELECT * FROM employees") suspend fun allForSync(): List<EmployeeEntity>
+    @Query("SELECT * FROM employees WHERE id = :id LIMIT 1") suspend fun getById(id: String): EmployeeEntity?
+
+    // --- Αυτόματες ενημερώσεις ---------------------------------------------
+    // Όσα έρχονται από τις μισθοδοσίες γράφουν ΜΟΝΟ τα δικά τους πεδία, με
+    // μία εντολή SQL. Παλιά έγραφαν ολόκληρη τη γραμμή από ένα αντίγραφο που
+    // είχαν διαβάσει νωρίτερα· αν στο μεταξύ ο χρήστης είχε αλλάξει ψευδώνυμο,
+    // το αντίγραφο το έσβηνε.
+
+    /** Νέα καρτέλα· αν υπάρχει ήδη, δεν αγγίζεται (επιστρέφει -1). */
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfMissing(employee: EmployeeEntity): Long
+
+    @Query(
+        "UPDATE employees SET amIka = :amIka, name = :name, code = :code, deleted = 0, " +
+            "updatedAt = MAX(updatedAt, :updatedAt) WHERE id = :id",
+    )
+    suspend fun refreshFromPayroll(id: String, amIka: String, name: String, code: String, updatedAt: Long)
+
+    @Query("UPDATE employees SET payrollSummaryJson = :json WHERE id = :id")
+    suspend fun setPayrollSummary(id: String, json: String)
+
+    // --- Αλλαγές του χρήστη αυτής της συσκευής ------------------------------
+
+    @Query(
+        "UPDATE employees SET alias = :alias, leftDay = :leftDay, periods = :periods, " +
+            "editedAt = :editedAt, editedBy = :editedBy, deleted = 0, " +
+            "updatedAt = MAX(updatedAt, :editedAt) WHERE id = :id",
+    )
+    suspend fun saveUserFields(
+        id: String,
+        alias: String,
+        leftDay: Long?,
+        periods: String,
+        editedAt: Long,
+        editedBy: String,
+    )
+
+    // --- Αλλαγές από άλλον χρήστη ------------------------------------------
+
+    /**
+     * Εφαρμόζει την αλλαγή ενός άλλου χρήστη **μόνο αν είναι νεότερη** από ό,τι
+     * έχει η συσκευή τη στιγμή της εγγραφής. Ο έλεγχος γίνεται μέσα στην ίδια
+     * εντολή, οπότε ένα ψευδώνυμο που γράφτηκε ενώ έτρεχε ο συγχρονισμός δεν
+     * πατιέται. Επιστρέφει πόσες γραμμές άλλαξαν (0 ή 1).
+     */
+    @Query(
+        "UPDATE employees SET alias = :alias, leftDay = :leftDay, periods = :periods, " +
+            "editedAt = :editedAt, editedBy = :editedBy WHERE id = :id AND editedAt < :editedAt",
+    )
+    suspend fun applyRemoteEdit(
+        id: String,
+        alias: String,
+        leftDay: Long?,
+        periods: String,
+        editedAt: Long,
+        editedBy: String,
+    ): Int
+
+    /**
+     * Πριν από την v17 καμία πλευρά δεν έχει ρολόι αλλαγών. Τότε γεμίζουν μόνο
+     * τα κενά — και μόνο όσο η καρτέλα δεν έχει αγγιχτεί από τον χρήστη.
+     */
+    @Query(
+        "UPDATE employees SET " +
+            "alias = CASE WHEN alias = '' THEN :alias ELSE alias END, " +
+            "leftDay = COALESCE(leftDay, :leftDay), " +
+            "periods = CASE WHEN periods = '' THEN :periods ELSE periods END " +
+            "WHERE id = :id AND editedAt = 0",
+    )
+    suspend fun fillBlankEdits(id: String, alias: String, leftDay: Long?, periods: String): Int
+
+    @Query("UPDATE employees SET deleted = :deleted, updatedAt = :updatedAt WHERE id = :id AND updatedAt < :updatedAt")
+    suspend fun applyRemoteDeleted(id: String, deleted: Boolean, updatedAt: Long): Int
+
     @Query("UPDATE employees SET deleted = 1, updatedAt = :at WHERE id = :id") suspend fun softDelete(id: String, at: Long)
     @Query("UPDATE employees SET deleted = 1, updatedAt = :at") suspend fun softDeleteAll(at: Long)
     /**
@@ -113,4 +186,15 @@ interface EmployeeDao {
             "amIka = (SELECT amIka FROM employees WHERE id = :id LIMIT 1))",
     )
     suspend fun hardDelete(id: String)
+}
+
+/**
+ * Γράφει όσα ξέρει η μισθοδοσία —όνομα, κωδικό, ΑΜ ΙΚΑ— χωρίς να αγγίξει όσα
+ * έγραψε ο χρήστης. Νέα καρτέλα μπαίνει ολόκληρη· υπάρχουσα ενημερώνεται μόνο
+ * σε αυτά τα πεδία. Το ιστορικό μισθοδοσίας γράφεται μόνο όταν δοθεί ρητά.
+ */
+suspend fun EmployeeDao.savePayrollFacts(employee: EmployeeEntity, payrollSummary: String? = null) {
+    if (insertIfMissing(employee) != -1L) return
+    refreshFromPayroll(employee.id, employee.amIka, employee.name, employee.code, employee.updatedAt)
+    payrollSummary?.let { setPayrollSummary(employee.id, it) }
 }

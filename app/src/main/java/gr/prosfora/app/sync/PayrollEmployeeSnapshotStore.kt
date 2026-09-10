@@ -4,6 +4,7 @@ import android.content.Context
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.ProsforaDatabase
+import gr.prosfora.app.data.db.savePayrollFacts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -65,7 +66,10 @@ object PayrollEmployeeSnapshotStore {
                 name = representative.personName.trim(),
                 code = representative.personCode.trim(),
             )
-            db.employeeDao().upsert(
+            // Το `old` διαβάστηκε στην αρχή της εισαγωγής, που μπορεί να κράτησε
+            // λεπτά (OCR). Γράφονται μόνο τα πεδία της μισθοδοσίας, ώστε ένα
+            // ψευδώνυμο που άλλαξε στο μεταξύ να μείνει όπως το άφησε ο χρήστης.
+            db.employeeDao().savePayrollFacts(
                 employee.copy(
                     id = resolvedIka,
                     amIka = resolvedIka,
@@ -75,6 +79,7 @@ object PayrollEmployeeSnapshotStore {
                     updatedAt = System.currentTimeMillis(),
                     deleted = false,
                 ),
+                payrollSummary = current.toString(),
             )
         }
     }

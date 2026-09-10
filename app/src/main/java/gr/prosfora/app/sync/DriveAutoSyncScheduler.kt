@@ -12,7 +12,7 @@ import gr.prosfora.app.debug.DebugLog
 
 /**
  * Adaptive background scheduler:
- * Wi‑Fi -> best-effort/exact check every minute when Android allows exact alarms.
+ * Wi‑Fi -> best-effort/exact check every 3 minutes when Android allows exact alarms.
  * Cellular -> check every hour.
  *
  * Without SCHEDULE_EXACT_ALARM Android may defer inexact alarms, especially under
@@ -21,7 +21,10 @@ import gr.prosfora.app.debug.DebugLog
 object DriveAutoSyncScheduler {
     private const val REQUEST_CODE = 7401
     private const val ACTION = "gr.prosfora.app.action.DRIVE_AUTO_SYNC"
-    private const val WIFI_INTERVAL_MS = 60_000L
+    // Τρία λεπτά, όχι ένα: ο χρήστης προλαβαίνει να τελειώσει μια αλλαγή πριν
+    // έρθει ο επόμενος κύκλος, και ένας πλήρης κύκλος (σάρωση Drive + φύλλο)
+    // δεν επικαλύπτει τον προηγούμενο όταν το OCR αργεί.
+    private const val WIFI_INTERVAL_MS = 3L * 60_000L
     private const val CELLULAR_INTERVAL_MS = 60L * 60L * 1000L
 
     fun schedule(context: Context) {
@@ -38,7 +41,7 @@ object DriveAutoSyncScheduler {
                     SystemClock.elapsedRealtime() + WIFI_INTERVAL_MS,
                     pending,
                 )
-                DebugLog.log("auto-sync", "scheduler Wi-Fi: exact alarm στόχος 1 λεπτό")
+                DebugLog.log("auto-sync", "scheduler Wi-Fi: exact alarm στόχος 3 λεπτά")
             } else {
                 alarm.setInexactRepeating(
                     AlarmManager.ELAPSED_REALTIME_WAKEUP,
@@ -46,7 +49,7 @@ object DriveAutoSyncScheduler {
                     WIFI_INTERVAL_MS,
                     pending,
                 )
-                DebugLog.log("auto-sync", "scheduler Wi-Fi: inexact fallback 1 λεπτό (exact alarm permission unavailable)")
+                DebugLog.log("auto-sync", "scheduler Wi-Fi: inexact fallback 3 λεπτά (exact alarm permission unavailable)")
             }
         } else {
             alarm.setInexactRepeating(

@@ -5,15 +5,20 @@ import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeAliasRegistry
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.data.db.EmployeeTombstones
+import gr.prosfora.app.data.db.EmploymentPeriod
+import gr.prosfora.app.data.db.EmploymentPeriods
 import gr.prosfora.app.data.db.ProsforaDatabase
+import gr.prosfora.app.data.db.savePayrollFacts
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.GoogleSettings
+import gr.prosfora.app.sync.DriveAutoSyncWorker
 import gr.prosfora.app.sync.PayrollImportSession
 import gr.prosfora.app.sync.PayrollEmployeeSnapshotStore
 import gr.prosfora.app.sync.PayrollInsuranceDaysStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
 import org.json.JSONObject
+import java.time.LocalDate
 
 class DebtRepository(context: Context) {
     private val settings = GoogleSettings(context)
@@ -61,17 +66,83 @@ class DebtRepository(context: Context) {
         return debts.unpaid()
     }
 
-    suspend fun saveEmployee(employee: EmployeeEntity) {
+    /**
+     * Αποθηκεύει ό,τι άλλαξε ο χρήστης: ψευδώνυμο, αποχώρηση, περιόδους.
+     *
+     * Η καρτέλα που κρατάει η οθόνη μπορεί να είναι παλιά —ο συγχρονισμός
+     * τρέχει στο παρασκήνιο— οπότε **δεν** γράφεται αυτούσια. Διαβάζεται η
+     * τρέχουσα γραμμή και αλλάζουν πάνω της μόνο τα πεδία του χρήστη. Αλλιώς
+     * μια αποθήκευση ψευδωνύμου θα έσβηνε το ιστορικό μισθοδοσίας που μόλις είχε
+     * γράψει ο συγχρονισμός.
+     *
+     * Η αποχώρηση και οι περίοδοι λένε το ίδιο πράγμα με δύο τρόπους, και εδώ
+     * συμφωνούν: όποιο από τα δύο άλλαξε, το άλλο προκύπτει από αυτό.
+     *
+     * Οι δύο είσοδοι είναι ρητές για το τι αλλάζουν. Μια ολόκληρη καρτέλα από
+     * την οθόνη θα κουβαλούσε και ό,τι άλλο είχε τη στιγμή που άνοιξε — π.χ.
+     * περιόδους που στο μεταξύ άλλαξε ο άλλος χρήστης — και θα τα έγραφε πίσω.
+     */
+    suspend fun saveEmployeeCard(employee: EmployeeEntity, alias: String, leftDay: Long?) =
+        saveUserEdit(employee) { base ->
+            val periods = if (leftDay != base.leftDay && base.periods.isNotBlank()) {
+                EmploymentPeriods.format(
+                    EmploymentPeriods.withLeftDay(
+                        EmploymentPeriods.parse(base.periods),
+                        leftDay?.let(LocalDate::ofEpochDay),
+                    ),
+                )
+            } else {
+                base.periods
+            }
+            base.copy(alias = alias.trim(), leftDay = leftDay, periods = periods)
+        }
+
+    /** Το ημερολόγιο απασχόλησης· η αποχώρηση προκύπτει από την τελευταία περίοδο. */
+    suspend fun saveEmploymentPeriods(employee: EmployeeEntity, periods: List<EmploymentPeriod>) =
+        saveUserEdit(employee) { base -> base.copy(periods = EmploymentPeriods.format(periods)) }
+
+    suspend fun saveEmployee(employee: EmployeeEntity) =
+        saveEmployeeCard(employee, employee.alias, employee.leftDay)
+
+    private suspend fun saveUserEdit(employee: EmployeeEntity, change: (EmployeeEntity) -> EmployeeEntity) {
         val ika = EmployeeEntity.normalizeIka(employee.amIka)
-        val saved = employee.copy(
-            id = if (ika.isNotBlank()) ika else employee.id,
-            amIka = ika,
-            updatedAt = System.currentTimeMillis(),
+        val id = if (ika.isNotBlank()) ika else employee.id
+        val stored = employees.getById(id) ?: employees.getById(employee.id)
+        val edited = change(stored ?: employee)
+
+        val leftDay = if (edited.periods.isBlank()) {
+            edited.leftDay
+        } else {
+            EmploymentPeriods.leftDay(EmploymentPeriods.parse(edited.periods))?.toEpochDay()
+        }
+
+        val now = System.currentTimeMillis()
+        val saved = edited.copy(
+            id = id,
+            amIka = ika.ifBlank { edited.amIka },
+            leftDay = leftDay,
+            editedAt = now,
+            editedBy = settings.ownerEmail,
+            updatedAt = maxOf(now, edited.updatedAt),
             deleted = false,
         )
-        employees.upsert(saved)
+        // Κι εδώ, μόνο τα πεδία του χρήστη: το ιστορικό μισθοδοσίας της γραμμής
+        // μπορεί να το γράφει ο συγχρονισμός αυτή ακριβώς τη στιγμή.
+        if (stored != null && stored.id == id) {
+            employees.saveUserFields(id, saved.alias, saved.leftDay, saved.periods, now, saved.editedBy)
+        } else {
+            employees.upsert(saved)
+        }
+        DebugLog.log("employees") {
+            "αποθήκευση καρτέλας $id · ψευδώνυμο=«${saved.alias}» · αποχώρηση=${saved.leftDay} · περίοδοι=${saved.periods}"
+        }
         if (saved.id.isNotBlank()) settings.forgetDeletedEmployee(saved.id)
         EmployeeAliasRegistry.refresh(employees.allForSync())
+
+        // Η αλλαγή φεύγει για το κοινόχρηστο φύλλο αμέσως, όχι στον επόμενο
+        // κύκλο: οι άλλοι τη βλέπουν νωρίτερα, και χωρίς δίκτυο περιμένει μέχρι
+        // να επανέλθει. Αν τρέχει ήδη συγχρονισμός, δεν ξεκινά δεύτερος.
+        DriveAutoSyncWorker.enqueueNow(appContext)
     }
 
     suspend fun deleteEmployee(id: String) = employees.softDelete(id, System.currentTimeMillis())
@@ -191,7 +262,19 @@ class DebtRepository(context: Context) {
             )
         }.sortedBy { it.name.uppercase() }
 
-        if (updates.isNotEmpty()) employees.upsertAll(updates)
+        // Μόνο τα πεδία της μισθοδοσίας. Το ψευδώνυμο, η αποχώρηση και οι
+        // περίοδοι του `existing` είναι αντίγραφο από την αρχή της συνάρτησης·
+        // αν ο χρήστης τα άλλαξε στο μεταξύ, ολόκληρη η γραμμή θα τα πατούσε.
+        val emptyBefore = updates.associate { update ->
+            val previous = stored.firstOrNull { it.id == update.id }?.payrollSummaryJson
+            update.id to (previous.isNullOrBlank() || previous == "{}")
+        }
+        updates.forEach { update ->
+            employees.savePayrollFacts(
+                update,
+                payrollSummary = update.payrollSummaryJson.takeIf { emptyBefore[update.id] == true },
+            )
+        }
 
         // Μια ζωντανή μισθοδοσία ακυρώνει μια παλιά διαγραφή. Χωρίς αυτό, όποιον
         // είχες διαγράψει ποτέ «και από τη βάση» έμενε αποκλεισμένος από την
