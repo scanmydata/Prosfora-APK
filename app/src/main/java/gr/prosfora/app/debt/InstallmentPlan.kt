@@ -29,6 +29,24 @@ data class InstallmentPlan(
         firstDueDay?.toString().orEmpty(),
     ).joinToString("|")
 
+    /**
+     * Πόσες ισόποσες δόσεις **επιτρέπει το έντυπο**.
+     *
+     * Το ποσό της πρώτης δόσης το λέει, χωρίς να χρειάζεται να γραφτεί πουθενά:
+     * όταν είναι το μισό του συνόλου, οι δόσεις είναι δύο. Η ΑΑΔΕ γράφει
+     * ισόποσες μηνιαίες δόσεις, οπότε ο λόγος συνόλου προς δόση **είναι** ο
+     * αριθμός τους.
+     *
+     * Όταν τα ποσά δεν βγάζουν καθαρό λόγο —χειρόγραφη οφειλή, OCR που έχασε
+     * ψηφίο— μένει ο αριθμός που είχε διαβαστεί, και τουλάχιστον ένας.
+     */
+    fun allowedCount(): Int {
+        if (total <= 0.0 || installment <= 0.0) return count.coerceAtLeast(1)
+        val ratio = total / installment
+        val rounded = Math.round(ratio).toInt()
+        return if (rounded >= 1 && Math.abs(ratio - rounded) <= 0.05) rounded else count.coerceAtLeast(1)
+    }
+
     /** Τα ποσά των δόσεων· η τελευταία κουβαλάει τη στρογγύλευση. */
     fun amounts(): List<Double> = (0 until count).map { index ->
         if (index == count - 1) money(total - money(installment) * (count - 1)) else money(installment)

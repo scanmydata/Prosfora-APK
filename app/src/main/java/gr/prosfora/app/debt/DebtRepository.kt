@@ -187,6 +187,11 @@ class DebtRepository(context: Context) {
         if (wanted.isEmpty()) return 0
         val now = System.currentTimeMillis()
         val previous = group.associateBy { it.id }
+        // Το πλάνο του εντύπου μένει ανέπαφο. Αν γραφόταν από πάνω η επιλογή
+        // του χρήστη, μια οφειλή που μάζευε τις δόσεις της σε μία θα έλεγε στο
+        // εξής «μία δόση» — και δεν θα ξανάσπαγε ποτέ.
+        val documentPlan = group.firstNotNullOfOrNull { row -> row.installmentPlan.ifBlank { null } }
+            ?: plan.format()
         val saved = wanted.map { row ->
             val old = previous[row.id]
             row.copy(
@@ -195,7 +200,7 @@ class DebtRepository(context: Context) {
                 paidDay = old?.paidDay,
                 createdAt = old?.createdAt ?: now,
                 createdBy = old?.createdBy?.ifBlank { settings.ownerEmail } ?: settings.ownerEmail,
-                installmentPlan = plan.format(),
+                installmentPlan = documentPlan,
                 updatedAt = now,
                 deleted = false,
             )

@@ -66,8 +66,18 @@ fun InstallmentPlanDialog(
     val currentTotal = group.sumOf { it.amount }
     val stored = remember(group) { InstallmentPlan.forDebt(representative, currentTotal) }
 
-    var asInstallments by remember(group) { mutableStateOf(group.size > 1 || stored.count > 1) }
-    var count by remember(group) { mutableStateOf(maxOf(group.size, stored.count).coerceAtLeast(1)) }
+    // Το πλάνο όπως το είπε το έντυπο — δεν το ακουμπάει η επεξεργασία. Αυτό
+    // ορίζει πόσες δόσεις επιτρέπονται· χωρίς αυτό, δεν επιτρέπονται δόσεις.
+    val document = remember(group) {
+        group.firstNotNullOfOrNull { row -> InstallmentPlan.parse(row.installmentPlan) }
+    }
+    val maxCount = document?.allowedCount() ?: 1
+    val canSplit = maxCount >= 2
+
+    var asInstallments by remember(group) { mutableStateOf(canSplit && group.size > 1) }
+    var count by remember(group) {
+        mutableStateOf(maxOf(group.size, stored.count).coerceIn(1, maxOf(maxCount, 1)))
+    }
     var total by remember(group) { mutableStateOf(stored.total.asMoney().removeSuffix(" €").trim()) }
     var firstDue by remember(group) {
         mutableStateOf(stored.firstDueDay ?: representative.dueDay ?: LocalDate.now().toEpochDay())
@@ -106,8 +116,25 @@ fun InstallmentPlanDialog(
                     )
                     FilterChip(
                         selected = asInstallments,
+                        enabled = canSplit,
                         onClick = { asInstallments = true },
-                        label = { Text("Σε δόσεις") },
+                        label = { Text(if (canSplit) "Σε $maxCount δόσεις" else "Σε δόσεις") },
+                    )
+                }
+
+                if (document != null && canSplit) {
+                    Text(
+                        "Το έντυπο ορίζει πρώτη δόση ${document.installment.asMoney()} σε σύνολο " +
+                            "${document.total.asMoney()} — έως $maxCount ισόποσες μηνιαίες δόσεις.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "Το έντυπο αυτής της οφειλής δεν ορίζει δόσεις, οπότε δεν σπάει σε δόσεις. " +
+                            "Το ποσό της πρώτης δόσης είναι αυτό που λέει πόσες επιτρέπονται.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
 
@@ -130,7 +157,7 @@ fun InstallmentPlanDialog(
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 8.dp),
                         )
-                        IconButton(enabled = count < 120, onClick = { count++ }) {
+                        IconButton(enabled = count < maxCount, onClick = { count++ }) {
                             Icon(Icons.Default.Add, contentDescription = "Περισσότερες")
                         }
                     }
