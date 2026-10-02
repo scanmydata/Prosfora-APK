@@ -104,7 +104,10 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
                 try {
                     read(file.name, file.id, bytes).let { raw ->
                         val fresh = raw.debts.filterNot { it.id in knownDebtIds }
-                        if (raw.debts.isNotEmpty() && fresh.isEmpty() && raw.installmentPlan == null) {
+                        // Και τα έντυπα με δόσεις μετράνε ως διπλότυπα: τώρα που
+                        // το πλάνο αποθηκεύεται, δεν υπάρχει λόγος να
+                        // ξαναπροτείνονται σε κάθε σάρωση.
+                        if (raw.debts.isNotEmpty() && fresh.isEmpty()) {
                             // Το αρχείο διαβάστηκε, αλλά όλες του οι οφειλές
                             // υπάρχουν ήδη. Δεν είναι εύρημα, ούτε είδηση.
                             skipped++
@@ -166,8 +169,18 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
 
         val byRules = enrichPayrollAmIka(result.text, DebtParser.parse(result.text, fileName, driveFileId))
         val installmentPlan = AadeInstallmentParser.parse(result.text)
+        // Το πλάνο γράφεται πάνω στην οφειλή. Η οφειλή μπαίνει ως μία συνολική
+        // —αυτό θέλει κανείς στις περισσότερες περιπτώσεις— αλλά κρατάει μαζί
+        // της τη γνώση ότι σπάει σε δόσεις, ώστε να ρυθμιστεί όποτε χρειαστεί.
+        val planText = installmentPlan?.let { InstallmentPlan.of(it).format() }.orEmpty()
         val rulesForImport = if (installmentPlan != null) {
-            byRules.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) }
+            byRules.map {
+                it.copy(
+                    amount = installmentPlan.totalAmount,
+                    dueDay = installmentPlan.firstDueDay,
+                    installmentPlan = planText,
+                )
+            }
         } else byRules
 
         val model = llm
@@ -180,7 +193,17 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
             .getOrDefault(emptyList())
         val byModel = enrichPayrollAmIka(
             result.text,
-            if (installmentPlan != null) extractedByModel.map { it.copy(amount = installmentPlan.totalAmount, dueDay = installmentPlan.firstDueDay) } else extractedByModel,
+            if (installmentPlan != null) {
+                extractedByModel.map {
+                    it.copy(
+                        amount = installmentPlan.totalAmount,
+                        dueDay = installmentPlan.firstDueDay,
+                        installmentPlan = planText,
+                    )
+                }
+            } else {
+                extractedByModel
+            },
         )
         return Found(
             fileName,

@@ -73,6 +73,7 @@ import gr.prosfora.app.data.db.DebtAgency
 import gr.prosfora.app.data.db.DebtEntity
 import gr.prosfora.app.data.db.EmployeeEntity
 import gr.prosfora.app.debt.DebtImporter
+import gr.prosfora.app.debt.InstallmentPlan
 import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.SheetsClient
@@ -119,6 +120,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var confirmBulk by remember { mutableStateOf(false) }
     var payingFor by remember { mutableStateOf<DebtEntity?>(null) }
+    var installmentsFor by remember { mutableStateOf<DebtEntity?>(null) }
 
     val years = remember(debts) {
         debts.map { it.periodYear }.filter { it > 0 }.distinct().sortedDescending().ifEmpty { listOf(LocalDate.now().year) }
@@ -314,6 +316,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
                         onOpen = { editing = debt },
                         onSelect = { selected = if (debt.id in selected) selected - debt.id else selected + debt.id },
                         onCopy = { copyToClipboard(context, it, debt.title) },
+                        onInstallments = { installmentsFor = debt },
                     )
                 }
             }
@@ -333,6 +336,20 @@ fun DebtsScreen(onMenu: () -> Unit) {
         PaidDatePicker(
             onDismiss = { payingFor = null },
             onPick = { day -> payingFor = null; scope.launch { repository.setPaid(debt.id, paid = true, day = day) } },
+        )
+    }
+    installmentsFor?.let { debt ->
+        val group = remember(debts, debt.id) { InstallmentPlan.groupOf(debts, debt) }.ifEmpty { listOf(debt) }
+        InstallmentPlanDialog(
+            group = group,
+            onDismiss = { installmentsFor = null },
+            onApply = { plan, asInstallments ->
+                installmentsFor = null
+                scope.launch {
+                    val rows = repository.reshapeInstallments(group, plan, asInstallments)
+                    toast(if (rows > 1) "Η οφειλή χωρίστηκε σε $rows δόσεις" else "Η οφειλή έμεινε μία")
+                }
+            },
         )
     }
     editing?.let { debt ->
@@ -439,14 +456,20 @@ private fun DebtRow(
     onOpen: () -> Unit,
     onSelect: () -> Unit,
     onCopy: (String) -> Unit,
+    onInstallments: () -> Unit,
 ) {
     val today = LocalDate.now()
-    val installment = remember(debt.description) {
-        Regex("δόση\\s+(\\d+)\\s*/\\s*(\\d+)", RegexOption.IGNORE_CASE).find(debt.description)?.let { it.groupValues[1].toIntOrNull() to it.groupValues[2].toIntOrNull() }
-    }
+    val installment = remember(debt.description) { InstallmentPlan.doseOf(debt) }
     val installmentColor = installment?.first?.let { installmentBadgeColor(it) }
     Card(
-        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { if (selecting) onSelect() else onOpen() }, onLongClick = onSelect),
+        // Παρατεταμένο πάτημα: δόσεις. Η επιλογή πολλών οφειλών μετακόμισε στο
+        // διπλό πάτημα — το παρατεταμένο το θέλει η ρύθμιση δόσεων, που είναι
+        // και η πιο συχνή ενέργεια πάνω σε μια συγκεκριμένη οφειλή.
+        modifier = Modifier.fillMaxWidth().combinedClickable(
+            onClick = { if (selecting) onSelect() else onOpen() },
+            onLongClick = { if (selecting) onSelect() else onInstallments() },
+            onDoubleClick = onSelect,
+        ),
         colors = CardDefaults.cardColors(if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface),
     ) {
         Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {

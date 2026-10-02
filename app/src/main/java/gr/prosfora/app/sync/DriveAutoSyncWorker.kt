@@ -3,23 +3,18 @@ package gr.prosfora.app.sync
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import com.google.android.gms.auth.api.identity.AuthorizationRequest
-import com.google.android.gms.auth.api.identity.Identity
-import com.google.android.gms.common.api.Scope
 import gr.prosfora.app.debt.DebtRepository
 import gr.prosfora.app.debug.DebugLog
-import gr.prosfora.app.google.GoogleAuthorizer
 import gr.prosfora.app.notify.DriveNotifier
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
-import kotlinx.coroutines.suspendCancellableCoroutine
 
 /** Background συγχρονισμός που εκτελείται όταν χτυπήσει ο adaptive alarm. */
 class DriveAutoSyncWorker(
@@ -41,7 +36,7 @@ class DriveAutoSyncWorker(
         // Google ζητάει έγκριση από τον χρήστη, καμία επανάληψη δεν θα τη
         // δώσει και το work κλείνει. Όταν όμως σκάει το δίκτυο, το work πρέπει
         // να ξαναδοκιμάσει — αλλιώς ό,τι γράφτηκε offline μένει στη συσκευή.
-        val attempt = runCatching { accessTokenWithoutUi(applicationContext) }
+        val attempt = runCatching { BackgroundToken.withoutUi(applicationContext) }
         val token = attempt.getOrElse { error ->
             DebugLog.log("auto-sync", "δεν πήρα token: ${error.stackTraceToString()}")
             return Result.retry()
@@ -66,32 +61,9 @@ class DriveAutoSyncWorker(
         }.getOrElse { Result.retry() }
     }
 
-    private suspend fun accessTokenWithoutUi(context: Context): String? =
-        suspendCancellableCoroutine { continuation ->
-            val request = AuthorizationRequest.builder()
-                .setRequestedScopes(GoogleAuthorizer.SCOPES.map(::Scope))
-                .build()
-            Identity.getAuthorizationClient(context)
-                .authorize(request)
-                .addOnSuccessListener { result ->
-                    if (result.hasResolution()) {
-                        continuation.resume(null)
-                        return@addOnSuccessListener
-                    }
-                    val token = result.accessToken
-                    if (token.isNullOrBlank()) {
-                        continuation.resumeWithException(
-                            IllegalStateException("Η Google δεν επέστρεψε background access token"),
-                        )
-                    } else {
-                        continuation.resume(token)
-                    }
-                }
-                .addOnFailureListener { continuation.resumeWithException(it) }
-        }
-
     companion object {
         private const val WORK_NAME = "prosfora-drive-auto-sync-now"
+        private const val PERIODIC_NAME = "prosfora-drive-auto-sync-periodic"
 
         /** Διατηρεί μόνο ένα sync κάθε φορά, ακόμη κι αν χτυπήσουν πολλά alarms. */
         fun enqueueNow(context: Context) {
@@ -111,7 +83,31 @@ class DriveAutoSyncWorker(
             )
         }
 
+        /**
+         * Δίχτυ ασφαλείας κάθε 15 λεπτά — το ελάχιστο που επιτρέπει το Android.
+         *
+         * Τα alarms είναι το γρήγορο κανάλι αλλά και το εύθραυστο: χωρίς
+         * δικαίωμα exact alarm το Doze τα καθυστερεί, και μια σάρωση που δεν
+         * έτρεξε σημαίνει ότι ένα νέο PDF στον κοινόχρηστο φάκελο δεν το είδε
+         * καμία συσκευή. Το WorkManager επιβιώνει σε Doze και σε επανεκκίνηση.
+         */
+        fun ensurePeriodic(context: Context) {
+            val app = context.applicationContext
+            WorkManager.getInstance(app).enqueueUniquePeriodicWork(
+                PERIODIC_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                PeriodicWorkRequestBuilder<DriveAutoSyncWorker>(15, TimeUnit.MINUTES)
+                    .setConstraints(
+                        Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
+                    )
+                    .build(),
+            )
+        }
+
         /** Συμβατότητα με το παλιό startup call. */
-        fun schedule(context: Context) = DriveAutoSyncScheduler.schedule(context)
+        fun schedule(context: Context) {
+            ensurePeriodic(context)
+            DriveAutoSyncScheduler.schedule(context)
+        }
     }
 }

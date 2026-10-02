@@ -47,9 +47,7 @@ object DriveSyncCoordinator {
                 (settings.knownDriveIds - legacyPayrollFileIds)
             ).toMutableSet().apply { removeAll(targetedPayrollRepair) }
 
-        val deferInstallments = settings.notifyDriveChanges
         val savedIds = mutableSetOf<String>()
-        val pendingFiles = mutableSetOf<String>()
         val notifiedFiles = mutableSetOf<String>()
         val savedDebts = mutableListOf<DebtEntity>()
         val report = runCatching {
@@ -69,21 +67,21 @@ object DriveSyncCoordinator {
                     PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
                     PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
 
-                    val pending = deferInstallments && enrichedFound.installmentPlan != null
-                    if (pending) {
-                        if (pendingFiles.add(enrichedFound.driveFileId)) {
-                            PendingDebtNotificationStore.enqueue(app, listOf(enrichedFound))
-                            DebugLog.log("sync", "άμεση εκκρεμής ειδοποίηση δόσεων · file=${enrichedFound.fileName}")
+                    // Μπαίνει στη βάση αμέσως, ακόμη κι όταν έχει δόσεις: η
+                    // οφειλή αποθηκεύεται ως μία συνολική και κουβαλάει το
+                    // πλάνο της, ώστε να σπάσει σε δόσεις όποτε το θελήσει ο
+                    // χρήστης. Παλιά περίμενε έγκριση, οπότε ένα αρχείο που
+                    // εντοπίστηκε με κλειστή την εφαρμογή δεν έφτανε ποτέ στη
+                    // βάση — και καμία άλλη συσκευή δεν μάθαινε γι' αυτό.
+                    val fresh = enrichedDebts.filter { savedIds.add(it.id) }
+                    if (fresh.isNotEmpty()) {
+                        repository.saveAll(fresh)
+                        savedDebts += fresh
+                        DebugLog.log("sync") {
+                            "άμεση αποθήκευση ${fresh.size} οφειλών από ${found.fileName}" +
+                                if (enrichedFound.installmentPlan != null) " · με πλάνο δόσεων" else ""
                         }
-                        if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
-                    } else {
-                        val fresh = enrichedDebts.filter { savedIds.add(it.id) }
-                        if (fresh.isNotEmpty()) {
-                            repository.saveAll(fresh)
-                            savedDebts += fresh
-                            DebugLog.log("sync", "άμεση αποθήκευση ${fresh.size} οφειλών από ${found.fileName}")
-                            if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
-                        }
+                        if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, fresh)
                     }
                 },
             )
@@ -98,21 +96,13 @@ object DriveSyncCoordinator {
             if (found.afmMismatch || found.debts.isEmpty()) continue
             val enrichedDebts = PayrollEmployeeEnricher.enrich(found.debts, found.ocrText)
             val enrichedFound = found.copy(debts = enrichedDebts)
-            val pending = deferInstallments && enrichedFound.installmentPlan != null
-            if (pending) {
-                PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
-                PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
-                if (pendingFiles.add(enrichedFound.driveFileId)) PendingDebtNotificationStore.enqueue(app, listOf(enrichedFound))
-                if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, enrichedDebts, openPendingInstallments = true)
-            } else {
-                PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
-                PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
-                val fresh = enrichedDebts.filter { savedIds.add(it.id) }
-                if (fresh.isNotEmpty()) {
-                    repository.saveAll(fresh)
-                    savedDebts += fresh
-                    if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, fresh, openPendingInstallments = false)
-                }
+            PayrollInsuranceDaysStore.record(app, found.ocrText, enrichedDebts)
+            PayrollEmployeeSnapshotStore.record(app, found.ocrText, enrichedDebts)
+            val fresh = enrichedDebts.filter { savedIds.add(it.id) }
+            if (fresh.isNotEmpty()) {
+                repository.saveAll(fresh)
+                savedDebts += fresh
+                if (notifiedFiles.add(enrichedFound.driveFileId)) DriveNotifier.notifyDebts(app, fresh)
             }
         }
 
@@ -142,7 +132,7 @@ object DriveSyncCoordinator {
         // κατάλογος. Μία καρτέλα, ένας συγγραφέας.
 
         NewDebtsBadge.record(app, savedDebts.distinctBy { it.id })
-        DebugLog.log("sync", "τέλος · scanned=${report.scanned}, skipped=${report.skipped}, saved=${savedDebts.size}, pendingInstallments=${pendingFiles.size}, notifications=${notifiedFiles.size}")
+        DebugLog.log("sync", "τέλος · scanned=${report.scanned}, skipped=${report.skipped}, saved=${savedDebts.size}, notifications=${notifiedFiles.size}")
         Result(finalSheetSummary, savedDebts.distinctBy { it.id }, report.unreadable.size)
     }
 }

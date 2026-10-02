@@ -55,9 +55,7 @@ import gr.prosfora.app.util.asMoney
 import gr.prosfora.app.util.asOfferDate
 import gr.prosfora.app.util.parseDecimal
 import kotlinx.coroutines.launch
-import java.time.DayOfWeek
 import java.time.LocalDate
-import java.time.YearMonth
 import java.time.ZoneOffset
 
 @Composable
@@ -250,61 +248,6 @@ fun DebtEditorDialog(
 }
 
 private enum class InstallmentImportMode { TOTAL, INSTALLMENTS }
-
-private fun lastBusinessDay(year: Int, month: Int): LocalDate {
-    var date = YearMonth.of(year, month).atEndOfMonth()
-    while (date.dayOfWeek == DayOfWeek.SATURDAY || date.dayOfWeek == DayOfWeek.SUNDAY) {
-        date = date.minusDays(1)
-    }
-    return date
-}
-
-private fun roundMoney(value: Double): Double = Math.round(value * 100.0) / 100.0
-
-private fun materializeInstallmentDebt(
-    debt: DebtEntity,
-    plan: AadeInstallmentParser.Info,
-    mode: InstallmentImportMode,
-): List<DebtEntity> {
-    if (mode == InstallmentImportMode.TOTAL) {
-        return listOf(
-            debt.copy(
-                amount = plan.totalAmount,
-                dueDay = plan.firstDueDay,
-            ),
-        )
-    }
-
-    val firstDue = LocalDate.ofEpochDay(plan.firstDueDay)
-    return (0 until plan.installmentCount).map { index ->
-        val targetMonth = firstDue.plusMonths(index.toLong())
-        val due = if (index == 0) {
-            firstDue
-        } else {
-            lastBusinessDay(targetMonth.year, targetMonth.monthValue)
-        }
-        val amount = if (index == plan.installmentCount - 1) {
-            roundMoney(plan.totalAmount - plan.installmentAmount * (plan.installmentCount - 1))
-        } else {
-            plan.installmentAmount
-        }
-        debt.copy(
-            id = DebtEntity.idFor(
-                debt.kind,
-                debt.periodYear,
-                debt.periodMonth,
-                "${debt.reference}|dose:${index + 1}/${plan.installmentCount}",
-                debt.personName,
-            ),
-            amount = amount,
-            dueDay = due.toEpochDay(),
-            description = buildString {
-                append(debt.description.ifBlank { "Βεβαιωμένη οφειλή" })
-                append(" · δόση ${index + 1}/${plan.installmentCount}")
-            },
-        )
-    }
-}
 
 /**
  * Τι διαβάστηκε από τα παραστατικά, πριν μπει στη βάση.

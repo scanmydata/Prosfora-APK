@@ -53,6 +53,11 @@ data class DebtEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val deleted: Boolean = false,
+    /**
+     * Το πλάνο δόσεων — βλ. `InstallmentPlan`. Μένει πάνω στην οφειλή ώστε να
+     * μπορεί να ξαναρυθμιστεί αργότερα, κι αν μπήκε ως μία συνολική οφειλή.
+     */
+    val installmentPlan: String = "",
 ) {
     val agency: DebtAgency get() = kind.agency
     val imported: Boolean get() = source.isNotBlank()

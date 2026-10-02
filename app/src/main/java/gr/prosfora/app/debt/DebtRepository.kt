@@ -11,7 +11,7 @@ import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.data.db.savePayrollFacts
 import gr.prosfora.app.debug.DebugLog
 import gr.prosfora.app.google.GoogleSettings
-import gr.prosfora.app.sync.DriveAutoSyncWorker
+import gr.prosfora.app.sync.SheetPushWorker
 import gr.prosfora.app.sync.PayrollImportSession
 import gr.prosfora.app.sync.PayrollEmployeeSnapshotStore
 import gr.prosfora.app.sync.PayrollInsuranceDaysStore
@@ -142,10 +142,13 @@ class DebtRepository(context: Context) {
         // Η αλλαγή φεύγει για το κοινόχρηστο φύλλο αμέσως, όχι στον επόμενο
         // κύκλο: οι άλλοι τη βλέπουν νωρίτερα, και χωρίς δίκτυο περιμένει μέχρι
         // να επανέλθει. Αν τρέχει ήδη συγχρονισμός, δεν ξεκινά δεύτερος.
-        DriveAutoSyncWorker.enqueueNow(appContext)
+        SheetPushWorker.push(appContext)
     }
 
-    suspend fun deleteEmployee(id: String) = employees.softDelete(id, System.currentTimeMillis())
+    suspend fun deleteEmployee(id: String) {
+        employees.softDelete(id, System.currentTimeMillis())
+        SheetPushWorker.push(appContext)
+    }
 
     /** Permanently remove the employee and create a sync tombstone. */
     suspend fun deleteEmployeeFromDatabase(id: String) {
@@ -164,6 +167,48 @@ class DebtRepository(context: Context) {
         val normalized = normalizeByDueDate(debt.copy(amIka = EmployeeEntity.normalizeIka(debt.amIka)))
         debts.upsert(normalized.copy(updatedAt = System.currentTimeMillis(), createdBy = normalized.createdBy.ifBlank { settings.ownerEmail }))
         rebuildEmployeeIndex()
+        SheetPushWorker.push(appContext)
+    }
+
+    /**
+     * Ξαναμοιράζει μια οφειλή σε δόσεις — ή τις μαζεύει πίσω σε μία.
+     *
+     * Οι νέες γραμμές γράφονται και οι παλιές που δεν χρειάζονται πια μπαίνουν
+     * ως διαγραμμένες, όχι εξαφανισμένες: έτσι η αλλαγή ταξιδεύει στις άλλες
+     * συσκευές αντί να επιστρέφει με τον επόμενο συγχρονισμό. Ό,τι είχε ήδη
+     * πληρωθεί και παραμένει, κρατάει την πληρωμή του.
+     */
+    suspend fun reshapeInstallments(
+        group: List<DebtEntity>,
+        plan: InstallmentPlan,
+        asInstallments: Boolean,
+    ): Int {
+        val wanted = InstallmentPlan.reshape(group, plan, asInstallments)
+        if (wanted.isEmpty()) return 0
+        val now = System.currentTimeMillis()
+        val previous = group.associateBy { it.id }
+        val saved = wanted.map { row ->
+            val old = previous[row.id]
+            row.copy(
+                paid = old?.paid ?: false,
+                paidAt = old?.paidAt,
+                paidDay = old?.paidDay,
+                createdAt = old?.createdAt ?: now,
+                createdBy = old?.createdBy?.ifBlank { settings.ownerEmail } ?: settings.ownerEmail,
+                installmentPlan = plan.format(),
+                updatedAt = now,
+                deleted = false,
+            )
+        }
+        debts.upsertAll(saved)
+        val keep = saved.map { it.id }.toSet()
+        group.filterNot { it.id in keep }.forEach { debts.softDelete(it.id, now) }
+        DebugLog.log("debts") {
+            "ρύθμιση δόσεων · ${group.size} γραμμές → ${saved.size} · " +
+                "πλάνο=${plan.format()} · διαγράφηκαν=${group.count { it.id !in keep }}"
+        }
+        SheetPushWorker.push(appContext)
+        return saved.size
     }
 
     suspend fun saveAll(items: List<DebtEntity>) {
@@ -307,13 +352,18 @@ class DebtRepository(context: Context) {
 
     suspend fun setPaid(id: String, paid: Boolean, day: Long? = null) {
         debts.markPaid(id, paid, if (paid) (day ?: System.currentTimeMillis()) else null, System.currentTimeMillis())
+        // Η πληρωμή φεύγει για την κοινόχρηστη βάση τώρα. Πριν περίμενε τον
+        // επόμενο κύκλο — με δεδομένα κινητής, μία ώρα.
+        SheetPushWorker.push(appContext)
     }
 
     suspend fun delete(id: String) = delete(listOf(id))
 
     suspend fun delete(ids: Collection<String>) {
+        if (ids.isEmpty()) return
         val now = System.currentTimeMillis()
         ids.forEach { debts.softDelete(it, now) }
+        SheetPushWorker.push(appContext)
     }
 
     suspend fun deleteFromFile(source: String, driveFileId: String) {
