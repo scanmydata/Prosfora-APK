@@ -22,9 +22,10 @@ class InstallmentPlanTest {
         id: String? = null,
         plan: String = "",
     ) = DebtEntity(
-        id = id ?: DebtEntity.idFor(DebtKind.AADE, 2026, 6, reference, ""),
+        // Η οφειλή ζει στον μήνα που πληρώνεται — όπως τη γράφει η εφαρμογή
+        id = id ?: DebtEntity.idFor(DebtKind.AADE, 2026, 8, reference, ""),
         kind = DebtKind.AADE,
-        periodMonth = 6,
+        periodMonth = 8,
         periodYear = 2026,
         dueDay = day("2026-08-31"),
         amount = amount,

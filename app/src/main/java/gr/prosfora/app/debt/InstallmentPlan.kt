@@ -130,10 +130,18 @@ data class InstallmentPlan(
             asInstallments: Boolean,
         ): List<DebtEntity> {
             val base = group.firstOrNull { doseOf(it) == null } ?: group.firstOrNull() ?: return emptyList()
+
+            // Η περίοδος του κλειδιού είναι ο μήνας της πρώτης δόσης, όχι του
+            // `base`: η κάθε δόση ζει στον δικό της μήνα, οπότε αν το κλειδί
+            // έπαιρνε τον μήνα της γραμμής, το μάζεμα των δόσεων πίσω σε μία
+            // θα έφτιαχνε οφειλή με άλλο id από την αρχική.
+            val keyDate = plan.firstDueDay?.let(LocalDate::ofEpochDay)
+            val keyYear = keyDate?.year ?: base.periodYear
+            val keyMonth = keyDate?.monthValue ?: base.periodMonth
             fun idWith(suffix: String) = DebtEntity.idFor(
                 base.kind,
-                base.periodYear,
-                base.periodMonth,
+                keyYear,
+                keyMonth,
                 base.reference + suffix,
                 base.personName,
             )
