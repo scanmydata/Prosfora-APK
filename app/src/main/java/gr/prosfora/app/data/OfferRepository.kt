@@ -7,10 +7,12 @@ import gr.prosfora.app.data.db.OfferEntity
 import gr.prosfora.app.data.db.OfferWithDetails
 import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.data.db.SpaceEntity
+import gr.prosfora.app.sync.SyncPush
 import kotlinx.coroutines.flow.Flow
 
 class OfferRepository(context: Context) {
 
+    private val appContext = context.applicationContext
     private val db = ProsforaDatabase.get(context)
     private val offers = db.offerDao()
     private val spaces = db.spaceDao()
@@ -23,12 +25,22 @@ class OfferRepository(context: Context) {
 
     fun observePresets(): Flow<List<NotePresetEntity>> = presets.observeAll()
 
-    suspend fun saveOffer(offer: OfferEntity) =
+    // Κάθε αλλαγή φεύγει για την κοινόχρηστη βάση μόνη της. Οι διαδοχικές
+    // —ένα ένα τα πλήκτρα μιας διεύθυνσης— μαζεύονται σε έναν συγχρονισμό.
+    suspend fun saveOffer(offer: OfferEntity) {
         offers.upsert(offer.copy(updatedAt = System.currentTimeMillis()))
+        SyncPush.now(appContext)
+    }
 
-    suspend fun deleteOffer(id: String) = offers.softDelete(id, System.currentTimeMillis())
+    suspend fun deleteOffer(id: String) {
+        offers.softDelete(id, System.currentTimeMillis())
+        SyncPush.now(appContext)
+    }
 
-    suspend fun markSent(id: String) = offers.markSent(id, System.currentTimeMillis())
+    suspend fun markSent(id: String) {
+        offers.markSent(id, System.currentTimeMillis())
+        SyncPush.now(appContext)
+    }
 
     suspend fun setWorkStart(offer: OfferEntity, day: Long?) =
         saveOffer(offer.copy(workStartDay = day))
@@ -39,8 +51,10 @@ class OfferRepository(context: Context) {
     suspend fun markReviewSent(offer: OfferEntity) =
         saveOffer(offer.copy(reviewSentAt = System.currentTimeMillis()))
 
-    suspend fun markNotified(id: String, via: String) =
+    suspend fun markNotified(id: String, via: String) {
         offers.markNotified(id, System.currentTimeMillis(), via)
+        SyncPush.now(appContext)
+    }
 
     suspend fun addSpace(offerId: String, description: String, area: Double, unitPrice: Double) {
         spaces.upsert(

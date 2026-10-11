@@ -41,6 +41,8 @@ class GoogleAuthorizer internal constructor(
                 } else {
                     rememberAccount(result)
                     val token = result.accessToken
+                    // Κρατιέται για όσους δεν έχουν οθόνη να ζητήσουν έγκριση
+                    AccessTokenCache.remember(token)
                     if (token.isNullOrBlank()) {
                         continuation.resumeWithException(
                             IllegalStateException("Η Google δεν επέστρεψε token"),
@@ -74,6 +76,7 @@ class GoogleAuthorizer internal constructor(
                 .also(::rememberAccount)
                 .accessToken
         }.onSuccess { token ->
+            AccessTokenCache.remember(token)
             if (token.isNullOrBlank()) {
                 continuation.resumeWithException(IllegalStateException("Η σύνδεση ακυρώθηκε"))
             } else {

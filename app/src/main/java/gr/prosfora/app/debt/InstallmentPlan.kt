@@ -100,17 +100,17 @@ data class InstallmentPlan(
         /**
          * Όλες οι γραμμές που ανήκουν στην ίδια οφειλή: η συνολική και οι δόσεις.
          *
-         * Κλειδί η ταυτότητα της οφειλής — φορέας, περίοδος, ταυτότητα/RF,
-         * πρόσωπο. Όταν η ταυτότητα λείπει, μπαίνουν μόνο η ίδια η οφειλή και
-         * γραμμές που δηλώνουν δόση, ώστε να μη σαρωθούν άσχετες εγγραφές του
-         * ίδιου μήνα.
+         * Κλειδί η ταυτότητα της οφειλής — φορέας, ταυτότητα/RF, πρόσωπο.
+         * **Όχι** η περίοδος: οι δόσεις ζουν σε διαφορετικούς μήνες, γιατί κάθε
+         * μία ανήκει στον μήνα που πληρώνεται.
+         *
+         * Όταν η ταυτότητα λείπει, μπαίνουν μόνο η ίδια η οφειλή και γραμμές
+         * που δηλώνουν δόση, ώστε να μη σαρωθούν άσχετες εγγραφές.
          */
         fun groupOf(all: List<DebtEntity>, debt: DebtEntity): List<DebtEntity> = all
             .filter { row ->
                 !row.deleted &&
                     row.kind == debt.kind &&
-                    row.periodYear == debt.periodYear &&
-                    row.periodMonth == debt.periodMonth &&
                     row.reference == debt.reference &&
                     row.personName == debt.personName &&
                     (debt.reference.isNotBlank() || row.id == debt.id || doseOf(row) != null)
@@ -155,10 +155,18 @@ data class InstallmentPlan(
             val amounts = plan.amounts()
             val dues = plan.dueDays()
             return (0 until plan.count).map { index ->
+                val due = dues[index] ?: base.dueDay
+                // Κάθε δόση ανήκει στον μήνα που πληρώνεται. Η οφειλή του
+                // Σεπτεμβρίου σε δύο δόσεις δίνει μία στον Σεπτέμβριο και μία
+                // στον Οκτώβριο — αλλιώς και οι δύο στοιβάζονταν στον
+                // Σεπτέμβριο, με σωστή ημερομηνία λήξης αλλά σε λάθος μήνα.
+                val month = due?.let(LocalDate::ofEpochDay)
                 base.copy(
                     id = idWith("|dose:${index + 1}/${plan.count}"),
                     amount = amounts[index],
-                    dueDay = dues[index] ?: base.dueDay,
+                    dueDay = due,
+                    periodMonth = month?.monthValue ?: base.periodMonth,
+                    periodYear = month?.year ?: base.periodYear,
                     description = "$plainDescription · δόση ${index + 1}/${plan.count}",
                 )
             }

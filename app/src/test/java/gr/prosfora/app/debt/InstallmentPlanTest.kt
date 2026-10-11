@@ -83,6 +83,44 @@ class InstallmentPlanTest {
         assertEquals(3, rows.map { it.id }.distinct().size)
     }
 
+    /**
+     * Κάθε δόση ανήκει στον μήνα που πληρώνεται.
+     *
+     * Η οφειλή του Σεπτεμβρίου σε δύο δόσεις δίνει μία στον Σεπτέμβριο και μία
+     * στον Οκτώβριο. Παλιά στοιβάζονταν και οι δύο στον Σεπτέμβριο — με σωστή
+     * ημερομηνία λήξης, αλλά κάτω από λάθος μήνα στη λίστα.
+     */
+    @Test
+    fun `κάθε δόση πηγαίνει στον μήνα που πληρώνεται`() {
+        val september = debt().copy(periodMonth = 9, periodYear = 2026, dueDay = day("2026-09-30"))
+        val plan = InstallmentPlan(3543.17, 1771.59, 2, day("2026-09-30"))
+        val rows = InstallmentPlan.reshape(listOf(september), plan, asInstallments = true)
+
+        assertEquals(listOf(9 to 2026, 10 to 2026), rows.map { it.periodMonth to it.periodYear })
+        assertEquals(listOf(day("2026-09-30"), day("2026-10-30")), rows.map { it.dueDay })
+    }
+
+    /** Δόση που πέφτει τον Ιανουάριο αλλάζει και χρονιά. */
+    @Test
+    fun `η δόση του Ιανουαρίου μετράει στη νέα χρονιά`() {
+        val plan = InstallmentPlan(300.0, 100.0, 3, day("2026-11-30"))
+        val rows = InstallmentPlan.reshape(
+            listOf(debt().copy(periodMonth = 11, periodYear = 2026, dueDay = day("2026-11-30"))),
+            plan,
+            asInstallments = true,
+        )
+        assertEquals(listOf(11 to 2026, 12 to 2026, 1 to 2027), rows.map { it.periodMonth to it.periodYear })
+    }
+
+    /** Η ομάδα δεν κρίνεται από τον μήνα, αλλιώς οι δόσεις δεν βρίσκονταν. */
+    @Test
+    fun `οι δόσεις βρίσκονται παρότι ζουν σε άλλους μήνες`() {
+        val plan = InstallmentPlan(3543.17, 1771.59, 2, day("2026-09-30"))
+        val rows = InstallmentPlan.reshape(listOf(debt()), plan, asInstallments = true)
+        assertEquals(2, rows.map { it.periodMonth }.distinct().size)
+        assertEquals(2, InstallmentPlan.groupOf(rows, rows[1]).size)
+    }
+
     @Test
     fun `οι δόσεις ξαναγίνονται μία οφειλή`() {
         val plan = InstallmentPlan(1200.0, 400.0, 3, day("2026-08-31"))

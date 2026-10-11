@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
+import gr.prosfora.app.google.AccessTokenCache
 import gr.prosfora.app.google.GoogleAuthorizer
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -16,7 +17,10 @@ import kotlinx.coroutines.suspendCancellableCoroutine
  * επανάληψη στο παρασκήνιο δεν θα τη δώσει, και η δουλειά κλείνει ήσυχα.
  */
 object BackgroundToken {
-    suspend fun withoutUi(context: Context): String? = suspendCancellableCoroutine { continuation ->
+    suspend fun withoutUi(context: Context): String? =
+        AccessTokenCache.valid() ?: authorize(context)?.also(AccessTokenCache::remember)
+
+    private suspend fun authorize(context: Context): String? = suspendCancellableCoroutine { continuation ->
         val request = AuthorizationRequest.builder()
             .setRequestedScopes(GoogleAuthorizer.SCOPES.map(::Scope))
             .build()

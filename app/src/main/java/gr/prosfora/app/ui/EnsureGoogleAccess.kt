@@ -30,10 +30,12 @@ import gr.prosfora.app.google.DriveWorkspace
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.sync.DriveAutoSyncWorker
+import gr.prosfora.app.sync.SyncPush
 import gr.prosfora.app.sync.DriveSyncCoordinator
 import gr.prosfora.app.ui.offers.UpdateDialog
 import gr.prosfora.app.update.UpdateChecker
 import gr.prosfora.app.util.reason
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -124,6 +126,17 @@ fun EnsureGoogleAccess() {
                     DriveWatch.refresh(context, drive, settings)
                 }
             }
+        }
+    }
+
+    // Όσο η εφαρμογή είναι ανοιχτή, η κοινόχρηστη βάση ελέγχεται μόνη της: η
+    // άλλη συσκευή δεν χρειάζεται να πατήσει συγχρονισμό για να δει μια
+    // πληρωμή που σημειώθηκε αλλού. Είναι λίγα KB κάθε φορά.
+    LaunchedEffect(settings.spreadsheetId) {
+        if (settings.spreadsheetId.isNullOrBlank()) return@LaunchedEffect
+        while (true) {
+            delay(FOREGROUND_SYNC_MS)
+            SyncPush.now(context, delayMillis = 0)
         }
     }
 
@@ -255,3 +268,6 @@ private suspend fun discover(drive: DriveClient, settings: GoogleSettings): Foun
 }
 
 private const val DEFAULT_SHEET_NAME = "Προσφορές"
+
+/** Πόσο συχνά ελέγχει τη βάση μια ανοιχτή εφαρμογή. */
+private const val FOREGROUND_SYNC_MS = 90_000L
