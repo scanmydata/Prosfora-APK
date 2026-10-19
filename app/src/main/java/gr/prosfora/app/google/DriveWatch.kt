@@ -1,7 +1,6 @@
 package gr.prosfora.app.google
 
 import android.content.Context
-import gr.prosfora.app.data.db.DebtAgency
 import gr.prosfora.app.data.db.ProsforaDatabase
 import gr.prosfora.app.notify.DriveNotifier
 import kotlinx.coroutines.Dispatchers
@@ -75,12 +74,13 @@ object DriveWatch {
         // θεωρούμε ότι η απουσία σημαίνει διαγραφή
         var readAll = true
 
-        DebtAgency.entries.forEach { agency ->
-            val folder = runCatching { workspace.debtsFolder(agency) }.getOrNull()
-            if (folder == null) {
-                readAll = false
-                return@forEach
-            }
+        // Όλος ο φάκελος των οφειλών, χύμα και σε υποφακέλους: ένα παραστατικό
+        // που έπεσε στη ρίζα του, ή σε φάκελο που έφτιαξε ο χρήστης, είναι
+        // εξίσου καινούργιο με ένα μέσα στον φάκελο του φορέα
+        val debtFolders = runCatching { workspace.debtsFolderTree() }
+            .onFailure { readAll = false }
+            .getOrDefault(emptyList())
+        debtFolders.forEach { folder ->
             runCatching { workspace.documentsIn(folder) }
                 .onFailure { readAll = false }
                 .getOrDefault(emptyList())

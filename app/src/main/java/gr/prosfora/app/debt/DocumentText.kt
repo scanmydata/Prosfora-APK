@@ -22,6 +22,11 @@ import gr.prosfora.app.util.reason
 class DocumentText(
     private val drive: DriveClient,
     private val ocr: OcrSpaceClient?,
+    /**
+     * Πού γεννιούνται τα προσωρινά του OCR. Χωρίς αυτό πέφτουν στη ρίζα του
+     * Drive του χρήστη και, όποτε αποτύχει η διαγραφή, μένουν εκεί.
+     */
+    private val tempFolderId: String? = null,
 ) {
 
     enum class Route(val label: String) {
@@ -102,13 +107,13 @@ class DocumentText(
 
         // Με επίπεδο κειμένου, η απλή μετατροπή αρκεί και είναι ακριβής
         if (hasText && driveFileId.isNotBlank()) {
-            add(Route.TEXT_LAYER to { drive.readTextOf(driveFileId) })
+            add(Route.TEXT_LAYER to { drive.readTextOf(driveFileId, tempParentId = tempFolderId) })
         }
 
         if (bytes != null) {
             val kind = DocumentBytes.kindOf(bytes)
             if (kind != null) {
-                add(Route.DRIVE_OCR to { drive.readTextOf(bytes, fileName, kind.mime) })
+                add(Route.DRIVE_OCR to { drive.readTextOf(bytes, fileName, kind.mime, tempParentId = tempFolderId) })
             }
             val engine = ocr
             if (engine != null) {
@@ -118,7 +123,7 @@ class DocumentText(
 
         // Χωρίς bytes —δεν κατέβηκε το αρχείο— μένει μόνο ο δρόμος του Drive
         if (bytes == null && driveFileId.isNotBlank()) {
-            add(Route.DRIVE_OCR to { drive.readTextOf(driveFileId) })
+            add(Route.DRIVE_OCR to { drive.readTextOf(driveFileId, tempParentId = tempFolderId) })
         }
     }
 

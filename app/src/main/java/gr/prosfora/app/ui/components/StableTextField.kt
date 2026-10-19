@@ -48,6 +48,8 @@ fun StableTextField(
     debounceMillis: Long = 350L,
     /** Πόσες γραμμές ανοίγει όσο γράφεις. 1 = μένει όπως ήταν. */
     expandedLines: Int = 4,
+    /** Τι φταίει στο περιεχόμενο· μπαίνει από κάτω και βάφει το πεδίο. */
+    errorText: String? = null,
 ) {
     var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
     var focused by remember { mutableStateOf(false) }
@@ -84,6 +86,8 @@ fun StableTextField(
             else -> Int.MAX_VALUE
         },
         keyboardOptions = keyboardOptions,
+        isError = errorText != null,
+        supportingText = errorText?.let { { Text(it) } },
         modifier = modifier.onFocusChanged { focused = it.isFocused },
     )
 }

@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.sp
 import gr.prosfora.app.data.db.Gender
 import gr.prosfora.app.data.db.OfferWithDetails
 import gr.prosfora.app.data.db.SpaceEntity
+import gr.prosfora.app.message.ContactCheck
 import gr.prosfora.app.notify.Channel
 import gr.prosfora.app.ui.components.ConfirmDialog
 import gr.prosfora.app.ui.components.StableTextField
@@ -262,6 +263,9 @@ private fun HeaderCard(details: OfferWithDetails, viewModel: OffersViewModel) {
                 onValueChange = { viewModel.updateOffer(offer.copy(email = it)) },
                 label = "Email",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                // Το λάθος φαίνεται εδώ, όχι τη στιγμή της αποστολής: μια
+                // προσφορά σε λάθος διεύθυνση δεν γυρίζει πίσω με ειδοποίηση
+                errorText = ContactCheck.email(offer.email).problem,
                 modifier = Modifier.fillMaxWidth(),
             )
             StableTextField(
@@ -270,6 +274,7 @@ private fun HeaderCard(details: OfferWithDetails, viewModel: OffersViewModel) {
                 label = "Κινητό",
                 placeholder = "π.χ. 6941234567",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                errorText = ContactCheck.mobile(offer.customerPhone).problem,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

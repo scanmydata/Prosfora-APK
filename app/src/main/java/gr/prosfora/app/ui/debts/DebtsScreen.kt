@@ -172,9 +172,7 @@ fun DebtsScreen(onMenu: () -> Unit) {
         scope.launch {
             busy = "Συγχρονισμός βάσης…"
             val token = runCatching { authorizer.accessToken() }.getOrNull()
-            // Πρώτα η κοινόχρηστη βάση, μετά ο φάκελος των οφειλών. Το αρχείο
-            // PDF των προσφορών **δεν** μπαίνει: εδώ ο χρήστης ζητάει οφειλές,
-            // και το OCR σε δεκάδες προσφορές κρατούσε λεπτά χωρίς λόγο.
+            // Πρώτα η κοινόχρηστη βάση, μετά ο φάκελος των οφειλών
             if (token != null && settings.spreadsheetId?.isNotBlank() == true) {
                 runCatching { SheetSync(context, SheetsClient(token), settings).sync() }
             }
@@ -183,7 +181,6 @@ fun DebtsScreen(onMenu: () -> Unit) {
                 DebtImporter(DriveClient(token ?: authorizer.accessToken()), settings).scan(
                     alreadyImported = repository.importedFileIds(),
                     onProgress = { name -> busy = "Ανάγνωση $name…" },
-                    includePdfArchive = false,
                     knownDebtIds = repository.knownDebtIds(),
                 )
             }

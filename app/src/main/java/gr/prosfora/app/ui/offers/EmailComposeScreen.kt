@@ -53,6 +53,7 @@ import gr.prosfora.app.google.SendMethod
 import gr.prosfora.app.mail.GmailSender
 import gr.prosfora.app.mail.MailSender
 import gr.prosfora.app.mail.OfferMail
+import gr.prosfora.app.message.ContactCheck
 import gr.prosfora.app.settings.SmtpSettingsStore
 import gr.prosfora.app.ui.pdf.PdfPreviewDialog
 import gr.prosfora.app.util.reason
@@ -85,6 +86,9 @@ fun EmailComposeScreen(
     val canSend = sendMethod == SendMethod.GOOGLE || smtp.isConfigured
 
     var to by remember(current.offer.id) { mutableStateOf(current.offer.email) }
+    // Η διεύθυνση ελέγχεται όσο γράφεται: ένα email που δεν στέκει δεν
+    // επιστρέφει σφάλμα — απλώς δεν φτάνει, και η προσφορά μοιάζει σταλμένη
+    val recipient = remember(to) { ContactCheck.email(to) }
     var subject by remember(current.offer.id) {
         mutableStateOf(OfferMail.subject(googleSettings.emailSubjectTemplate, current, googleSettings.greetingOptions))
     }
@@ -146,6 +150,8 @@ fun EmailComposeScreen(
                 label = { Text("Προς") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                isError = !recipient.ok,
+                supportingText = recipient.problem?.let { { Text(it) } },
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
@@ -201,11 +207,11 @@ fun EmailComposeScreen(
             }
 
             Button(
-                enabled = busy == null && canSend && to.isNotBlank(),
+                enabled = busy == null && canSend && recipient.normalized.isNotBlank(),
                 onClick = {
                     scope.launch {
                         busy = "Αποστολή…"
-                        val outgoing = OfferMail.compose(to.trim(), subject, body, current, pdf)
+                        val outgoing = OfferMail.compose(recipient.normalized, subject, body, current, pdf)
                         val result = runCatching {
                             when (sendMethod) {
                                 SendMethod.GOOGLE -> GmailSender.send(

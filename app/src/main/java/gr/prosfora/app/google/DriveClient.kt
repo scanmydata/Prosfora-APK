@@ -1,6 +1,7 @@
 package gr.prosfora.app.google
 
 import gr.prosfora.app.debug.DebugLog
+import gr.prosfora.app.util.reason
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -11,6 +12,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
 
 /** Minimal Google Drive REST v3 client. */
@@ -110,9 +113,29 @@ class DriveClient(private val accessToken: String) {
         execute(builder(url).post(body).build()) { JSONObject(it).getString("id") }
     }
 
-    suspend fun readTextOf(bytes: ByteArray, name: String, mimeType: String, ocrLanguage: String = "el"): String {
+    /**
+     * @param tempParentId πού γεννιέται το προσωρινό έγγραφο του OCR. Χωρίς
+     * αυτό πέφτει στη **ρίζα** του Drive, και κάθε φορά που η διαγραφή του
+     * αποτύχει —χαμένο δίκτυο, ληγμένο token— μένει εκεί για πάντα. Μέσα στον
+     * φάκελο της εφαρμογής, το χειρότερο που μπορεί να συμβεί είναι ένα αρχείο
+     * παραπάνω σε γνωστό σημείο, που το μαζεύει το [sweepOcrLeftovers].
+     */
+    suspend fun readTextOf(
+        bytes: ByteArray,
+        name: String,
+        mimeType: String,
+        ocrLanguage: String = "el",
+        tempParentId: String? = null,
+    ): String {
         DebugLog.log(TAG, "OCR upload «$name» ($mimeType, ${bytes.size} bytes)")
-        val docId = upload("prosfora-ocr-$name", bytes, mimeType, convertToGoogleDoc = true, ocrLanguage = ocrLanguage)
+        val docId = upload(
+            name = "$OCR_PREFIX$name",
+            bytes = bytes,
+            mimeType = mimeType,
+            parentId = tempParentId,
+            convertToGoogleDoc = true,
+            ocrLanguage = ocrLanguage,
+        )
         return try {
             export(docId, TEXT_MIME).toString(Charsets.UTF_8)
         } finally {
@@ -120,20 +143,57 @@ class DriveClient(private val accessToken: String) {
         }
     }
 
-    suspend fun copyAsGoogleDoc(fileId: String, ocrLanguage: String = "el"): String = withContext(Dispatchers.IO) {
-        val payload = JSONObject().put("name", "prosfora-ocr-$fileId").put("mimeType", DOC_MIME)
+    suspend fun copyAsGoogleDoc(
+        fileId: String,
+        ocrLanguage: String = "el",
+        tempParentId: String? = null,
+    ): String = withContext(Dispatchers.IO) {
+        val payload = JSONObject().put("name", "$OCR_PREFIX$fileId").put("mimeType", DOC_MIME).apply {
+            if (tempParentId != null) put("parents", JSONArray().put(tempParentId))
+        }
         val url = "$API/files/$fileId/copy?ocrLanguage=${ocrLanguage.urlEncode()}&fields=id"
         execute(builder(url).post(payload.toString().toRequestBody(JSON)).build()) { JSONObject(it).getString("id") }
     }
 
-    suspend fun readTextOf(fileId: String, ocrLanguage: String = "el"): String {
+    suspend fun readTextOf(fileId: String, ocrLanguage: String = "el", tempParentId: String? = null): String {
         DebugLog.log(TAG, "OCR copy $fileId")
-        val copyId = copyAsGoogleDoc(fileId, ocrLanguage)
+        val copyId = copyAsGoogleDoc(fileId, ocrLanguage, tempParentId)
         return try {
             export(copyId, TEXT_MIME).toString(Charsets.UTF_8)
         } finally {
             cleanupTemporaryFile(copyId, "OCR copy $fileId")
         }
+    }
+
+    /**
+     * Μαζεύει τα προσωρινά του OCR που έμειναν πίσω από παλιότερες σαρώσεις.
+     *
+     * Το Drive δεν δίνει «προσωρινό αρχείο»: ό,τι ανεβαίνει μένει μέχρι να
+     * σβηστεί. Όταν η διαγραφή αποτύγχανε, το έγγραφο έμενε στη ρίζα του Drive
+     * του χρήστη — και μαζευόταν. Το πρόθεμα `prosfora-ocr-` είναι δικό μας
+     * και κανενός άλλου, οπότε ό,τι το φέρει και ανήκει σε εμάς είναι σκουπίδι.
+     */
+    suspend fun sweepOcrLeftovers(): Int {
+        // Για το `name`, το `contains` του Drive ταιριάζει πρόθεμα — ακριβώς
+        // αυτό που χρειάζεται εδώ
+        val leftovers = runCatching {
+            list("name contains '$OCR_PREFIX' and mimeType='$DOC_MIME' and 'me' in owners and trashed=false")
+        }.onFailure { DebugLog.log(TAG, "αναζήτηση υπολειμμάτων OCR απέτυχε: ${it.reason()}") }
+            .getOrDefault(emptyList())
+            // Ένα έγγραφο που μόλις γεννήθηκε μπορεί να το διαβάζει αυτή τη
+            // στιγμή κάποια άλλη σάρωση — στην ίδια συσκευή ή σε άλλη. Μετά από
+            // λίγα λεπτά, κανένα OCR δεν το χρειάζεται πια.
+            .filter { olderThan(it.modifiedTime, LEFTOVER_AGE_MINUTES) }
+        if (leftovers.isEmpty()) return 0
+        DebugLog.log(TAG, "υπολείμματα OCR προς καθάρισμα: ${leftovers.size}")
+        leftovers.forEach { cleanupTemporaryFile(it.id, "υπόλειμμα OCR «${it.name}»") }
+        return leftovers.size
+    }
+
+    /** Αγνώστου ηλικίας σημαίνει «παλιό»: αλλιώς δεν θα καθαριζόταν ποτέ. */
+    private fun olderThan(modifiedTime: String?, minutes: Long): Boolean {
+        val stamp = modifiedTime?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: return true
+        return stamp.isBefore(Instant.now().minus(minutes, ChronoUnit.MINUTES))
     }
 
     private suspend fun cleanupTemporaryFile(fileId: String, label: String) {
@@ -237,6 +297,12 @@ class DriveClient(private val accessToken: String) {
 
     companion object {
         private const val TAG = "drive"
+
+        /** Το πρόθεμα των προσωρινών εγγράφων που φτιάχνει το OCR. */
+        const val OCR_PREFIX = "prosfora-ocr-"
+
+        /** Πόσο παλιό πρέπει να είναι ένα προσωρινό για να θεωρηθεί ξεχασμένο. */
+        private const val LEFTOVER_AGE_MINUTES = 10L
         private const val API = "https://www.googleapis.com/drive/v3"
         private const val UPLOAD = "https://www.googleapis.com/upload/drive/v3"
         private val JSON = "application/json; charset=utf-8".toMediaType()

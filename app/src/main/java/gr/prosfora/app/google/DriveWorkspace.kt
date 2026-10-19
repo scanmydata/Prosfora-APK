@@ -66,6 +66,31 @@ class DriveWorkspace(
             ?: drive.findOrCreateFolder(DEBTS_FOLDER_NAME, rootFolder())
                 .also { settings.debtsFolderId = it }
 
+    /**
+     * Ο φάκελος των οφειλών **και όλοι οι υποφάκελοί του**, όσο βαθιά κι αν
+     * πάνε — αλλά μόνο αυτοί.
+     *
+     * Η σάρωση ακολουθεί τη δομή που βρίσκει, όχι μια λίστα γνωστών ονομάτων:
+     * ο χρήστης φτιάχνει δικούς του υποφακέλους (ανά έτος, ανά εταιρεία) και
+     * ό,τι ρίχνει εκεί μέσα είναι παραστατικό. Ό,τι είναι **έξω** από τον
+     * φάκελο δεν είναι: οι προσφορές δεν περνούν από OCR.
+     */
+    suspend fun debtsFolderTree(maxDepth: Int = 5): List<String> {
+        val all = linkedSetOf(debtsFolder())
+        var frontier = all.toList()
+        repeat(maxDepth) {
+            if (frontier.isEmpty()) return all.toList()
+            frontier = frontier
+                .flatMap { parent -> runCatching { subfolders(parent) }.getOrDefault(emptyList()) }
+                .map { it.id }
+                .filter { all.add(it) }
+        }
+        return all.toList()
+    }
+
+    suspend fun subfolders(parentId: String): List<DriveClient.DriveFile> =
+        drive.list("mimeType='${DriveClient.FOLDER_MIME}' and '$parentId' in parents and trashed=false")
+
     suspend fun debtsFolder(agency: gr.prosfora.app.data.db.DebtAgency): String =
         settings.debtsFolderFor(agency.name)
             ?: drive.findOrCreateFolder(agency.folder, debtsFolder())

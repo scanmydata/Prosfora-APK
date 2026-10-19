@@ -55,6 +55,7 @@ import gr.prosfora.app.google.DriveClient
 import gr.prosfora.app.google.GoogleSettings
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.mail.OfferMail
+import gr.prosfora.app.message.ContactCheck
 import gr.prosfora.app.message.MessageTemplates
 import gr.prosfora.app.settings.SmtpSettingsStore
 import gr.prosfora.app.notify.Channel
@@ -87,6 +88,8 @@ fun MessageComposeScreen(
     val current = details ?: return
 
     var phone by remember(current.offer.id) { mutableStateOf(current.offer.customerPhone) }
+    // Ένα SMS σε σταθερό ή σε λειψό αριθμό χάνεται χωρίς να το πει κανείς
+    val recipient = remember(phone) { ContactCheck.mobile(phone) }
     var text by remember(current.offer.id, channel) {
         mutableStateOf(
             when (channel) {
@@ -143,7 +146,7 @@ fun MessageComposeScreen(
         if (!granted) {
             // Χωρίς το δικαίωμα δεν μπορούμε να επιβεβαιώσουμε την αποστολή·
             // πέφτουμε πίσω στην εφαρμογή μηνυμάτων και ρωτάμε τον χρήστη.
-            if (ContactNotifier.openSmsApp(context, phone, text)) {
+            if (ContactNotifier.openSmsApp(context, recipient.normalized, text)) {
                 awaitingViberAnswer = true
             } else {
                 Toast.makeText(context, "Δεν βρέθηκε εφαρμογή μηνυμάτων", Toast.LENGTH_LONG).show()
@@ -151,7 +154,7 @@ fun MessageComposeScreen(
         } else {
             busy = true
             scope.launch {
-                val result = SmsSender.send(context, phone, text)
+                val result = SmsSender.send(context, recipient.normalized, text)
                 busy = false
                 result.onSuccess { recordSent() }.onFailure {
                     Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
@@ -189,6 +192,8 @@ fun MessageComposeScreen(
                     label = { Text("Κινητό παραλήπτη") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    isError = !recipient.ok,
+                    supportingText = recipient.problem?.let { { Text(it) } },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -271,6 +276,10 @@ fun MessageComposeScreen(
             Button(
                 enabled = !busy && !preparing && text.isNotBlank() &&
                     (phone.isNotBlank() || channel.carriesPdf) &&
+                    // Μόνο το SMS φεύγει προς τον αριθμό· στο Viber τη
+                    // συνομιλία τη διαλέγει ο χρήστης και ο αριθμός δεν παίζει
+                    // ρόλο, οπότε δεν έχει νόημα να μπλοκάρει την αποστολή
+                    (channel != Channel.SMS || recipient.ok) &&
                     (!channel.carriesPdf || pdf != null),
                 onClick = {
                     when (channel) {
@@ -282,7 +291,7 @@ fun MessageComposeScreen(
                             if (granted) {
                                 busy = true
                                 scope.launch {
-                                    val result = SmsSender.send(context, phone, text)
+                                    val result = SmsSender.send(context, recipient.normalized, text)
                                     busy = false
                                     result.onSuccess { recordSent() }.onFailure {
                                         Toast.makeText(

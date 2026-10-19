@@ -13,8 +13,19 @@ import kotlinx.coroutines.withContext
 
 class DebtImporter(private val drive: DriveClient, private val settings: GoogleSettings) {
     private val workspace = DriveWorkspace(drive, settings)
-    private val reader = DocumentText(drive = drive, ocr = settings.ocrApiKey.takeIf { it.isNotBlank() }?.let { OcrSpaceClient(it) })
+    private val ocr = settings.ocrApiKey.takeIf { it.isNotBlank() }?.let { OcrSpaceClient(it) }
     private val llm = LlmExtractor(settings.groqApiKey, settings.openRouterApiKey).takeIf { it.available }
+
+    /**
+     * Ο αναγνώστης, με τα προσωρινά του OCR δεμένα στον φάκελο των οφειλών.
+     *
+     * Το id του φακέλου είναι συνήθως αποθηκευμένο, οπότε δεν κοστίζει κλήση.
+     */
+    private suspend fun reader(): DocumentText = DocumentText(
+        drive = drive,
+        ocr = ocr,
+        tempFolderId = runCatching { workspace.debtsFolder() }.getOrNull(),
+    )
 
     data class Found(
         val fileName: String,
@@ -54,9 +65,15 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
         found
     }
 
-    suspend fun scan(alreadyImported: Set<String>, onProgress: (String) -> Unit): Report = scan(alreadyImported, onProgress, false)
-
     /**
+     * Σαρώνει **μόνο τον φάκελο των οφειλών**: ό,τι είναι χύμα μέσα του και
+     * ό,τι βρίσκεται στους υποφακέλους του, όσο βαθιά κι αν πάνε.
+     *
+     * Παλιά η αυτόματη σάρωση περνούσε και από το αρχείο των PDF. Εκεί ζουν οι
+     * **προσφορές**: κάθε μία κατέβαινε, ανέβαινε ξανά για OCR και άφηνε ένα
+     * προσωρινό έγγραφο στη ρίζα του Drive — για να βγει στο τέλος το
+     * αναμενόμενο «καμία οφειλή». Ο φάκελος των οφειλών είναι το σύνορο.
+     *
      * @param knownDebtIds ό,τι υπάρχει ήδη στη βάση. Το φίλτρο αρχείου δεν
      * αρκεί: ένα αρχείο που μετακινήθηκε σε υποφάκελο έτους, που ξαναδιαβάζεται
      * μετά από επιδιόρθωση, ή που ανέβασε άλλος χρήστης, ξαναπερνάει από τη
@@ -66,24 +83,23 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
     suspend fun scan(
         alreadyImported: Set<String>,
         onProgress: (String) -> Unit = {},
-        includePdfArchive: Boolean = false,
         knownDebtIds: Set<String> = emptySet(),
         onFound: suspend (Found) -> Unit = {},
     ): Report = withContext(Dispatchers.IO) {
-        DebugLog.log("debt-scan", "Έναρξη scan · alreadyImported=${alreadyImported.size} · includePdfArchive=$includePdfArchive")
+        DebugLog.log("debt-scan", "Έναρξη scan · alreadyImported=${alreadyImported.size}")
+        // Τα προσωρινά του OCR που έμειναν από παλιότερες σαρώσεις φεύγουν εδώ,
+        // μία φορά ανά σάρωση: μία κλήση λίστας, και η ρίζα του Drive καθαρή
+        runCatching { drive.sweepOcrLeftovers() }
+            .onFailure { DebugLog.log("debt-scan", "καθάρισμα υπολειμμάτων OCR απέτυχε: ${it.stackTraceToString()}") }
+
         var scanned = 0
         var skipped = 0
         val found = mutableListOf<Found>()
         val processed = alreadyImported.toMutableSet()
-        val rootFolder = runCatching { workspace.debtsFolder() }.getOrNull()
-        val folders = buildList {
-            rootFolder?.let(::add)
-            DebtAgency.entries.forEach { agency -> runCatching { workspace.debtsFolder(agency) }.getOrNull()?.let(::add) }
-            if (includePdfArchive) {
-                runCatching { workspace.pdfFolder() }.getOrNull()?.let(::add)
-                runCatching { workspace.pdfYears() }.getOrNull().orEmpty().forEach { add(it.id) }
-            }
-        }.distinct()
+        val folders = runCatching { workspace.debtsFolderTree() }
+            .onFailure { DebugLog.log("debt-scan", "δεν βρέθηκε ο φάκελος οφειλών: ${it.stackTraceToString()}") }
+            .getOrDefault(emptyList())
+        DebugLog.log("debt-scan", "φάκελοι οφειλών προς σάρωση: ${folders.size}")
         if (folders.isEmpty()) return@withContext Report(0, 0, emptyList())
 
         folders.forEach { folder ->
@@ -149,7 +165,7 @@ class DebtImporter(private val drive: DriveClient, private val settings: GoogleS
     }
 
     private suspend fun read(fileName: String, driveFileId: String, bytes: ByteArray?): Found {
-        val result = reader.read(bytes, driveFileId, fileName) { text ->
+        val result = reader().read(bytes, driveFileId, fileName) { text ->
             val parsed = DebtParser.parse(text, fileName, driveFileId)
             DebugLog.log("debt-read", "validator parsed=${parsed.size} file=$fileName")
             parsed.isNotEmpty()

@@ -52,6 +52,7 @@ import gr.prosfora.app.google.SendMethod
 import gr.prosfora.app.google.rememberGoogleAuthorizer
 import gr.prosfora.app.mail.GmailSender
 import gr.prosfora.app.mail.MailSender
+import gr.prosfora.app.message.ContactCheck
 import gr.prosfora.app.message.MessageTemplates
 import gr.prosfora.app.notify.Channel
 import gr.prosfora.app.notify.ContactNotifier
@@ -103,6 +104,11 @@ fun ReviewComposeScreen(
             if (channel == ReviewChannel.EMAIL) details.offer.email else details.offer.customerPhone,
         )
     }
+    // Ο ίδιος έλεγχος με τις υπόλοιπες αποστολές: το κανάλι ορίζει τι είναι
+    // σωστό, email ή κινητό, και ο παραλήπτης φεύγει στην καθαρή του μορφή
+    val checked = remember(recipient, channel) {
+        if (channel == ReviewChannel.EMAIL) ContactCheck.email(recipient) else ContactCheck.mobile(recipient)
+    }
     var busy by remember { mutableStateOf(false) }
     var askViber by remember { mutableStateOf(false) }
 
@@ -118,13 +124,13 @@ fun ReviewComposeScreen(
         if (granted) {
             busy = true
             scope.launch {
-                val result = SmsSender.send(context, recipient, text)
+                val result = SmsSender.send(context, checked.normalized, text)
                 busy = false
                 result.onSuccess { done() }.onFailure {
                     Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
                 }
             }
-        } else if (ContactNotifier.openSmsApp(context, recipient, text)) {
+        } else if (ContactNotifier.openSmsApp(context, checked.normalized, text)) {
             askViber = true
         }
     }
@@ -181,6 +187,8 @@ fun ReviewComposeScreen(
                     onValueChange = { recipient = it },
                     label = { Text(if (channel == ReviewChannel.EMAIL) "Email" else "Κινητό") },
                     singleLine = true,
+                    isError = !checked.ok,
+                    supportingText = checked.problem?.let { { Text(it) } },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -207,7 +215,7 @@ fun ReviewComposeScreen(
 
             Button(
                 enabled = !busy && text.isNotBlank() &&
-                    (channel == ReviewChannel.VIBER || recipient.isNotBlank()),
+                    (channel == ReviewChannel.VIBER || checked.normalized.isNotBlank()),
                 onClick = {
                     when (channel) {
                         ReviewChannel.VIBER ->
@@ -225,7 +233,7 @@ fun ReviewComposeScreen(
                             if (granted) {
                                 busy = true
                                 scope.launch {
-                                    val result = SmsSender.send(context, recipient, text)
+                                    val result = SmsSender.send(context, checked.normalized, text)
                                     busy = false
                                     result.onSuccess { done() }.onFailure {
                                         Toast.makeText(context, "Απέτυχε: ${it.reason()}", Toast.LENGTH_LONG).show()
@@ -241,7 +249,7 @@ fun ReviewComposeScreen(
                             scope.launch {
                                 val smtp = SmtpSettingsStore(context).load()
                                 val message = MailSender.Outgoing(
-                                    to = recipient.trim(),
+                                    to = checked.normalized,
                                     subject = MessageTemplates.REVIEW_SUBJECT,
                                     body = text,
                                     // Στο email ο σύνδεσμος γίνεται «Πατήστε εδώ»·
